@@ -7,21 +7,33 @@ import com.accbook.app.data.model.ParsedBill
 import com.accbook.app.util.AppLog
 import com.accbook.app.util.CategoryGuesser
 import com.accbook.app.util.Money
+import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import kotlin.math.roundToLong
 
 /**
- * 微信/支付宝账单 CSV 解析。
- * 列名映射而非固定列位，列顺序变化不影响；表头行按特征自动识别。
+ * 微信/支付宝账单解析。
+ * - 微信：2026 版起导出 xlsx（交易时间为 Excel 日期序列号）；旧版 CSV 文本时间同样兼容。
+ * - 支付宝：2026 版 CSV 表头为 交易时间/交易分类/…/交易订单号（GBK 编码、单号带尾部制表符）；旧版（交易创建时间/交易号）兼容。
+ * 列按名称映射而非固定列位，列顺序变化不影响；表头行按特征自动识别。
  */
 object BillParsers {
 
     private val DATETIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
 
-    /** 解析账单字节流：解码 → CSV → 识别来源 → 分发。无法识别返回 null。 */
+    /** Excel 日期序列号纪元偏移：1899-12-30 距 1970-01-01 的天数 */
+    private const val EXCEL_EPOCH_OFFSET = 25569L
+
+    /** 解析账单字节流：xlsx/CSV → 行列 → 识别来源 → 分发。无法识别返回 null。 */
     fun parse(bytes: ByteArray): ParsedBill? {
-        val rows = CsvReader.parse(CsvReader.decode(bytes))
+        val rows = if (XlsxReader.isXlsx(bytes)) {
+            AppLog.i("import", "input detected as xlsx")
+            XlsxReader.parse(bytes)
+        } else {
+            CsvReader.parse(CsvReader.decode(bytes))
+        }
         val source = detect(rows) ?: return null
         AppLog.i("import", "detected bill source=$source, totalLines=${rows.size}")
         return when (source) {
@@ -31,11 +43,11 @@ object BillParsers {
     }
 
     fun detect(rows: List<List<String>>): BillSource? {
-        val head = rows.take(20)
+        val head = rows.take(25)
         fun has(keyword: String) = head.any { row -> row.any { it.contains(keyword) } }
         return when {
             has("微信支付账单明细") || has("交易单号") -> BillSource.WECHAT
-            has("商家订单号") || has("交易号") -> BillSource.ALIPAY
+            has("交易订单号") || has("商家订单号") || has("交易号") -> BillSource.ALIPAY
             else -> null
         }
     }
@@ -71,7 +83,7 @@ object BillParsers {
             val type = when (cell(iInOut)) {
                 "收入" -> TxType.INCOME
                 "支出" -> TxType.EXPENSE
-                else -> { skipType++; continue }   // "/"：不计收支（充值、提现、理财等）
+                else -> { skipType++; continue }   // "/" 或"中性交易"：充值、提现、理财等不计收支
             }
             val amount = Money.parseCents(cell(iAmount))
             if (amount == null) {
@@ -81,7 +93,7 @@ object BillParsers {
             val status = cell(iStatus)
             if (status.contains("退款")) { skipStatus++; continue }   // 退款行不导入，避免净额重复
 
-            val ts = parseTime(cell(iTime))
+            val ts = parseWechatTime(cell(iTime))
             if (ts == null) {
                 AppLog.w("import", "微信账单时间无法解析: '${cell(iTime)}'")
                 continue
@@ -104,24 +116,46 @@ object BillParsers {
         return ParsedBill(BillSource.WECHAT, parsed, skipType, skipStatus)
     }
 
+    /**
+     * 微信交易时间：xlsx 为 Excel 日期序列号（如 46299.627...，文件注明为 UTC+8 墙上时间），
+     * 旧 CSV 为 "yyyy-MM-dd HH:mm:ss" 文本。统一按本地时区墙上时间转毫秒。
+     */
+    private fun parseWechatTime(text: String): Long? {
+        val serial = text.toDoubleOrNull()
+        if (serial != null && serial > 20000) {
+            val days = serial.toLong()
+            val frac = serial - days
+            val date = LocalDate.ofEpochDay(days - EXCEL_EPOCH_OFFSET)
+            return date.atStartOfDay(ZoneId.systemDefault())
+                .plusSeconds((frac * 86400.0).roundToLong())
+                .toInstant().toEpochMilli()
+        }
+        return parseTime(text)
+    }
+
     // ---------- 支付宝 ----------
 
     fun parseAlipay(rows: List<List<String>>): ParsedBill {
         val headerIdx = rows.indexOfFirst { row ->
-            row.any { normalize(it) == "交易号" } && row.any { normalize(it) == "交易创建时间" }
+            val cells = row.map { normalize(it) }
+            cells.any { it == "交易时间" || it == "交易创建时间" } &&
+                cells.any { it == "交易订单号" || it == "交易号" }
         }
-        require(headerIdx >= 0) { "未找到支付宝账单表头（交易号/交易创建时间）" }
+        require(headerIdx >= 0) { "未找到支付宝账单表头（交易时间/交易订单号）" }
         val header = rows[headerIdx].map { normalize(it) }
         fun col(prefix: String) = header.indexOfFirst { it.startsWith(prefix) }
+        fun colExact(name: String) = header.indexOfFirst { it == name }
 
-        val iTradeNo = col("交易号")
-        val iCreated = col("交易创建时间")
-        val iPaid = col("付款时间")
+        val iTime = colExact("交易时间").takeIf { it >= 0 } ?: col("交易创建时间")
+        val iPaid = col("付款时间")                    // 旧版才有，优先于创建时间
+        val iTradeNo = colExact("交易订单号").takeIf { it >= 0 } ?: colExact("交易号")
+        val iCategory = colExact("交易分类")           // 2026 新版才有
         val iCounterparty = col("交易对方")
-        val iGoods = col("商品名称")
+        val iGoods = col("商品")
         val iAmount = col("金额")
         val iInOut = col("收/支")
         val iStatus = col("交易状态")
+        val iPayMethod = col("收/付款").takeIf { it >= 0 } ?: col("支付方式")
         val iNote = col("备注")
 
         val parsed = mutableListOf<ImportedBillRow>()
@@ -129,32 +163,33 @@ object BillParsers {
         var skipStatus = 0
 
         for (raw in rows.subList(headerIdx + 1, rows.size)) {
-            fun cell(idx: Int) = if (idx in raw.indices) raw[idx].trim() else ""
+            fun cell(idx: Int) = if (idx >= 0 && idx in raw.indices) raw[idx].trim() else ""
             if (raw.all { it.isBlank() }) continue
 
             val type = when (cell(iInOut)) {
                 "收入" -> TxType.INCOME
                 "支出" -> TxType.EXPENSE
-                else -> { skipType++; continue }   // 不计收支（充值、提现、理财等）
+                else -> { skipType++; continue }   // 不计收支：充值、提现、退款、理财等
             }
             val status = cell(iStatus)
-            if (!(status.contains("成功") || status.contains("已到账"))) { skipStatus++; continue }
+            if (!(status.contains("成功") || status.contains("已到账"))) { skipStatus++; continue }   // 如"交易关闭"
 
             val amount = Money.parseCents(cell(iAmount))
             if (amount == null) {
                 AppLog.w("import", "支付宝账单金额无法解析: '${cell(iAmount)}'")
                 continue
             }
-            val paidText = cell(iPaid)
-            val createdText = cell(iCreated)
-            val ts = parseTime(paidText) ?: parseTime(createdText)
+            val ts = parseTime(cell(iPaid)) ?: parseTime(cell(iTime))
             if (ts == null) {
-                AppLog.w("import", "支付宝账单时间无法解析: '$paidText'/'$createdText'")
+                AppLog.w("import", "支付宝账单时间无法解析: '${cell(iPaid)}'/'${cell(iTime)}'")
                 continue
             }
             val counterparty = cell(iCounterparty)
             val goods = cell(iGoods)
             val note = cell(iNote).ifEmpty { goods }
+            val categoryText = if (iCategory >= 0) cell(iCategory) else ""
+            val guessed = CategoryGuesser.fromAlipayCategory(categoryText)
+                ?: CategoryGuesser.guess("$counterparty $goods")
             parsed += ImportedBillRow(
                 type = type,
                 amountCents = amount,
@@ -162,9 +197,9 @@ object BillParsers {
                 counterparty = counterparty,
                 goods = goods,
                 note = note,
-                payMethod = "",
+                payMethod = cell(iPayMethod),
                 externalId = cell(iTradeNo).ifEmpty { null },
-                guessedCategoryName = CategoryGuesser.guess("$counterparty $goods"),
+                guessedCategoryName = guessed,
             )
         }
         return ParsedBill(BillSource.ALIPAY, parsed, skipType, skipStatus)

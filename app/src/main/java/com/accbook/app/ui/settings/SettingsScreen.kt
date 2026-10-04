@@ -48,10 +48,10 @@ fun SettingsScreen(
             color = MaterialTheme.colorScheme.outline,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
         )
-        SettingRow("导入微信/支付宝账单 CSV", onClick = onImport)
+        SettingRow("导入微信/支付宝账单", onClick = onImport)
         Text(
-            "导出路径：微信 我 → 服务 → 钱包 → 账单 → 常见问题 → 下载账单（用于个人对账）；" +
-                "支付宝 我的 → 账单 → 右上角“…” → 开具交易流水证明（用于个人对账）。",
+            "导出路径：微信 我 → 服务 → 钱包 → 账单 → 常见问题 → 下载账单（用于个人对账，xlsx 发到邮箱）；" +
+                "支付宝 我的 → 账单 → 右上角“…” → 开具交易流水证明（用于个人对账，CSV 发到邮箱）。",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.outline,
             modifier = Modifier.padding(horizontal = 16.dp),

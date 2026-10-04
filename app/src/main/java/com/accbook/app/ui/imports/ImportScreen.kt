@@ -158,7 +158,7 @@ fun ImportScreen(vm: LedgerViewModel, onBack: () -> Unit) {
                     Modifier.padding(padding).padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    Text("选择从微信/支付宝导出的账单 CSV 文件，导入前会先预览。", style = MaterialTheme.typography.bodyLarge)
+                    Text("选择从微信/支付宝导出的账单文件（微信 xlsx / 支付宝 CSV），导入前会先预览。", style = MaterialTheme.typography.bodyLarge)
                     Button(onClick = { picker.launch(arrayOf("*/*")) }, modifier = Modifier.fillMaxWidth()) {
                         Text("选择账单文件")
                     }
@@ -168,7 +168,7 @@ fun ImportScreen(vm: LedgerViewModel, onBack: () -> Unit) {
                     HorizontalDivider()
                     Text(
                         "导出方法：\n" +
-                            "· 微信：我 → 服务 → 钱包 → 账单 → 右上角常见问题 → 下载账单 → 用于个人对账（CSV 发送到邮箱）\n" +
+                            "· 微信：我 → 服务 → 钱包 → 账单 → 右上角常见问题 → 下载账单 → 用于个人对账（xlsx 发送到邮箱）\n" +
                             "· 支付宝：我的 → 账单 → 右上角“…” → 开具交易流水证明 → 用于个人对账（CSV 发送到邮箱）",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.outline,
