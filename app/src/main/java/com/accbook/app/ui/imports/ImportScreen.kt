@@ -38,6 +38,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.accbook.app.data.LedgerViewModel
+import com.accbook.app.data.db.RefundMark
 import com.accbook.app.data.db.TxType
 import com.accbook.app.ui.common.DropdownSelector
 import com.accbook.app.ui.common.formatTimestamp
@@ -50,6 +51,7 @@ fun ImportScreen(vm: LedgerViewModel, onBack: () -> Unit) {
     val error by vm.importError.collectAsStateWithLifecycle()
     val done by vm.importDone.collectAsStateWithLifecycle()
     val accounts by vm.accounts.collectAsStateWithLifecycle()
+    val showRefunds by vm.showRefunds.collectAsStateWithLifecycle()
 
     var accountId by remember { mutableStateOf<Long?>(null) }
     LaunchedEffect(accounts) {
@@ -102,10 +104,17 @@ fun ImportScreen(vm: LedgerViewModel, onBack: () -> Unit) {
                         val expenseCount = b.rows.count { it.type == TxType.EXPENSE }
                         Text(
                             "共 ${b.rows.size} 条（支出 $expenseCount，收入 $incomeCount）；" +
-                                "已跳过不计收支 ${b.skippedOtherType} 条、未完成/退款 ${b.skippedStatus} 条。",
+                                "已跳过不计收支 ${b.skippedOtherType} 条、未完成 ${b.skippedStatus} 条。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.outline,
                         )
+                        if (b.refundCount > 0) {
+                            Text(
+                                "其中退款相关 ${b.refundCount} 条（已入库；当前${if (showRefunds) "已开启显示" else "未开启显示，不计入流水与汇总"}，可在设置中切换）",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.tertiary,
+                            )
+                        }
                         DropdownSelector(
                             label = "记入账户",
                             options = accounts.map { it.id to it.name },
@@ -135,7 +144,10 @@ fun ImportScreen(vm: LedgerViewModel, onBack: () -> Unit) {
                                         overflow = TextOverflow.Ellipsis,
                                     )
                                     Text(
-                                        "${r.note.ifBlank { r.goods }.ifBlank { "-" }} → ${r.guessedCategoryName}",
+                                        "${r.note.ifBlank { r.goods }.ifBlank { "-" }} → ${r.guessedCategoryName}" +
+                                            if (r.refundMark != RefundMark.NONE) {
+                                                " ｜" + if (r.refundMark == RefundMark.REFUND_INCOME) "退款收入" else "已退款"
+                                            } else "",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.outline,
                                         maxLines = 1,

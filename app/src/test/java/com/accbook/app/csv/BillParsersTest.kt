@@ -1,5 +1,6 @@
 package com.accbook.app.csv
 
+import com.accbook.app.data.db.RefundMark
 import com.accbook.app.data.db.TxType
 import com.accbook.app.data.model.BillSource
 import org.junit.Assert.assertEquals
@@ -19,7 +20,7 @@ class BillParsersTest {
 
     // ---------- 微信 ----------
 
-    /** 旧版微信 CSV（文本时间） */
+    /** 旧版微信 CSV（文本时间）；含一条"已全额退款"支出行（旧版无独立退款收入行） */
     private val wechatCsv = """
         微信支付账单明细
         ---------------------
@@ -38,7 +39,7 @@ class BillParsersTest {
         2024-01-05 20:00:00,商户消费,某电商,商品订单,支出,¥59.90,招商银行(1234),已全额退款,4200111111,M10004,
     """.trimIndent().trim()
 
-    /** 2026 版微信 xlsx：交易时间为 Excel 日期序列号，金额为纯数字，不计收支叫"中性交易" */
+    /** 2026 版微信 xlsx：交易时间为 Excel 日期序列号；退款为成对记录（退款收入行 + 原支出行） */
     private val wechatXlsxShared = listOf(
         "微信支付账单明细",
         "----------------------微信支付账单明细列表--------------------",
@@ -46,8 +47,11 @@ class BillParsersTest {
         "商户消费", "luckin coffee", "订单付款", "支出", "零钱", "支付成功",
         "微信红包", "红包", "张三", "收入", "已存入零钱", "新年红包",
         "转账", "李四", "中性交易", "已转账",
-        "450000202610040001", "450000202610030002", "450000202610020003",
-        "M10001", "M10002", "M10003",
+        "拼多多", "拼多多平台商户", "拼多多平台商户-退款", "已全额退款",
+        "测试外卖", "测试外卖-退款", "已退款(¥8.54)",
+        "450000202610040001", "450000202610030002", "450000202610020003", "450000202610010004",
+        "450000202609300005", "450000202609300006", "450000202609290007",
+        "M10001", "M10002", "M10003", "M10004", "M10005",
     )
 
     private fun buildWechatXlsx(): ByteArray {
@@ -58,10 +62,18 @@ class BillParsersTest {
                 "交易时间", "交易类型", "交易对方", "商品", "收/支", "金额(元)",
                 "支付方式", "当前状态", "交易单号", "商户单号", "备注",
             ),
-            // 46299.627337962964 → 2026-10-04 15:03:22；46298.5 → 2026-10-03 12:00:00；46297.0 → 2026-10-02 00:00:00
+            // 正常支出
             listOf<Any?>(46299.627337962964, "商户消费", "luckin coffee", "订单付款", "支出", 17.25, "零钱", "支付成功", "450000202610040001", "M10001", null),
+            // 正常收入
             listOf<Any?>(46298.5, "微信红包", "张三", "红包", "收入", 8.88, "零钱", "已存入零钱", "450000202610030002", "M10002", "新年红包"),
-            listOf<Any?>(46297.0, "转账", "李四", "转账", "中性交易", 100.0, "零钱", "已转账", "450000202610020003", "M10003", null),
+            // 全额退款对：原支出行 + 退款收入行
+            listOf<Any?>(46297.9, "商户消费", "拼多多", "拼多多", "支出", 45.4, "零钱", "已全额退款", "450000202610020003", "M10003", null),
+            listOf<Any?>(46297.8, "拼多多平台商户-退款", "拼多多平台商户", "拼多多", "收入", 45.4, "零钱", "已全额退款", "450000202610010004", null, null),
+            // 部分退款对：原支出行保持普通支出（39.8 中退了 8.54），退款收入行单独记录
+            listOf<Any?>(46296.9, "商户消费", "测试外卖", "订单付款", "支出", 39.8, "零钱", "已退款(¥8.54)", "450000202609300005", "M10004", null),
+            listOf<Any?>(46296.8, "测试外卖-退款", "测试外卖", "测试外卖", "收入", 8.54, "零钱", "已退款(¥8.54)", "450000202609300006", null, null),
+            // 中性交易：跳过
+            listOf<Any?>(46295.0, "转账", "李四", "转账", "中性交易", 100.0, "零钱", "已转账", "450000202609290007", "M10005", null),
         )
         return buildXlsx(wechatXlsxShared, rows)
     }
@@ -102,7 +114,7 @@ class BillParsersTest {
 
     // ---------- 支付宝 ----------
 
-    /** 2026 版支付宝 CSV：GBK、新增交易分类列、交易订单号带尾部制表符 */
+    /** 2026 版支付宝 CSV：GBK、新增交易分类列、交易订单号带尾部制表符；含"交易关闭+退款"成对记录 */
     private val alipayCsv2026 = listOf(
         "------------------------------------------------------------------------------------",
         "导出信息：",
@@ -114,6 +126,7 @@ class BillParsersTest {
         "2026-10-03 23:11:22,文化休闲,Steam,sup***@nuvei.com,Steam Purchase,支出,34.80,中国银行储蓄卡(8920),交易关闭,2026100322001448451421675858\t,2026100319074101000920060298353\t,,",
         "2026-10-04 05:19:08,退款,Steam,sup***@nuvei.com,退款-Steam Purchase,不计收支,34.80,中国银行储蓄卡(8920),退款成功,2026100322001448451421675858_2026100319074102000920019200572\t,2026100319074101000920060298353\t,,",
         "2026-10-03 08:00:00,人情往来,王五,/,转账,收入,500.00,余额,交易成功,202401032188880002\t,,饭钱",
+        "2026-10-01 09:00:00,提现,/,/,余额提现-提现到银行卡,不计收支,1000.00,零钱,提现成功,202610010900000001\t,,,",
     ).joinToString("\n")
 
     /** 旧版支付宝 CSV：交易创建时间/付款时间列、交易号 */
@@ -133,8 +146,9 @@ class BillParsersTest {
         val bill = BillParsers.parse(wechatCsv.toByteArray(Charsets.UTF_8))!!
         assertEquals(BillSource.WECHAT, bill.source)
         assertEquals(1, bill.skippedOtherType)   // "/" 不计收支
-        assertEquals(1, bill.skippedStatus)      // 已全额退款
-        assertEquals(2, bill.rows.size)
+        assertEquals(0, bill.skippedStatus)
+        assertEquals(1, bill.refundCount)        // 已全额退款支出行
+        assertEquals(3, bill.rows.size)
 
         val r0 = bill.rows[0]
         assertEquals(TxType.EXPENSE, r0.type)
@@ -142,16 +156,14 @@ class BillParsersTest {
         assertEquals("沙县小吃(XX店)", r0.counterparty)
         assertEquals(millis(2024, 1, 2, 12, 30, 0), r0.timestamp)
         assertEquals("4200012345", r0.externalId)
-        assertEquals("零钱", r0.payMethod)
-        assertEquals("沙县小吃", r0.note)
+        assertEquals(RefundMark.NONE, r0.refundMark)
         assertEquals("餐饮", r0.guessedCategoryName)
 
-        val r1 = bill.rows[1]
-        assertEquals(TxType.INCOME, r1.type)
-        assertEquals(888L, r1.amountCents)
-        assertEquals("张三", r1.counterparty)
-        assertEquals("新年红包", r1.note)
-        assertEquals("红包", r1.guessedCategoryName)
+        val r2 = bill.rows[2]
+        assertEquals(TxType.EXPENSE, r2.type)
+        assertEquals(5990L, r2.amountCents)
+        assertEquals("某电商", r2.counterparty)
+        assertEquals(RefundMark.REFUNDED_EXPENSE, r2.refundMark)
     }
 
     @Test
@@ -160,7 +172,8 @@ class BillParsersTest {
         assertEquals(BillSource.WECHAT, bill.source)
         assertEquals(1, bill.skippedOtherType)   // 中性交易
         assertEquals(0, bill.skippedStatus)
-        assertEquals(2, bill.rows.size)
+        assertEquals(4, bill.refundCount)        // 全额退款对 2 条 + 部分退款对 2 条
+        assertEquals(6, bill.rows.size)
 
         val r0 = bill.rows[0]
         assertEquals(TxType.EXPENSE, r0.type)
@@ -168,17 +181,33 @@ class BillParsersTest {
         assertEquals("luckin coffee", r0.counterparty)
         assertEquals(millis(2026, 10, 4, 15, 3, 22), r0.timestamp)
         assertEquals("450000202610040001", r0.externalId)
-        assertEquals("零钱", r0.payMethod)
-        assertEquals("订单付款", r0.note)
+        assertEquals(RefundMark.NONE, r0.refundMark)
         assertEquals("餐饮", r0.guessedCategoryName)
 
         val r1 = bill.rows[1]
         assertEquals(TxType.INCOME, r1.type)
         assertEquals(888L, r1.amountCents)
-        assertEquals("张三", r1.counterparty)
         assertEquals(millis(2026, 10, 3, 12, 0, 0), r1.timestamp)
-        assertEquals("新年红包", r1.note)
-        assertEquals("红包", r1.guessedCategoryName)
+        assertEquals(RefundMark.NONE, r1.refundMark)
+
+        // 全额退款对
+        val r2 = bill.rows[2]
+        assertEquals(TxType.EXPENSE, r2.type)
+        assertEquals(4540L, r2.amountCents)
+        assertEquals(RefundMark.REFUNDED_EXPENSE, r2.refundMark)
+
+        val r3 = bill.rows[3]
+        assertEquals(TxType.INCOME, r3.type)
+        assertEquals(4540L, r3.amountCents)
+        assertEquals(RefundMark.REFUND_INCOME, r3.refundMark)
+        assertEquals("购物", r3.guessedCategoryName)   // 退款对方含"拼多多"
+
+        // 部分退款对：支出保持普通（净支出 31.26 由用户在明细中自行理解），退款额单独成收入
+        assertEquals(RefundMark.NONE, bill.rows[4].refundMark)
+        assertEquals(3980L, bill.rows[4].amountCents)
+        assertEquals(TxType.INCOME, bill.rows[5].type)
+        assertEquals(854L, bill.rows[5].amountCents)
+        assertEquals(RefundMark.REFUND_INCOME, bill.rows[5].refundMark)
     }
 
     // ---------- 支付宝测试 ----------
@@ -187,9 +216,10 @@ class BillParsersTest {
     fun `parse alipay 2026 csv`() {
         val bill = BillParsers.parse(alipayCsv2026.toByteArray(Charset.forName("GBK")))!!
         assertEquals(BillSource.ALIPAY, bill.source)
-        assertEquals(1, bill.skippedOtherType)   // 退款（不计收支）
-        assertEquals(1, bill.skippedStatus)      // 交易关闭
-        assertEquals(2, bill.rows.size)
+        assertEquals(1, bill.skippedOtherType)   // 提现（不计收支，非退款）
+        assertEquals(0, bill.skippedStatus)
+        assertEquals(2, bill.refundCount)        // 交易关闭支出行 + 退款成功收入行
+        assertEquals(4, bill.rows.size)
 
         val r0 = bill.rows[0]
         assertEquals(TxType.EXPENSE, r0.type)
@@ -200,19 +230,34 @@ class BillParsersTest {
         assertEquals("2026100423001148451423351129", r0.externalId)
         assertEquals("中国银行储蓄卡(8920)", r0.payMethod)
         assertEquals("餐饮", r0.guessedCategoryName)   // 交易分类"餐饮美食"映射
+        assertEquals(RefundMark.NONE, r0.refundMark)
 
+        // 交易关闭支出行 → 已退款
         val r1 = bill.rows[1]
-        assertEquals(TxType.INCOME, r1.type)
-        assertEquals(50000L, r1.amountCents)
-        assertEquals("王五", r1.counterparty)
-        assertEquals("饭钱", r1.note)
-        assertEquals("红包", r1.guessedCategoryName)   // 交易分类"人情往来"映射
+        assertEquals(TxType.EXPENSE, r1.type)
+        assertEquals(3480L, r1.amountCents)
+        assertEquals(RefundMark.REFUNDED_EXPENSE, r1.refundMark)
+
+        // 退款成功行（不计收支）→ 退款收入
+        val r2 = bill.rows[2]
+        assertEquals(TxType.INCOME, r2.type)
+        assertEquals(3480L, r2.amountCents)
+        assertEquals("2026100322001448451421675858_2026100319074102000920019200572", r2.externalId)
+        assertEquals(RefundMark.REFUND_INCOME, r2.refundMark)
+
+        val r3 = bill.rows[3]
+        assertEquals(TxType.INCOME, r3.type)
+        assertEquals(50000L, r3.amountCents)
+        assertEquals("饭钱", r3.note)
+        assertEquals("红包", r3.guessedCategoryName)   // 交易分类"人情往来"映射
+        assertEquals(RefundMark.NONE, r3.refundMark)
     }
 
     @Test
     fun `parse alipay legacy csv`() {
         val bill = BillParsers.parse(alipayCsvLegacy.toByteArray(Charset.forName("GBK")))!!
         assertEquals(BillSource.ALIPAY, bill.source)
+        assertEquals(0, bill.refundCount)
         assertEquals(2, bill.rows.size)
 
         val r0 = bill.rows[0]
@@ -222,6 +267,7 @@ class BillParsersTest {
         assertEquals(millis(2024, 1, 2, 18, 0, 1), r0.timestamp)   // 优先付款时间
         assertEquals("202401022188880001", r0.externalId)
         assertEquals("购物", r0.guessedCategoryName)   // 无交易分类列，回退关键词猜测
+        assertEquals(RefundMark.NONE, r0.refundMark)
 
         val r1 = bill.rows[1]
         assertEquals(TxType.INCOME, r1.type)

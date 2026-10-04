@@ -26,6 +26,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.accbook.app.data.LedgerViewModel
+import com.accbook.app.data.db.RefundMark
 import com.accbook.app.data.db.TransactionRow
 import com.accbook.app.data.db.TxType
 import com.accbook.app.ui.common.MonthHeader
@@ -42,13 +43,19 @@ fun TransactionListScreen(vm: LedgerViewModel, onEditTransaction: (Long) -> Unit
     val rows by vm.monthRows.collectAsStateWithLifecycle(initialValue = emptyList())
     val totals by vm.monthTotals.collectAsStateWithLifecycle(initialValue = emptyList())
     val month by vm.month.collectAsStateWithLifecycle()
+    val showRefunds by vm.showRefunds.collectAsStateWithLifecycle()
+    val refundTotal by vm.refundIncomeTotal.collectAsStateWithLifecycle(initialValue = 0L)
 
     val expense = totals.firstOrNull { it.type == TxType.EXPENSE }?.totalCents ?: 0L
     val income = totals.firstOrNull { it.type == TxType.INCOME }?.totalCents ?: 0L
 
     Column(Modifier.fillMaxSize()) {
         MonthHeader(month = month, onPrev = vm::prevMonth, onNext = vm::nextMonth)
-        SummaryRow(incomeCents = income, expenseCents = expense)
+        SummaryRow(
+            incomeCents = income,
+            expenseCents = expense,
+            cancelledCents = if (showRefunds) refundTotal else null,
+        )
         HorizontalDivider()
 
         if (rows.isEmpty()) {
@@ -102,7 +109,17 @@ private fun TransactionRowItem(row: TransactionRow, onClick: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
-            Text(row.categoryName, style = MaterialTheme.typography.bodyLarge)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(row.categoryName, style = MaterialTheme.typography.bodyLarge)
+                if (row.refundMark != RefundMark.NONE) {
+                    Text(
+                        if (row.refundMark == RefundMark.REFUND_INCOME) "退款收入" else "已退款",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.tertiary,
+                        modifier = Modifier.padding(start = 6.dp),
+                    )
+                }
+            }
             val sub = listOfNotNull(
                 row.counterparty.ifBlank { null },
                 row.note.ifBlank { null },

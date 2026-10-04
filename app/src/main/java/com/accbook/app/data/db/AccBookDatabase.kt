@@ -4,10 +4,12 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [AccountEntity::class, CategoryEntity::class, TransactionEntity::class],
-    version = 1,
+    version = 2,
     exportSchema = false,
 )
 abstract class AccBookDatabase : RoomDatabase() {
@@ -17,6 +19,13 @@ abstract class AccBookDatabase : RoomDatabase() {
     abstract fun transactionDao(): TransactionDao
 
     companion object {
+        /** v2：交易表新增退款标记列 */
+        private val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE transactions ADD COLUMN refundMark TEXT NOT NULL DEFAULT 'NONE'")
+            }
+        }
+
         @Volatile
         private var instance: AccBookDatabase? = null
 
@@ -26,7 +35,9 @@ abstract class AccBookDatabase : RoomDatabase() {
                     context.applicationContext,
                     AccBookDatabase::class.java,
                     "accbook.db",
-                ).build().also { instance = it }
+                )
+                    .addMigrations(MIGRATION_1_2)
+                    .build().also { instance = it }
             }
     }
 }

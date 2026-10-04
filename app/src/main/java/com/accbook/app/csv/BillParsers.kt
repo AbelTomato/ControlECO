@@ -1,5 +1,6 @@
 package com.accbook.app.csv
 
+import com.accbook.app.data.db.RefundMark
 import com.accbook.app.data.db.TxType
 import com.accbook.app.data.model.BillSource
 import com.accbook.app.data.model.ImportedBillRow
@@ -75,6 +76,7 @@ object BillParsers {
         val parsed = mutableListOf<ImportedBillRow>()
         var skipType = 0
         var skipStatus = 0
+        var refundCount = 0
 
         for (raw in rows.subList(headerIdx + 1, rows.size)) {
             fun cell(idx: Int) = if (idx in raw.indices) raw[idx].trim() else ""
@@ -83,15 +85,27 @@ object BillParsers {
             val type = when (cell(iInOut)) {
                 "收入" -> TxType.INCOME
                 "支出" -> TxType.EXPENSE
-                else -> { skipType++; continue }   // "/" 或"中性交易"：充值、提现、理财等不计收支
+                else -> { skipType++; continue }   // "/"：不计收支（充值、提现、理财等）
             }
             val amount = Money.parseCents(cell(iAmount))
             if (amount == null) {
                 AppLog.w("import", "微信账单金额无法解析: '${cell(iAmount)}'")
                 continue
             }
+
+            // 退款结构（真实账单为成对记录）：
+            // - 退款到账行：收/支=收入、交易类型"XXX-退款"、状态"已全额退款" → 标记退款收入
+            // - 原支出行：状态"已全额退款" → 标记已退款；状态"已退款(¥8.54)"为部分退款 → 保持普通支出
+            var mark = RefundMark.NONE
             val status = cell(iStatus)
-            if (status.contains("退款")) { skipStatus++; continue }   // 退款行不导入，避免净额重复
+            if (status.contains("退款")) {
+                refundCount++
+                mark = when {
+                    type == TxType.INCOME -> RefundMark.REFUND_INCOME
+                    extractRefundAmount(status)?.let { it < amount } == true -> RefundMark.NONE
+                    else -> RefundMark.REFUNDED_EXPENSE
+                }
+            }
 
             val ts = parseWechatTime(cell(iTime))
             if (ts == null) {
@@ -111,9 +125,10 @@ object BillParsers {
                 payMethod = cell(iPayMethod),
                 externalId = cell(iTxnId).ifEmpty { null },
                 guessedCategoryName = CategoryGuesser.guess("$counterparty $goods"),
+                refundMark = mark,
             )
         }
-        return ParsedBill(BillSource.WECHAT, parsed, skipType, skipStatus)
+        return ParsedBill(BillSource.WECHAT, parsed, skipType, skipStatus, refundCount)
     }
 
     /**
@@ -161,18 +176,33 @@ object BillParsers {
         val parsed = mutableListOf<ImportedBillRow>()
         var skipType = 0
         var skipStatus = 0
+        var refundCount = 0
 
         for (raw in rows.subList(headerIdx + 1, rows.size)) {
             fun cell(idx: Int) = if (idx >= 0 && idx in raw.indices) raw[idx].trim() else ""
             if (raw.all { it.isBlank() }) continue
 
-            val type = when (cell(iInOut)) {
-                "收入" -> TxType.INCOME
-                "支出" -> TxType.EXPENSE
-                else -> { skipType++; continue }   // 不计收支：充值、提现、退款、理财等
-            }
+            val inOut = cell(iInOut)
             val status = cell(iStatus)
-            if (!(status.contains("成功") || status.contains("已到账"))) { skipStatus++; continue }   // 如"交易关闭"
+
+            val type = when {
+                inOut == "收入" -> TxType.INCOME
+                inOut == "支出" -> TxType.EXPENSE
+                // 不计收支中的退款到账行（状态"退款成功"）单独收录，其余（充值/提现/理财）跳过
+                status.contains("退款") -> TxType.INCOME
+                else -> { skipType++; continue }
+            }
+
+            // 退款标记（真实账单为成对记录）：
+            // - 退款到账行：不计收支 + 状态"退款成功" → 标记退款收入
+            // - 原支出行：状态"交易关闭"（已退款关闭）→ 标记已退款；部分退款时原行仍"交易成功"，保持普通支出
+            var mark = RefundMark.NONE
+            when {
+                status.contains("退款") && type == TxType.INCOME -> { mark = RefundMark.REFUND_INCOME; refundCount++ }
+                type == TxType.EXPENSE && status == "交易关闭" -> { mark = RefundMark.REFUNDED_EXPENSE; refundCount++ }
+                !(status.contains("成功") || status.contains("已到账")) -> { skipStatus++; continue }
+                else -> {}
+            }
 
             val amount = Money.parseCents(cell(iAmount))
             if (amount == null) {
@@ -200,12 +230,19 @@ object BillParsers {
                 payMethod = cell(iPayMethod),
                 externalId = cell(iTradeNo).ifEmpty { null },
                 guessedCategoryName = guessed,
+                refundMark = mark,
             )
         }
-        return ParsedBill(BillSource.ALIPAY, parsed, skipType, skipStatus)
+        return ParsedBill(BillSource.ALIPAY, parsed, skipType, skipStatus, refundCount)
     }
 
     // ---------- 公共 ----------
+
+    /** 微信部分退款状态中的金额：兼容"已退款(¥8.54)"与"已退款¥8.54" */
+    private val REFUND_AMOUNT = Regex("""已退款[(]?[¥￥]?\s*(\d+(?:\.\d{1,2})?)""")
+
+    private fun extractRefundAmount(status: String): Long? =
+        REFUND_AMOUNT.find(status)?.groupValues?.get(1)?.let { Money.parseCents(it) }
 
     private fun normalize(s: String): String =
         s.replace("（", "(").replace("）", ")").replace(" ", "").trim()

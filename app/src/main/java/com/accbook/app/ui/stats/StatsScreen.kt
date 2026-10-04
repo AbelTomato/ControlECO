@@ -31,6 +31,8 @@ fun StatsScreen(vm: LedgerViewModel) {
     val month by vm.month.collectAsStateWithLifecycle()
     val totals by vm.monthTotals.collectAsStateWithLifecycle(initialValue = emptyList())
     val byCategory by vm.expenseByCategory.collectAsStateWithLifecycle(initialValue = emptyList())
+    val showRefunds by vm.showRefunds.collectAsStateWithLifecycle()
+    val refundTotal by vm.refundIncomeTotal.collectAsStateWithLifecycle(initialValue = 0L)
 
     val expense = totals.firstOrNull { it.type == TxType.EXPENSE }?.totalCents ?: 0L
     val income = totals.firstOrNull { it.type == TxType.INCOME }?.totalCents ?: 0L
@@ -41,7 +43,11 @@ fun StatsScreen(vm: LedgerViewModel) {
             .verticalScroll(rememberScrollState()),
     ) {
         MonthHeader(month = month, onPrev = vm::prevMonth, onNext = vm::nextMonth)
-        SummaryRow(incomeCents = income, expenseCents = expense)
+        SummaryRow(
+            incomeCents = income,
+            expenseCents = expense,
+            cancelledCents = if (showRefunds) refundTotal else null,
+        )
         HorizontalDivider()
 
         Text(

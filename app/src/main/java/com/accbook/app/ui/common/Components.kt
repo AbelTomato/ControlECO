@@ -46,13 +46,16 @@ fun MonthHeader(month: java.time.YearMonth, onPrev: () -> Unit, onNext: () -> Un
     }
 }
 
-/** 收入/支出/结余汇总行 */
+/** 收入/支出/结余汇总行；cancelledCents 非空时额外显示"已取消收支"列（退款到账合计） */
 @Composable
-fun SummaryRow(incomeCents: Long, expenseCents: Long) {
+fun SummaryRow(incomeCents: Long, expenseCents: Long, cancelledCents: Long? = null) {
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
         SummaryColumn("支出", Money.formatYuan(expenseCents), Modifier.weight(1f))
         SummaryColumn("收入", Money.formatYuan(incomeCents), Modifier.weight(1f))
         SummaryColumn("结余", Money.formatYuan(incomeCents - expenseCents), Modifier.weight(1f))
+        if (cancelledCents != null) {
+            SummaryColumn("已取消", Money.formatYuan(cancelledCents), Modifier.weight(1f))
+        }
     }
 }
 

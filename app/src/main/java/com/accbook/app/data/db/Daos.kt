@@ -20,6 +20,7 @@ data class TransactionRow(
     val categoryName: String,
     val accountId: Long,
     val accountName: String,
+    val refundMark: RefundMark,
 )
 
 data class TypeTotalRow(
@@ -43,40 +44,56 @@ data class AccountBalanceRow(
 @Dao
 interface TransactionDao {
 
+    /**
+     * includeRefunds=false 时过滤掉退款标记记录（设置"显示退款记录"关闭）。
+     */
     @Query(
         """SELECT t.id AS id, t.type AS type, t.amountCents AS amountCents, t.timestamp AS timestamp,
            t.note AS note, t.counterparty AS counterparty, t.source AS source,
-           c.id AS categoryId, c.name AS categoryName, a.id AS accountId, a.name AS accountName
+           c.id AS categoryId, c.name AS categoryName, a.id AS accountId, a.name AS accountName,
+           t.refundMark AS refundMark
            FROM transactions t
            JOIN categories c ON t.categoryId = c.id
            JOIN accounts a ON t.accountId = a.id
            WHERE t.timestamp >= :startMillis AND t.timestamp < :endMillis
+             AND (:includeRefunds = 1 OR t.refundMark = 'NONE')
            ORDER BY t.timestamp DESC, t.id DESC"""
     )
-    fun observeRows(startMillis: Long, endMillis: Long): Flow<List<TransactionRow>>
+    fun observeRows(startMillis: Long, endMillis: Long, includeRefunds: Boolean): Flow<List<TransactionRow>>
 
     @Query(
         """SELECT type AS type, SUM(amountCents) AS totalCents FROM transactions
            WHERE timestamp >= :startMillis AND timestamp < :endMillis
+             AND (:includeRefunds = 1 OR refundMark = 'NONE')
            GROUP BY type"""
     )
-    fun observeTypeTotals(startMillis: Long, endMillis: Long): Flow<List<TypeTotalRow>>
+    fun observeTypeTotals(startMillis: Long, endMillis: Long, includeRefunds: Boolean): Flow<List<TypeTotalRow>>
 
     @Query(
         """SELECT c.id AS categoryId, c.name AS categoryName, SUM(t.amountCents) AS totalCents
            FROM transactions t JOIN categories c ON t.categoryId = c.id
            WHERE t.timestamp >= :startMillis AND t.timestamp < :endMillis AND t.type = :type
+             AND (:includeRefunds = 1 OR t.refundMark = 'NONE')
            GROUP BY c.id, c.name ORDER BY totalCents DESC"""
     )
-    fun observeCategorySums(startMillis: Long, endMillis: Long, type: TxType): Flow<List<CategorySumRow>>
+    fun observeCategorySums(startMillis: Long, endMillis: Long, type: TxType, includeRefunds: Boolean): Flow<List<CategorySumRow>>
+
+    /** 退款到账金额合计（"已取消收支"），与显示开关无关，由 UI 决定是否展示 */
+    @Query(
+        """SELECT COALESCE(SUM(amountCents), 0) FROM transactions
+           WHERE timestamp >= :startMillis AND timestamp < :endMillis
+             AND type = 'INCOME' AND refundMark = 'REFUND_INCOME'"""
+    )
+    fun observeRefundIncomeTotal(startMillis: Long, endMillis: Long): Flow<Long>
 
     @Query(
         """SELECT a.id AS accountId, a.initialBalanceCents AS initialBalanceCents,
            COALESCE(SUM(CASE WHEN t.type = 'EXPENSE' THEN -t.amountCents ELSE t.amountCents END), 0) AS signedSumCents
-           FROM accounts a LEFT JOIN transactions t ON t.accountId = a.id
+           FROM accounts a LEFT JOIN transactions t
+             ON t.accountId = a.id AND (:includeRefunds = 1 OR t.refundMark = 'NONE')
            GROUP BY a.id"""
     )
-    fun observeBalances(): Flow<List<AccountBalanceRow>>
+    fun observeBalances(includeRefunds: Boolean): Flow<List<AccountBalanceRow>>
 
     @Query("SELECT * FROM transactions WHERE id = :id")
     suspend fun getById(id: Long): TransactionEntity?

@@ -1,6 +1,7 @@
 package com.accbook.app.data
 
 import android.app.Application
+import android.content.Context
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -25,6 +26,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -45,6 +47,22 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
 
     private val zone: ZoneId = ZoneId.systemDefault()
 
+    // ---------- 设置：显示退款记录 ----------
+
+    private val prefs = getApplication<AccBookApp>()
+        .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    private val _showRefunds = MutableStateFlow(
+        prefs.getBoolean(KEY_SHOW_REFUNDS, false),
+    )
+    val showRefunds: StateFlow<Boolean> = _showRefunds
+
+    fun setShowRefunds(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_SHOW_REFUNDS, enabled).apply()
+        _showRefunds.value = enabled
+        AppLog.i("settings", "showRefunds=$enabled")
+    }
+
     // ---------- 月份 ----------
 
     private val _month = MutableStateFlow(YearMonth.now(zone))
@@ -60,18 +78,27 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    val monthRows: Flow<List<TransactionRow>> = _month.flatMapLatest { m ->
-        val (s, e) = range(m); txDao.observeRows(s, e)
-    }
+    val monthRows: Flow<List<TransactionRow>> =
+        combine(_month, _showRefunds) { m, r -> m to r }.flatMapLatest { (m, r) ->
+            val (s, e) = range(m); txDao.observeRows(s, e, r)
+        }
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    val monthTotals: Flow<List<TypeTotalRow>> = _month.flatMapLatest { m ->
-        val (s, e) = range(m); txDao.observeTypeTotals(s, e)
-    }
+    val monthTotals: Flow<List<TypeTotalRow>> =
+        combine(_month, _showRefunds) { m, r -> m to r }.flatMapLatest { (m, r) ->
+            val (s, e) = range(m); txDao.observeTypeTotals(s, e, r)
+        }
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    val expenseByCategory: Flow<List<CategorySumRow>> = _month.flatMapLatest { m ->
-        val (s, e) = range(m); txDao.observeCategorySums(s, e, TxType.EXPENSE)
+    val expenseByCategory: Flow<List<CategorySumRow>> =
+        combine(_month, _showRefunds) { m, r -> m to r }.flatMapLatest { (m, r) ->
+            val (s, e) = range(m); txDao.observeCategorySums(s, e, TxType.EXPENSE, r)
+        }
+
+    /** 退款到账金额合计（"已取消收支"），是否展示由 UI 根据开关决定 */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val refundIncomeTotal: Flow<Long> = _month.flatMapLatest { m ->
+        val (s, e) = range(m); txDao.observeRefundIncomeTotal(s, e)
     }
 
     val accounts: StateFlow<List<AccountEntity>> =
@@ -80,7 +107,10 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
     val categories: StateFlow<List<CategoryEntity>> =
         categoryDao.observeAll().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    val accountBalances: Flow<List<AccountBalanceRow>> = txDao.observeBalances()
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val accountBalances: Flow<List<AccountBalanceRow>> = _showRefunds.flatMapLatest { r ->
+        txDao.observeBalances(r)
+    }
 
     // ---------- 交易 ----------
 
@@ -245,6 +275,7 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
                             BillSource.ALIPAY -> TxSource.ALIPAY
                         },
                         externalId = row.externalId,
+                        refundMark = row.refundMark,
                     )
                 }
                 val ids = txDao.insertAllIgnore(entities)
@@ -263,5 +294,10 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
         _parsedBill.value = null
         _importError.value = null
         _importDone.value = null
+    }
+
+    private companion object {
+        const val PREFS_NAME = "settings"
+        const val KEY_SHOW_REFUNDS = "show_refunds"
     }
 }

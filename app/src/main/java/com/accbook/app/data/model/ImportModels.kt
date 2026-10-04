@@ -1,5 +1,6 @@
 package com.accbook.app.data.model
 
+import com.accbook.app.data.db.RefundMark
 import com.accbook.app.data.db.TxType
 
 /** 账单来源（阶段一：CSV 导出文件；后续阶段扩展通知、短信等） */
@@ -19,6 +20,7 @@ data class ImportedBillRow(
     val payMethod: String,
     val externalId: String?,
     val guessedCategoryName: String,
+    val refundMark: RefundMark = RefundMark.NONE,
 )
 
 /** 一个账单文件的解析结果 */
@@ -27,8 +29,10 @@ data class ParsedBill(
     val rows: List<ImportedBillRow>,
     /** 不计收支（如零钱充值、提现、理财申购）跳过的条数 */
     val skippedOtherType: Int,
-    /** 状态未完成或含退款而跳过的条数 */
+    /** 状态未完成（如等待付款）而跳过的条数 */
     val skippedStatus: Int,
+    /** 退款相关记录数（始终入库；是否显示取决于设置"显示退款记录"） */
+    val refundCount: Int,
 )
 
 data class ImportCommitResult(val inserted: Int, val duplicated: Int)
