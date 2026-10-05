@@ -32,11 +32,17 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     testOptions {
         // 单元测试中 android.util.Log 等框架方法返回默认值而非抛异常
         unitTests.isReturnDefaultValues = true
     }
+}
+
+ksp {
+    // 导出 Room schema，用于校验迁移 SQL（app/schemas/）
+    arg("room.schemaLocation", "$projectDir/schemas")
 }
 
 dependencies {

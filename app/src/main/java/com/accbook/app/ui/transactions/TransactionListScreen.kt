@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -39,18 +40,28 @@ import java.time.ZoneId
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun TransactionListScreen(vm: LedgerViewModel, onEditTransaction: (Long) -> Unit) {
+fun TransactionListScreen(vm: LedgerViewModel, onEditTransaction: (Long) -> Unit, onOpenPending: () -> Unit) {
     val rows by vm.monthRows.collectAsStateWithLifecycle(initialValue = emptyList())
     val totals by vm.monthTotals.collectAsStateWithLifecycle(initialValue = emptyList())
     val month by vm.month.collectAsStateWithLifecycle()
     val showRefunds by vm.showRefunds.collectAsStateWithLifecycle()
     val refundTotal by vm.refundIncomeTotal.collectAsStateWithLifecycle(initialValue = 0L)
+    val pendingCount by vm.pendingCount.collectAsStateWithLifecycle(initialValue = 0)
 
     val expense = totals.firstOrNull { it.type == TxType.EXPENSE }?.totalCents ?: 0L
     val income = totals.firstOrNull { it.type == TxType.INCOME }?.totalCents ?: 0L
 
     Column(Modifier.fillMaxSize()) {
-        MonthHeader(month = month, onPrev = vm::prevMonth, onNext = vm::nextMonth)
+        MonthHeader(
+            month = month,
+            onPrev = vm::prevMonth,
+            onNext = vm::nextMonth,
+            trailing = {
+                if (pendingCount > 0) {
+                    TextButton(onClick = onOpenPending) { Text("待确认 $pendingCount") }
+                }
+            },
+        )
         SummaryRow(
             incomeCents = income,
             expenseCents = expense,

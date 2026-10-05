@@ -3,14 +3,20 @@ package com.accbook.app.data
 import android.app.Application
 import android.content.Context
 import android.net.Uri
+import androidx.core.app.NotificationManagerCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.accbook.app.AccBookApp
+import com.accbook.app.BuildConfig
+import com.accbook.app.capture.CaptureCenter
+import com.accbook.app.capture.NotificationRules
 import com.accbook.app.csv.BillParsers
 import com.accbook.app.data.db.AccountBalanceRow
 import com.accbook.app.data.db.AccountEntity
+import com.accbook.app.data.db.CapturedNotificationEntity
 import com.accbook.app.data.db.CategoryEntity
 import com.accbook.app.data.db.CategorySumRow
+import com.accbook.app.data.db.PendingTransactionEntity
 import com.accbook.app.data.db.TransactionEntity
 import com.accbook.app.data.db.TransactionRow
 import com.accbook.app.data.db.TypeTotalRow
@@ -44,6 +50,8 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
     private val txDao = db.transactionDao()
     private val accountDao = db.accountDao()
     private val categoryDao = db.categoryDao()
+    private val pendingDao = db.pendingDao()
+    private val captureDao = db.captureDao()
 
     private val zone: ZoneId = ZoneId.systemDefault()
 
@@ -294,6 +302,123 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
         _parsedBill.value = null
         _importError.value = null
         _importDone.value = null
+    }
+
+    // ---------- 自动记账（阶段二：通知监听通道） ----------
+
+    val pendingList: StateFlow<List<PendingTransactionEntity>> =
+        pendingDao.observePending().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val pendingCount: StateFlow<Int> =
+        pendingDao.observeCount().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+
+    val captureRows: StateFlow<List<CapturedNotificationEntity>> =
+        captureDao.observeRecent(300).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val listenerConnected: StateFlow<Boolean> = CaptureCenter.connected
+
+    private val _captureEnabled = MutableStateFlow(CaptureCenter.isCaptureEnabled())
+    val captureEnabled: StateFlow<Boolean> = _captureEnabled
+
+    fun setCaptureEnabled(enabled: Boolean) {
+        CaptureCenter.setCaptureEnabled(enabled)
+        _captureEnabled.value = enabled
+    }
+
+    private val _debugCaptureAll = MutableStateFlow(CaptureCenter.isDebugCaptureAll(BuildConfig.DEBUG))
+    val debugCaptureAll: StateFlow<Boolean> = _debugCaptureAll
+
+    fun setDebugCaptureAll(enabled: Boolean) {
+        CaptureCenter.setDebugCaptureAll(enabled)
+        _debugCaptureAll.value = enabled
+    }
+
+    fun isListenerGranted(): Boolean {
+        val app = getApplication<AccBookApp>()
+        return NotificationManagerCompat.getEnabledListenerPackages(app).contains(app.packageName)
+    }
+
+    fun discardPending(id: Long) {
+        viewModelScope.launch(Dispatchers.IO) {
+            pendingDao.deleteById(id)
+            AppLog.i("pending", "discarded #$id")
+        }
+    }
+
+    fun confirmPending(item: PendingTransactionEntity, categoryId: Long, accountId: Long) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val externalId = "NTF:${item.dedupKey}"
+            txDao.insert(
+                TransactionEntity(
+                    type = item.type,
+                    amountCents = item.amountCents,
+                    categoryId = categoryId,
+                    accountId = accountId,
+                    timestamp = item.timestamp,
+                    note = item.note.ifBlank { item.ruleName },
+                    counterparty = item.counterparty,
+                    source = TxSource.NOTIFICATION,
+                    externalId = externalId,
+                ),
+            )
+            pendingDao.deleteById(item.id)
+            AppLog.i("pending", "confirmed #${item.id} externalId=$externalId")
+        }
+    }
+
+    fun confirmAllPending() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val items = pendingDao.getAllPending()
+            if (items.isEmpty()) return@launch
+            val cats = categoryDao.getAll()
+            val accs = accountDao.getAll()
+            val entities = items.map { item ->
+                val cat = cats.firstOrNull { it.type == item.type && it.name == "其他" }
+                    ?: cats.firstOrNull { it.type == item.type }
+                    ?: return@launch
+                TransactionEntity(
+                    type = item.type,
+                    amountCents = item.amountCents,
+                    categoryId = cat.id,
+                    accountId = guessAccountId(item.sourcePackage, accs) ?: return@launch,
+                    timestamp = item.timestamp,
+                    note = item.note.ifBlank { item.ruleName },
+                    counterparty = item.counterparty,
+                    source = TxSource.NOTIFICATION,
+                    externalId = "NTF:${item.dedupKey}",
+                )
+            }
+            val ids = txDao.insertAllIgnore(entities)
+            val inserted = ids.count { it != -1L }
+            items.forEach { pendingDao.deleteById(it.id) }
+            AppLog.i("pending", "confirmAll: ${items.size} items, inserted=$inserted")
+        }
+    }
+
+    /** 待确认确认弹窗的默认分类（该类型的"其他"，缺省取该类型第一个） */
+    fun guessCategoryId(type: TxType): Long? =
+        categories.value.firstOrNull { it.type == type && it.name == "其他" }?.id
+            ?: categories.value.firstOrNull { it.type == type }?.id
+
+    /** 按来源包名推测账户：微信→微信零钱、支付宝→支付宝、云闪付/其他→银行卡 */
+    fun guessAccountId(sourcePackage: String): Long? =
+        guessAccountId(sourcePackage, accounts.value)
+
+    fun clearCaptureLog() {
+        viewModelScope.launch(Dispatchers.IO) {
+            captureDao.clearAll()
+            AppLog.i("Ntf", "capture log cleared")
+        }
+    }
+
+    private fun guessAccountId(sourcePackage: String, accounts: List<AccountEntity>): Long? {
+        val keyword = when (sourcePackage) {
+            NotificationRules.WECHAT -> "微信"
+            NotificationRules.ALIPAY -> "支付宝"
+            else -> "银行"
+        }
+        return accounts.firstOrNull { it.name.contains(keyword) }?.id
+            ?: accounts.firstOrNull()?.id
     }
 
     private companion object {

@@ -148,6 +148,9 @@ interface AccountDao {
     @Query("SELECT * FROM accounts ORDER BY id")
     fun observeAll(): Flow<List<AccountEntity>>
 
+    @Query("SELECT * FROM accounts")
+    suspend fun getAll(): List<AccountEntity>
+
     @Query("SELECT COUNT(*) FROM accounts")
     suspend fun countAll(): Int
 
@@ -164,5 +167,49 @@ interface AccountDao {
     suspend fun update(account: AccountEntity)
 
     @Query("DELETE FROM accounts WHERE id = :id")
+    suspend fun deleteById(id: Long)
+}
+
+@Dao
+interface CaptureDao {
+
+    @Insert
+    suspend fun insert(notification: CapturedNotificationEntity): Long
+
+    @Query("UPDATE captured_notifications SET matchedRule = :rule, queued = :queued WHERE id = :id")
+    suspend fun updateMatch(id: Long, rule: String, queued: Boolean)
+
+    @Query("SELECT * FROM captured_notifications ORDER BY id DESC LIMIT :limit")
+    fun observeRecent(limit: Int): Flow<List<CapturedNotificationEntity>>
+
+    @Query("DELETE FROM captured_notifications WHERE receivedAt < :cutoff")
+    suspend fun deleteOlderThan(cutoff: Long)
+
+    @Query("DELETE FROM captured_notifications WHERE id NOT IN (SELECT id FROM captured_notifications ORDER BY id DESC LIMIT :keep)")
+    suspend fun keepNewest(keep: Int)
+
+    @Query("DELETE FROM captured_notifications")
+    suspend fun clearAll()
+}
+
+@Dao
+interface PendingDao {
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insert(pending: PendingTransactionEntity): Long
+
+    @Query("SELECT COUNT(*) FROM pending_transactions WHERE dedupKey = :dedupKey")
+    suspend fun countByDedupKey(dedupKey: String): Int
+
+    @Query("SELECT * FROM pending_transactions WHERE status = 'PENDING' ORDER BY createdAt DESC")
+    fun observePending(): Flow<List<PendingTransactionEntity>>
+
+    @Query("SELECT COUNT(*) FROM pending_transactions WHERE status = 'PENDING'")
+    fun observeCount(): Flow<Int>
+
+    @Query("SELECT * FROM pending_transactions WHERE status = 'PENDING'")
+    suspend fun getAllPending(): List<PendingTransactionEntity>
+
+    @Query("DELETE FROM pending_transactions WHERE id = :id")
     suspend fun deleteById(id: Long)
 }

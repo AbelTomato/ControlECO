@@ -8,21 +8,66 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [AccountEntity::class, CategoryEntity::class, TransactionEntity::class],
-    version = 2,
-    exportSchema = false,
+    entities = [
+        AccountEntity::class,
+        CategoryEntity::class,
+        TransactionEntity::class,
+        CapturedNotificationEntity::class,
+        PendingTransactionEntity::class,
+    ],
+    version = 3,
+    exportSchema = true,
 )
 abstract class AccBookDatabase : RoomDatabase() {
 
     abstract fun accountDao(): AccountDao
     abstract fun categoryDao(): CategoryDao
     abstract fun transactionDao(): TransactionDao
+    abstract fun captureDao(): CaptureDao
+    abstract fun pendingDao(): PendingDao
 
     companion object {
         /** v2：交易表新增退款标记列 */
         private val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE transactions ADD COLUMN refundMark TEXT NOT NULL DEFAULT 'NONE'")
+            }
+        }
+
+        /** v3：通知采集通道——原始捕获日志表 + 待确认队列表 */
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `captured_notifications` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`packageName` TEXT NOT NULL, " +
+                        "`title` TEXT NOT NULL, " +
+                        "`text` TEXT NOT NULL, " +
+                        "`bigText` TEXT NOT NULL, " +
+                        "`postTime` INTEGER NOT NULL, " +
+                        "`receivedAt` INTEGER NOT NULL, " +
+                        "`matchedRule` TEXT NOT NULL, " +
+                        "`queued` INTEGER NOT NULL)",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `pending_transactions` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`type` TEXT NOT NULL, " +
+                        "`amountCents` INTEGER NOT NULL, " +
+                        "`timestamp` INTEGER NOT NULL, " +
+                        "`counterparty` TEXT NOT NULL, " +
+                        "`note` TEXT NOT NULL, " +
+                        "`sourcePackage` TEXT NOT NULL, " +
+                        "`ruleName` TEXT NOT NULL, " +
+                        "`dedupKey` TEXT NOT NULL, " +
+                        "`rawNotificationId` INTEGER, " +
+                        "`status` TEXT NOT NULL, " +
+                        "`createdAt` INTEGER NOT NULL)",
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS `index_pending_transactions_dedupKey` " +
+                        "ON `pending_transactions` (`dedupKey`)",
+                )
             }
         }
 
@@ -36,7 +81,7 @@ abstract class AccBookDatabase : RoomDatabase() {
                     AccBookDatabase::class.java,
                     "accbook.db",
                 )
-                    .addMigrations(MIGRATION_1_2)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                     .build().also { instance = it }
             }
     }

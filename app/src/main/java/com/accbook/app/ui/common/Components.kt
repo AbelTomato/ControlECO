@@ -36,13 +36,20 @@ import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 
-/** 顶部月份切换条（流水/统计共用，切换同一状态） */
+/** 顶部月份切换条（流水/统计共用，切换同一状态）；trailing 为右上角附加操作入口 */
 @Composable
-fun MonthHeader(month: java.time.YearMonth, onPrev: () -> Unit, onNext: () -> Unit) {
+fun MonthHeader(
+    month: java.time.YearMonth,
+    onPrev: () -> Unit,
+    onNext: () -> Unit,
+    trailing: (@Composable () -> Unit)? = null,
+) {
     Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = onPrev) { Icon(Icons.Filled.KeyboardArrowLeft, contentDescription = "上一月") }
         Text("${month.year}年${month.monthValue}月", style = MaterialTheme.typography.titleMedium)
         IconButton(onClick = onNext) { Icon(Icons.Filled.KeyboardArrowRight, contentDescription = "下一月") }
+        androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
+        trailing?.invoke()
     }
 }
 

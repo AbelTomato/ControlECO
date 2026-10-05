@@ -15,6 +15,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -29,6 +30,9 @@ fun SettingsScreen(
     onOpenAccounts: () -> Unit,
     onOpenCategories: () -> Unit,
     onImport: () -> Unit,
+    onOpenPending: () -> Unit,
+    onOpenCaptureLog: () -> Unit,
+    onOpenNotificationAccess: () -> Unit,
 ) {
     Column(
         Modifier
@@ -70,8 +74,16 @@ fun SettingsScreen(
             color = MaterialTheme.colorScheme.outline,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
         )
+        NotificationAccessSetting(vm, onOpenNotificationAccess)
+        val pendingCount by vm.pendingCount.collectAsStateWithLifecycle(initialValue = 0)
+        SettingRow(
+            if (pendingCount > 0) "待确认账单（$pendingCount）" else "待确认账单",
+            onClick = onOpenPending,
+        )
+        SettingRow("通知捕获日志", onClick = onOpenCaptureLog)
+        CaptureToggles(vm)
         Text(
-            "通知监听、无障碍抓取、银行短信识别将在后续版本提供（见 docs/开发方案.md 阶段二～四）。",
+            "无障碍抓取与银行短信识别将在后续版本提供。",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.outline,
             modifier = Modifier.padding(horizontal = 16.dp),
@@ -79,7 +91,7 @@ fun SettingsScreen(
         HorizontalDivider()
 
         Text(
-            "AccBook v0.1.0 · 数据仅保存在本机",
+            "AccBook v0.2.0 · 数据仅保存在本机",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.outline,
             modifier = Modifier.padding(16.dp),
@@ -106,6 +118,74 @@ private fun RefundDisplaySetting(vm: LedgerViewModel) {
             )
         }
         Switch(checked = showRefunds, onCheckedChange = { vm.setShowRefunds(it) })
+    }
+}
+
+@Composable
+private fun NotificationAccessSetting(vm: LedgerViewModel, onOpenNotificationAccess: () -> Unit) {
+    val connected by vm.listenerConnected.collectAsStateWithLifecycle()
+    val granted = vm.isListenerGranted()
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("通知监听", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                when {
+                    granted && connected -> "已连接，收款/动账通知将自动进入待确认队列"
+                    granted -> "已授权（连接状态未知，若长时间无记录请重启手机）"
+                    else -> "未开启，需在系统设置中授予“通知使用权”"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.outline,
+            )
+        }
+        if (!granted) {
+            TextButton(onClick = onOpenNotificationAccess) { Text("去开启") }
+        }
+    }
+}
+
+@Composable
+private fun CaptureToggles(vm: LedgerViewModel) {
+    val captureEnabled by vm.captureEnabled.collectAsStateWithLifecycle()
+    val debugCaptureAll by vm.debugCaptureAll.collectAsStateWithLifecycle()
+
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("自动记录收款/动账通知", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                "捕获微信/支付宝/云闪付的收款与动账通知，解析后进入待确认队列",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.outline,
+            )
+        }
+        Switch(checked = captureEnabled, onCheckedChange = { vm.setCaptureEnabled(it) })
+    }
+
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("记录所有应用的通知（调试）", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                "debug 排查用：所有应用的通知都进捕获日志（保留 7 天 / 最多 2000 条）",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.outline,
+            )
+        }
+        Switch(checked = debugCaptureAll, onCheckedChange = { vm.setDebugCaptureAll(it) })
     }
 }
 

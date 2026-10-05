@@ -1,5 +1,6 @@
 package com.accbook.app.ui
 
+import android.content.Intent
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -20,13 +21,16 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.accbook.app.data.LedgerViewModel
 import com.accbook.app.ui.accounts.AccountsScreen
 import com.accbook.app.ui.accounts.CategoriesScreen
+import com.accbook.app.ui.debug.CaptureLogScreen
 import com.accbook.app.ui.imports.ImportScreen
+import com.accbook.app.ui.pending.PendingScreen
 import com.accbook.app.ui.settings.SettingsScreen
 import com.accbook.app.ui.stats.StatsScreen
 import com.accbook.app.ui.transactions.EditTransactionScreen
@@ -35,6 +39,7 @@ import com.accbook.app.ui.transactions.TransactionListScreen
 @Composable
 fun AccBookNav(vm: LedgerViewModel) {
     val navController = rememberNavController()
+    val context = LocalContext.current
     NavHost(navController = navController, startDestination = "main") {
         composable("main") {
             MainScaffold(
@@ -44,6 +49,13 @@ fun AccBookNav(vm: LedgerViewModel) {
                 onOpenAccounts = { navController.navigate("accounts") },
                 onOpenCategories = { navController.navigate("categories") },
                 onImport = { navController.navigate("import") },
+                onOpenPending = { navController.navigate("pending") },
+                onOpenCaptureLog = { navController.navigate("captureLog") },
+                onOpenNotificationAccess = {
+                    runCatching {
+                        context.startActivity(Intent(android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                    }
+                },
             )
         }
         composable("edit/{txId}") { entry ->
@@ -53,6 +65,8 @@ fun AccBookNav(vm: LedgerViewModel) {
         composable("accounts") { AccountsScreen(vm = vm, onBack = { navController.popBackStack() }) }
         composable("categories") { CategoriesScreen(vm = vm, onBack = { navController.popBackStack() }) }
         composable("import") { ImportScreen(vm = vm, onBack = { navController.popBackStack() }) }
+        composable("pending") { PendingScreen(vm = vm, onBack = { navController.popBackStack() }) }
+        composable("captureLog") { CaptureLogScreen(vm = vm, onBack = { navController.popBackStack() }) }
     }
 }
 
@@ -64,6 +78,9 @@ private fun MainScaffold(
     onOpenAccounts: () -> Unit,
     onOpenCategories: () -> Unit,
     onImport: () -> Unit,
+    onOpenPending: () -> Unit,
+    onOpenCaptureLog: () -> Unit,
+    onOpenNotificationAccess: () -> Unit,
 ) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     Scaffold(
@@ -94,13 +111,20 @@ private fun MainScaffold(
     ) { padding ->
         Box(Modifier.padding(padding).fillMaxSize()) {
             when (tab) {
-                0 -> TransactionListScreen(vm = vm, onEditTransaction = onEditTransaction)
+                0 -> TransactionListScreen(
+                    vm = vm,
+                    onEditTransaction = onEditTransaction,
+                    onOpenPending = onOpenPending,
+                )
                 1 -> StatsScreen(vm = vm)
                 2 -> SettingsScreen(
                     vm = vm,
                     onOpenAccounts = onOpenAccounts,
                     onOpenCategories = onOpenCategories,
                     onImport = onImport,
+                    onOpenPending = onOpenPending,
+                    onOpenCaptureLog = onOpenCaptureLog,
+                    onOpenNotificationAccess = onOpenNotificationAccess,
                 )
             }
         }
