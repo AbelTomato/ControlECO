@@ -30,23 +30,27 @@ class NotificationCaptureService : NotificationListenerService() {
         val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim().orEmpty()
         val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim().orEmpty()
         val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()?.trim().orEmpty()
-        val messages = buildString {
-            val parcels = extras.getParcelableArray(Notification.EXTRA_MESSAGES) ?: return@buildString
+        // 折叠通知（"[2条]"）的明细行：InboxStyle 在 EXTRA_TEXT_LINES、消息样式在 EXTRA_MESSAGES，
+        // 金额常藏在明细行里，一并并入 text 供规则引擎解析
+        val detailLines = buildList {
             runCatching {
-                Notification.MessagingStyle.Message.getMessagesFromBundleArray(parcels)
-                    .forEach { message ->
-                        message.text?.toString()?.takeIf { it.isNotBlank() }?.let {
-                            if (isNotEmpty()) append(' ')
-                            append(it.trim())
+                extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)
+                    ?.forEach { line -> line?.toString()?.trim()?.takeIf { it.isNotBlank() }?.let { add(it) } }
+            }
+            runCatching {
+                extras.getParcelableArray(Notification.EXTRA_MESSAGES)?.let { parcels ->
+                    Notification.MessagingStyle.Message.getMessagesFromBundleArray(parcels)
+                        .forEach { message ->
+                            message.text?.toString()?.trim()?.takeIf { it.isNotBlank() }?.let { add(it) }
                         }
-                    }
+                }
             }
         }
 
         CaptureCenter.onNotificationPosted(
             packageName = sbn.packageName ?: return,
             title = title,
-            text = listOf(text, messages).filter { it.isNotBlank() }.joinToString(" ").trim(),
+            text = (listOf(text) + detailLines).filter { it.isNotBlank() }.joinToString(" ").trim(),
             bigText = bigText,
             postTime = sbn.notification.`when`,
             isDebugBuild = BuildConfig.DEBUG,

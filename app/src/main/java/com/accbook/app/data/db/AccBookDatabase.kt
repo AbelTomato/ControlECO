@@ -15,7 +15,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         CapturedNotificationEntity::class,
         PendingTransactionEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = true,
 )
 abstract class AccBookDatabase : RoomDatabase() {
@@ -71,6 +71,13 @@ abstract class AccBookDatabase : RoomDatabase() {
             }
         }
 
+        /** v4：待确认队列表新增退款标记列（defaultValue 与实体声明一致，保证迁移库与新建库 schema 完全一致） */
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE pending_transactions ADD COLUMN refundMark TEXT NOT NULL DEFAULT 'NONE'")
+            }
+        }
+
         @Volatile
         private var instance: AccBookDatabase? = null
 
@@ -81,7 +88,7 @@ abstract class AccBookDatabase : RoomDatabase() {
                     AccBookDatabase::class.java,
                     "accbook.db",
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                     .build().also { instance = it }
             }
     }

@@ -7,6 +7,7 @@ import com.accbook.app.data.db.CaptureDao
 import com.accbook.app.data.db.CapturedNotificationEntity
 import com.accbook.app.data.db.PendingDao
 import com.accbook.app.data.db.PendingTransactionEntity
+import com.accbook.app.data.db.RefundMark
 import com.accbook.app.util.AppLog
 import com.accbook.app.util.Money
 import kotlinx.coroutines.CoroutineScope
@@ -158,12 +159,14 @@ object CaptureCenter {
                         ruleName = parsed.ruleName,
                         dedupKey = parsed.dedupKey,
                         rawNotificationId = rawId,
+                        refundMark = if (parsed.isRefund) RefundMark.REFUND_INCOME else RefundMark.NONE,
                     ),
                 )
                 captureDao.updateMatch(rawId, parsed.ruleName, true)
                 AppLog.i(
                     "Ntf",
-                    "queued pending: ${parsed.ruleName} ${parsed.type} ${Money.formatYuan(parsed.amountCents)} pkg=$packageName",
+                    "queued pending: ${parsed.ruleName} ${parsed.type} ${Money.formatYuan(parsed.amountCents)}" +
+                        (if (parsed.isRefund) " [退款]" else "") + " pkg=$packageName",
                 )
             } catch (e: Exception) {
                 AppLog.e("Ntf", "capture handling failed", e)

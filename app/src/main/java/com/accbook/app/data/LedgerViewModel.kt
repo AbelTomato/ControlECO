@@ -360,6 +360,7 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
                     counterparty = item.counterparty,
                     source = TxSource.NOTIFICATION,
                     externalId = externalId,
+                    refundMark = item.refundMark,
                 ),
             )
             pendingDao.deleteById(item.id)
@@ -387,6 +388,7 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
                     counterparty = item.counterparty,
                     source = TxSource.NOTIFICATION,
                     externalId = "NTF:${item.dedupKey}",
+                    refundMark = item.refundMark,
                 )
             }
             val ids = txDao.insertAllIgnore(entities)
