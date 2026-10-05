@@ -30,6 +30,7 @@ import com.accbook.app.ui.accounts.AccountsScreen
 import com.accbook.app.ui.accounts.CategoriesScreen
 import com.accbook.app.ui.debug.CaptureLogScreen
 import com.accbook.app.ui.imports.ImportScreen
+import com.accbook.app.ui.keepalive.KeepAliveScreen
 import com.accbook.app.ui.pending.PendingScreen
 import com.accbook.app.ui.settings.SettingsScreen
 import com.accbook.app.ui.stats.StatsScreen
@@ -56,6 +57,7 @@ fun AccBookNav(vm: LedgerViewModel) {
                         context.startActivity(Intent(android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
                     }
                 },
+                onOpenKeepAlive = { navController.navigate("keepAlive") },
             )
         }
         composable("edit/{txId}") { entry ->
@@ -67,6 +69,17 @@ fun AccBookNav(vm: LedgerViewModel) {
         composable("import") { ImportScreen(vm = vm, onBack = { navController.popBackStack() }) }
         composable("pending") { PendingScreen(vm = vm, onBack = { navController.popBackStack() }) }
         composable("captureLog") { CaptureLogScreen(vm = vm, onBack = { navController.popBackStack() }) }
+        composable("keepAlive") {
+            KeepAliveScreen(
+                vm = vm,
+                onBack = { navController.popBackStack() },
+                onOpenNotificationAccess = {
+                    runCatching {
+                        context.startActivity(Intent(android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                    }
+                },
+            )
+        }
     }
 }
 
@@ -81,6 +94,7 @@ private fun MainScaffold(
     onOpenPending: () -> Unit,
     onOpenCaptureLog: () -> Unit,
     onOpenNotificationAccess: () -> Unit,
+    onOpenKeepAlive: () -> Unit,
 ) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     Scaffold(
@@ -125,6 +139,7 @@ private fun MainScaffold(
                     onOpenPending = onOpenPending,
                     onOpenCaptureLog = onOpenCaptureLog,
                     onOpenNotificationAccess = onOpenNotificationAccess,
+                    onOpenKeepAlive = onOpenKeepAlive,
                 )
             }
         }

@@ -33,6 +33,7 @@ fun SettingsScreen(
     onOpenPending: () -> Unit,
     onOpenCaptureLog: () -> Unit,
     onOpenNotificationAccess: () -> Unit,
+    onOpenKeepAlive: () -> Unit,
 ) {
     Column(
         Modifier
@@ -75,6 +76,7 @@ fun SettingsScreen(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
         )
         NotificationAccessSetting(vm, onOpenNotificationAccess)
+        SettingRow("防杀后台与自启动（保活设置）", onClick = onOpenKeepAlive)
         val pendingCount by vm.pendingCount.collectAsStateWithLifecycle(initialValue = 0)
         SettingRow(
             if (pendingCount > 0) "待确认账单（$pendingCount）" else "待确认账单",
@@ -91,7 +93,7 @@ fun SettingsScreen(
         HorizontalDivider()
 
         Text(
-            "AccBook v0.2.0 · 数据仅保存在本机",
+            "AccBook v0.2.1 · 数据仅保存在本机",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.outline,
             modifier = Modifier.padding(16.dp),

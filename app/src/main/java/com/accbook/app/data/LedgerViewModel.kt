@@ -316,6 +316,7 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
         captureDao.observeRecent(300).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val listenerConnected: StateFlow<Boolean> = CaptureCenter.connected
+    val lastCaptureAt: StateFlow<Long> = CaptureCenter.lastEventAt
 
     private val _captureEnabled = MutableStateFlow(CaptureCenter.isCaptureEnabled())
     val captureEnabled: StateFlow<Boolean> = _captureEnabled
