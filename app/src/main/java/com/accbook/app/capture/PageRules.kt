@@ -36,6 +36,16 @@ object PageRules {
     private val paymentMethodLabels = listOf("支付方式", "付款方式")
     private val timeLabels = listOf("交易时间", "付款时间", "支付时间", "创建时间")
 
+    /**
+     * 无标签商户的排除项（支付宝成功页的商户是独立节点，如"拼多多平台商户"）：
+     * 真实样本（2026-10）节点序 = [支付成功￥12.90, 拼多多平台商户, ￥12.90, 付款方式, 中国银行储蓄卡(8920), x3, 完成…]
+     * 商户紧跟"支付成功"标题节点，兜底从锚点向后扫描第一个"像名称"的节点。
+     */
+    private val fallbackExcluded = counterpartyLabels + paymentMethodLabels + timeLabels +
+        listOf("完成", "确认", "取消", "查看", "收起", "展开", "复制", "返回", "同意", "关闭", "继续", "知道了", "账单详情", "交易详情", "优惠", "红包")
+
+    private val stepperNode = Regex("""^x\d+$""")
+
     /** 金额：优先"金额标签"同行，其次独立金额节点（成功页大字），最后任意 ¥ 金额 */
     private val labeledAmount = Regex("""(?:付款金额|支付金额|交易金额|金额)\s*[：:]?\s*[￥¥]?\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)""")
     private val standaloneAmount = Regex("""^[￥¥]\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)$""")
@@ -112,7 +122,9 @@ object PageRules {
             return null
         }
 
-        val counterparty = valueAfterLabel(nodes, counterpartyLabels).orEmpty()
+        val counterparty = valueAfterLabel(nodes, counterpartyLabels)
+            ?: guessCounterparty(nodes)
+            ?: ""
         val paymentMethod = valueAfterLabel(nodes, paymentMethodLabels)
         val txTimeText = valueAfterLabel(nodes, timeLabels) ?: joined
         val txTime = timePattern.find(txTimeText)?.let { m ->
@@ -190,5 +202,29 @@ object PageRules {
         if (labels.any { t == it }) return false
         if (t.all { it.isDigit() }) return false // 订单号/单号之类
         return true
+    }
+
+    /**
+     * 无标签商户兜底：从页面锚点节点（"支付成功"等）向后扫最多 5 个节点，
+     * 取第一个"像名称"的文本。排除金额/状态/按钮/标签/序号等；只在标签提取失败时调用，
+     * 填错的代价低（确认弹窗里可见可改）。
+     */
+    private fun guessCounterparty(nodes: List<String>): String? {
+        val anchorIdx = nodes.indexOfFirst { node ->
+            (successKeywords + billDetailKeywords).any { node.contains(it) }
+        }
+        if (anchorIdx < 0) return null
+        val end = minOf(nodes.size, anchorIdx + 6)
+        for (i in anchorIdx + 1 until end) {
+            val t = nodes[i]
+            if (t.isEmpty()) continue
+            if (t.startsWith("￥") || t.startsWith("¥")) continue
+            if (t.all { it.isDigit() }) continue
+            if (stepperNode.matches(t)) continue
+            if (statusPhrases.any { t.contains(it) }) continue
+            if (fallbackExcluded.any { t.contains(it) }) continue
+            return t.take(30)
+        }
+        return null
     }
 }

@@ -145,6 +145,27 @@ class PageRulesTest {
         assertNull(parse("com.example.other", listOf("支付成功", "¥12.00")))
     }
 
+    // ---------- 真实样本（真机采集，2026-10） ----------
+
+    @Test
+    fun `alipay real success page with unlabeled merchant node`() {
+        // 用户真机样本：商户"拼多多平台商户"是独立节点、无标签，靠锚点兜底提取
+        val r = parse(
+            NotificationRules.ALIPAY,
+            listOf(
+                "支付成功￥12.90", "拼多多平台商户", "￥12.90", "付款方式",
+                "中国银行储蓄卡(8920)", "x3", "完成", "完成", "完成",
+            ),
+        )!!
+        assertEquals(TxType.EXPENSE, r.type)
+        assertEquals(1290L, r.amountCents)
+        assertEquals("拼多多平台商户", r.counterparty)
+        assertEquals("中国银行储蓄卡(8920)", r.paymentMethod)
+        assertEquals("支付宝·支付页", r.ruleName)
+        assertEquals("支付方式 中国银行储蓄卡(8920)", r.note)
+        assertEquals("com.eg.android.AlipayGphone|EXPENSE|1290|${capturedAt / 60_000}", r.dedupKey)
+    }
+
     // ---------- 捕获日志入库判定 ----------
 
     @Test

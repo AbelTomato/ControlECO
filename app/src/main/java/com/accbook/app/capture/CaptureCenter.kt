@@ -416,6 +416,48 @@ object CaptureCenter {
             .forEach { pendingDao.deleteById(it.id) }
     }
 
+    /**
+     * debug：手动弹出测试悬浮窗（设置页入口）。
+     * 不经捕获链路、不入账，确认/忽略只回显——用于区分"悬浮窗层坏了/被拦截"与"页面没捕获到"。
+     */
+    fun showFloatingTest(onResult: (String) -> Unit) {
+        if (!initialized) return
+        if (!Settings.canDrawOverlays(appContext)) {
+            onResult("未授权悬浮窗权限：设置页「悬浮确认窗」→ 去授权")
+            return
+        }
+        scope.launch {
+            val categories = categoryDao.getAll().filter { it.type == TxType.EXPENSE }
+            val accounts = accountDao.getAll()
+            if (categories.isEmpty() || accounts.isEmpty()) {
+                onResult("无分类/账户数据，无法预填")
+                return@launch
+            }
+            val parsed = PageRules.ParsedPage(
+                type = TxType.EXPENSE,
+                amountCents = 1290,
+                counterparty = "拼多多平台商户",
+                paymentMethod = "中国银行储蓄卡(8920)",
+                txTime = null,
+                sourceLabel = "测试",
+                ruleName = "悬浮窗测试",
+                note = "测试数据，确认不会入账",
+                dedupKey = "test|floating",
+            )
+            mainHandler.post {
+                FloatingConfirmWindow.show(
+                    appContext,
+                    parsed,
+                    categories,
+                    accounts,
+                    onConfirm = { _, _ -> toast("测试窗口：确认回调正常（未入账）") },
+                    onIgnore = { toast("测试窗口：忽略回调正常") },
+                )
+                onResult("悬浮窗已尝试弹出；若看不到，多半被支付保护/支付保险箱拦截（见保活设置），或看 Logcat [Page] 日志")
+            }
+        }
+    }
+
     private fun toast(message: String) {
         mainHandler.post {
             android.widget.Toast.makeText(appContext, message, android.widget.Toast.LENGTH_SHORT).show()

@@ -24,11 +24,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import android.os.Build
+import android.widget.Toast
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.accbook.app.BuildConfig
 import com.accbook.app.data.LedgerViewModel
 
 @Composable
@@ -232,6 +236,7 @@ private fun FloatingConfirmSetting(vm: LedgerViewModel, onOpenOverlayPermission:
     }
     val granted = remember(resumeTick) { vm.isOverlayGranted() }
     val floatingOn by vm.floatingConfirmEnabled.collectAsStateWithLifecycle()
+    val context = LocalContext.current
 
     Row(
         Modifier
@@ -247,6 +252,13 @@ private fun FloatingConfirmSetting(vm: LedgerViewModel, onOpenOverlayPermission:
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.outline,
             )
+        }
+        if (BuildConfig.DEBUG) {
+            TextButton(onClick = {
+                vm.showFloatingTest { msg ->
+                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                }
+            }) { Text("测试弹窗") }
         }
         if (!granted) {
             TextButton(onClick = onOpenOverlayPermission) { Text("去授权") }

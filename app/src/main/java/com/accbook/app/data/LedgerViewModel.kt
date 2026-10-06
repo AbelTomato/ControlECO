@@ -377,6 +377,9 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
     /** 悬浮窗授权（悬浮确认窗的前置） */
     fun isOverlayGranted(): Boolean = Settings.canDrawOverlays(getApplication())
 
+    /** debug：手动弹出测试悬浮窗（区分悬浮窗层故障与页面未捕获） */
+    fun showFloatingTest(onResult: (String) -> Unit) = CaptureCenter.showFloatingTest(onResult)
+
     fun discardPending(id: Long) {
         viewModelScope.launch(Dispatchers.IO) {
             pendingDao.deleteById(id)
