@@ -39,6 +39,7 @@ class AccBookAccessibilityService : AccessibilityService() {
         private const val FINGERPRINT_CAP = 64
         private const val FINGERPRINT_TTL_MS = 60_000L
         private const val EVENT_LOG_INTERVAL_MS = 2_000L
+        private const val MAX_EMPTY_RETRIES = 2
 
         fun serviceComponent(context: Context): ComponentName =
             ComponentName(context, AccBookAccessibilityService::class.java)
@@ -56,6 +57,9 @@ class AccBookAccessibilityService : AccessibilityService() {
 
     private val handler = Handler(Looper.getMainLooper())
     private var collectScheduled = false
+
+    /** 空读重试：窗口切换过渡期内容未就绪时补采（新事件到来时归零） */
+    private var emptyRetries = 0
 
     /** 最近一次事件的包名（采集时只取该包名的窗口，避免混入其他应用的后台窗口文本） */
     private var pendingPkg: String? = null
@@ -103,6 +107,8 @@ class AccBookAccessibilityService : AccessibilityService() {
         }
 
         pendingPkg = pkg
+        // 新事件说明页面在变化，重置空读重试计数
+        emptyRetries = 0
         scheduleCollect()
     }
 
@@ -119,26 +125,50 @@ class AccBookAccessibilityService : AccessibilityService() {
         val pkg = pendingPkg ?: return
 
         val texts = ArrayList<String>(160)
+        var activePkg: String? = null
         // 活动窗口优先
         rootInActiveWindow?.let { root ->
-            if (root.packageName?.toString() == pkg) collectTexts(root, 0, texts)
+            activePkg = root.packageName?.toString()
+            if (activePkg == pkg) collectTexts(root, 0, texts)
         }
         // 同包名的其余窗口：支付成功页可能是 dialog/非焦点窗口，不会成为 active root
+        var appWindows = 0
+        var readableWindows = 0
         if (texts.size < MAX_NODES) {
             runCatching {
                 for (window in windows) {
-                    if (texts.size >= MAX_NODES) break
                     if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION) continue
+                    appWindows++
                     val root = window.root ?: continue
+                    readableWindows++
                     if (root.packageName?.toString() != pkg) continue
+                    if (texts.size >= MAX_NODES) break
                     collectTexts(root, 0, texts)
                 }
             }.onFailure { AppLog.w("Page", "windows enumerate failed", it) }
         }
         if (texts.isEmpty()) {
-            AppLog.i("Page", "collect empty pkg=$pkg（窗口内容不可读？）")
+            // 窗口切换过渡期新窗口内容常常还没渲染好（真机日志证实：切进微信瞬间 collect empty），
+            // 空读后限次重试；详情日志用于区分"过渡期没就绪"与"窗口真的不可读"
+            if (emptyRetries < MAX_EMPTY_RETRIES) {
+                emptyRetries++
+                AppLog.i(
+                    "Page",
+                    "collect empty pkg=$pkg retry#$emptyRetries " +
+                        "activeRoot=${activePkg ?: "null"} appWindows=$appWindows readable=$readableWindows",
+                )
+                scheduleCollect()
+            } else {
+                AppLog.i(
+                    "Page",
+                    "collect empty pkg=$pkg give up " +
+                        "activeRoot=${activePkg ?: "null"} appWindows=$appWindows readable=$readableWindows" +
+                        "（readable>0 仍空=内容不可读；appWindows=0=枚举不到本包窗口）",
+                )
+            }
             return
         }
+        emptyRetries = 0
 
         val fingerprint = texts.hashCode()
         val now = SystemClock.elapsedRealtime()
