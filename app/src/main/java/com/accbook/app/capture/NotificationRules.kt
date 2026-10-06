@@ -101,8 +101,11 @@ object NotificationRules {
             else -> expenseAmount
         }
         val fallbackAllowed = refundHit || (type == TxType.INCOME && incomeHit) || (type == TxType.EXPENSE && expenseHit)
-        val amountText = primary.find(body)?.groupValues?.get(1)
-            ?: reversedAmount.find(body)?.groupValues?.get(1)
+        // 反向优先：金额在关键词前是主流格式（"你有一笔14.90元的支出"），且能避开
+        // 关键词后跟营销文案的干扰（真实样本"你有一笔0.01元的支出，领1元生活缴费红包"
+        // 曾被正向正则抓走红包的"1元"，识别成 ¥1.00）
+        val amountText = reversedAmount.find(body)?.groupValues?.get(1)
+            ?: primary.find(body)?.groupValues?.get(1)
             ?: (if (fallbackAllowed) currencyAmount.find(body)?.groupValues?.get(1) else null)
         if (amountText == null) {
             AppLog.d(

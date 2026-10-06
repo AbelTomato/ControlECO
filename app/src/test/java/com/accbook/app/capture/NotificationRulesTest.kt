@@ -79,6 +79,15 @@ class NotificationRulesTest {
     }
 
     @Test
+    fun `alipay expense with promo after keyword`() {
+        // 真实样本（2026-10）：关键词后的"领1元生活缴费红包"是营销文案，
+        // 金额在关键词前（0.01元），反向正则必须优先于正向
+        val r = parse(NotificationRules.ALIPAY, "交易提醒", "你有一笔0.01元的支出，领1元生活缴费红包。")!!
+        assertEquals(TxType.EXPENSE, r.type)
+        assertEquals(1L, r.amountCents)
+    }
+
+    @Test
     fun `alipay expense with amount before keyword`() {
         val r = parse(NotificationRules.ALIPAY, "交易提醒", "你有一笔14.90元的支出，点此查看详情。")!!
         assertEquals(TxType.EXPENSE, r.type)
