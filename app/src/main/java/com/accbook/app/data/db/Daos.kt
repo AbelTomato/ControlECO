@@ -182,6 +182,9 @@ interface CaptureDao {
     @Query("SELECT * FROM captured_notifications ORDER BY id DESC LIMIT :limit")
     fun observeRecent(limit: Int): Flow<List<CapturedNotificationEntity>>
 
+    @Query("SELECT * FROM captured_notifications WHERE source = :source ORDER BY id DESC LIMIT :limit")
+    fun observeRecentBySource(source: CaptureChannel, limit: Int): Flow<List<CapturedNotificationEntity>>
+
     @Query("DELETE FROM captured_notifications WHERE receivedAt < :cutoff")
     suspend fun deleteOlderThan(cutoff: Long)
 

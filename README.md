@@ -29,6 +29,25 @@ export PATH="/d/Java/jdk-17.0.20.1+1/bin:$PATH"
 
 APK 输出：`app/build/outputs/apk/debug/app-debug.apk`
 
+## 真机调试（USB 实时日志）
+
+1. **手机打开开发者选项**：设置 → 关于手机 → 连点"版本号"7 次；华为/荣耀通常是 设置 → 系统和更新 → 开发人员选项（或先在关于手机连点版本号开启）。
+2. **打开 USB 调试**：开发者选项里开启"USB 调试"；华为/荣耀若还有"仅充电模式下允许 ADB 调试"，一并开启。
+3. **连接**：数据线连接电脑，手机弹窗"允许 USB 调试？"勾选"一律允许"再确定。
+4. **电脑端（Git Bash）**：
+
+```bash
+ADB="D:/AndroidSDK/platform-tools/adb.exe"
+"$ADB" devices                 # 确认设备已连接（状态 device；显示 unauthorized 要回手机重新授权）
+"$ADB" install -r app/build/outputs/apk/debug/app-debug.apk   # 装机
+"$ADB" logcat -c               # 清空旧日志
+"$ADB" logcat -v time -s AccBook            # 实时日志：本应用全部（[Ntf] 通知 / [Page] 页面）
+"$ADB" logcat -v time -s AccBook | grep Page    # 只看页面通道（页面快照/规则判定/悬浮窗原因）
+"$ADB" logcat -v time -s AccBook > accbook.log  # 边看边存文件，方便把样本发给开发会话
+```
+
+5. **采样流程**（页面规则调试）：`logcat -c` 清屏 → 手机上完整走一遍支付 → 终端里 `snapshot pkg=... texts=[...]` 就是页面文本快照，复制出来对照修改 `PageRules.kt`（流程见维护指南第五节）。
+
 ## 文档
 
 - [docs/开发方案.md](docs/开发方案.md) —— 总体方案（含后续自动记账各阶段的设计结论与设计）

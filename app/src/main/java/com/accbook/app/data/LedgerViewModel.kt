@@ -15,6 +15,7 @@ import com.accbook.app.capture.NotificationRules
 import com.accbook.app.csv.BillParsers
 import com.accbook.app.data.db.AccountBalanceRow
 import com.accbook.app.data.db.AccountEntity
+import com.accbook.app.data.db.CaptureChannel
 import com.accbook.app.data.db.CapturedNotificationEntity
 import com.accbook.app.data.db.CategoryEntity
 import com.accbook.app.data.db.CategorySumRow
@@ -314,8 +315,20 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
     val pendingCount: StateFlow<Int> =
         pendingDao.observeCount().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
 
-    val captureRows: StateFlow<List<CapturedNotificationEntity>> =
-        captureDao.observeRecent(300).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    /** 捕获日志通道筛选：null = 全部（通知 + 页面合并） */
+    val captureFilter = MutableStateFlow<CaptureChannel?>(null)
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val captureRows: StateFlow<List<CapturedNotificationEntity>> = captureFilter
+        .flatMapLatest { channel ->
+            if (channel == null) captureDao.observeRecent(300)
+            else captureDao.observeRecentBySource(channel, 300)
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun setCaptureFilter(channel: CaptureChannel?) {
+        captureFilter.value = channel
+    }
 
     val listenerConnected: StateFlow<Boolean> = CaptureCenter.connected
     val a11yConnected: StateFlow<Boolean> = CaptureCenter.a11yConnected

@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.widget.Toast
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -18,6 +19,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -39,24 +41,26 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.accbook.app.data.LedgerViewModel
+import com.accbook.app.data.db.CaptureChannel
 import com.accbook.app.ui.common.formatTimestamp
 
 /**
- * 通知捕获日志（调试）：展示原始通知快照，点击复制全部内容便于提炼规则。
- * debug 构建可在 Logcat 用 tag=AccBook 过滤全量捕获明细。
+ * 捕获日志（调试）：通知/页面两个通道的原始快照，可按通道筛选，点击复制全部内容便于提炼规则。
+ * debug 构建可在 Logcat 用 tag=AccBook 过滤全量捕获明细（[Ntf]=通知、[Page]=页面）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CaptureLogScreen(vm: LedgerViewModel, onBack: () -> Unit) {
     val rows by vm.captureRows.collectAsStateWithLifecycle(initialValue = emptyList())
     val connected by vm.listenerConnected.collectAsStateWithLifecycle()
+    val filter by vm.captureFilter.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var clearAsk by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("通知捕获日志") },
+                title = { Text("捕获日志") },
                 navigationIcon = {
                     IconButton(onClick = onBack) { Icon(Icons.Filled.ArrowBack, contentDescription = "返回") }
                 },
@@ -89,19 +93,39 @@ fun CaptureLogScreen(vm: LedgerViewModel, onBack: () -> Unit) {
                     }) { Text("去开启") }
                 }
             }
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                FilterChip(
+                    selected = filter == null,
+                    onClick = { vm.setCaptureFilter(null) },
+                    label = { Text("全部") },
+                )
+                FilterChip(
+                    selected = filter == CaptureChannel.NOTIFICATION,
+                    onClick = { vm.setCaptureFilter(CaptureChannel.NOTIFICATION) },
+                    label = { Text("通知") },
+                )
+                FilterChip(
+                    selected = filter == CaptureChannel.A11Y,
+                    onClick = { vm.setCaptureFilter(CaptureChannel.A11Y) },
+                    label = { Text("页面") },
+                )
+            }
             Text(
                 "共 ${rows.size} 条（仅保留最近记录）；点条目可复制原文；" +
-                    "debug 构建下 Logcat 过滤 AccBook 可看全部明细。",
+                    "debug 构建下 Logcat 过滤 AccBook 可看全部明细（[Ntf] 通知 / [Page] 页面）。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.outline,
-                modifier = Modifier.padding(horizontal = 16.dp),
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
             )
             HorizontalDivider()
 
             if (rows.isEmpty()) {
                 Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     Text(
-                        "暂无捕获记录\n收到通知后会在这里出现",
+                        "暂无捕获记录\n收到通知或打开支付页面后会出现",
                         textAlign = TextAlign.Center,
                         color = MaterialTheme.colorScheme.outline,
                     )
@@ -115,14 +139,16 @@ fun CaptureLogScreen(vm: LedgerViewModel, onBack: () -> Unit) {
                                 .clickable {
                                     copyToClipboard(
                                         context,
-                                        "pkg=${n.packageName}\ntitle=${n.title}\ntext=${n.text}\nbigText=${n.bigText}",
+                                        "channel=${if (n.source == CaptureChannel.A11Y) "页面" else "通知"}\n" +
+                                            "pkg=${n.packageName}\ntitle=${n.title}\ntext=${n.text}\nbigText=${n.bigText}",
                                     )
                                 }
                                 .padding(horizontal = 16.dp, vertical = 10.dp),
                         ) {
                             Column(Modifier.weight(1f)) {
                                 Text(
-                                    "${n.packageName} · ${n.matchedRule.ifBlank { "未匹配" }}${if (n.queued) " · 已入待确认" else ""}",
+                                    "${if (n.source == CaptureChannel.A11Y) "页面" else "通知"} · ${n.packageName} · " +
+                                        n.matchedRule.ifBlank { "未匹配" } + if (n.queued) " · 已入待确认" else "",
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.outline,
                                 )

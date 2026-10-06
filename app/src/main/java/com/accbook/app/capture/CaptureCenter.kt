@@ -273,7 +273,8 @@ object CaptureCenter {
                     (parsed.txTime ?: capturedAt) / 60_000,
                 )
                 if (related != null) {
-                    // 富化：通知捕获的条目缺收款方/支付方式，页面侧信息补进去（同一笔只入一次）
+                    // 富化：通知捕获的条目缺收款方/支付方式，页面侧信息补进去；
+                    // 去重闸门在入账时（externalId 唯一），悬浮窗照常弹出供用户一键确认
                     val note = buildString {
                         append(related.note)
                         if (parsed.counterparty.isNotBlank() && !related.note.contains(parsed.counterparty)) {
@@ -293,6 +294,7 @@ object CaptureCenter {
                     )
                     captureDao.updateMatch(rawId, parsed.ruleName, true)
                     AppLog.i("Page", "enriched pending #${related.id} ${parsed.ruleName} ${Money.formatYuan(parsed.amountCents)}")
+                    maybeShowFloatingConfirm(parsed)
                     return@launch
                 }
 
@@ -350,7 +352,10 @@ object CaptureCenter {
         }
         val categories = categoryDao.getAll().filter { it.type == parsed.type }
         val accounts = accountDao.getAll()
-        if (categories.isEmpty() || accounts.isEmpty()) return
+        if (categories.isEmpty() || accounts.isEmpty()) {
+            AppLog.w("Page", "floating confirm skipped (no categories/accounts to prefill)")
+            return
+        }
         mainHandler.post {
             FloatingConfirmWindow.show(
                 appContext,
@@ -360,15 +365,18 @@ object CaptureCenter {
                 onConfirm = { categoryId, accountId -> confirmDirect(parsed, categoryId, accountId) },
                 onIgnore = {
                     scope.launch {
-                        pendingDao.deleteByDedupKey(parsed.dedupKey)
-                        AppLog.i("Page", "floating ignored, removed pending ${parsed.dedupKey}")
+                        deletePendingFor(parsed)
+                        AppLog.i("Page", "floating ignored, removed same-transaction pending entries")
                     }
                 },
             )
         }
     }
 
-    /** 悬浮窗确认：直接入账（不走待确认），并清掉同笔待确认条目；externalId 防双通道重复 */
+    /**
+     * 悬浮窗确认：直接入账（不走待确认），并清掉同笔待确认条目（含 ±1 分钟邻键——
+     * 通知通道先建的条目 dedupKey 与页面键不同）；externalId 唯一索引兜底防双通道重复。
+     */
     private fun confirmDirect(parsed: PageRules.ParsedPage, categoryId: Long, accountId: Long) {
         scope.launch {
             try {
@@ -386,15 +394,26 @@ object CaptureCenter {
                         externalId = externalId,
                     ),
                 )
-                pendingDao.deleteByDedupKey(parsed.dedupKey)
+                deletePendingFor(parsed)
                 toast("已入账 ${Money.formatYuan(parsed.amountCents)}")
                 AppLog.i("Page", "floating confirmed externalId=$externalId")
             } catch (e: Exception) {
                 // externalId 唯一索引冲突 = 该笔已经入过账（如通知通道先行确认）
+                deletePendingFor(parsed)
                 toast("该笔已入账，跳过重复记录")
                 AppLog.w("Page", "floating confirm rejected", e)
             }
         }
+    }
+
+    /** 清掉同笔交易的待确认条目：精确 dedupKey + ±1 分钟邻键 */
+    private suspend fun deletePendingFor(parsed: PageRules.ParsedPage) {
+        val minute = parsed.dedupKey.substringAfterLast('|').toLongOrNull() ?: return
+        val prefix = parsed.dedupKey.substringBeforeLast('|')
+        val candidates = (minute - 1..minute + 1).map { "$prefix|$it" }.toSet()
+        pendingDao.getAllPending()
+            .filter { it.dedupKey in candidates }
+            .forEach { pendingDao.deleteById(it.id) }
     }
 
     private fun toast(message: String) {
