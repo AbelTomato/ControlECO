@@ -1,6 +1,7 @@
 package com.accbook.app.ui
 
 import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -57,6 +58,21 @@ fun AccBookNav(vm: LedgerViewModel) {
                         context.startActivity(Intent(android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
                     }
                 },
+                onOpenAccessibilitySettings = {
+                    runCatching {
+                        context.startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                    }
+                },
+                onOpenOverlayPermission = {
+                    runCatching {
+                        context.startActivity(
+                            Intent(
+                                android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                Uri.parse("package:${context.packageName}"),
+                            ),
+                        )
+                    }
+                },
                 onOpenKeepAlive = { navController.navigate("keepAlive") },
             )
         }
@@ -78,6 +94,11 @@ fun AccBookNav(vm: LedgerViewModel) {
                         context.startActivity(Intent(android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
                     }
                 },
+                onOpenAccessibilitySettings = {
+                    runCatching {
+                        context.startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                    }
+                },
             )
         }
     }
@@ -94,6 +115,8 @@ private fun MainScaffold(
     onOpenPending: () -> Unit,
     onOpenCaptureLog: () -> Unit,
     onOpenNotificationAccess: () -> Unit,
+    onOpenAccessibilitySettings: () -> Unit,
+    onOpenOverlayPermission: () -> Unit,
     onOpenKeepAlive: () -> Unit,
 ) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
@@ -139,6 +162,8 @@ private fun MainScaffold(
                     onOpenPending = onOpenPending,
                     onOpenCaptureLog = onOpenCaptureLog,
                     onOpenNotificationAccess = onOpenNotificationAccess,
+                    onOpenAccessibilitySettings = onOpenAccessibilitySettings,
+                    onOpenOverlayPermission = onOpenOverlayPermission,
                     onOpenKeepAlive = onOpenKeepAlive,
                 )
             }

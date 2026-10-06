@@ -17,10 +17,17 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.accbook.app.data.LedgerViewModel
 
@@ -33,6 +40,8 @@ fun SettingsScreen(
     onOpenPending: () -> Unit,
     onOpenCaptureLog: () -> Unit,
     onOpenNotificationAccess: () -> Unit,
+    onOpenAccessibilitySettings: () -> Unit,
+    onOpenOverlayPermission: () -> Unit,
     onOpenKeepAlive: () -> Unit,
 ) {
     Column(
@@ -76,16 +85,18 @@ fun SettingsScreen(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
         )
         NotificationAccessSetting(vm, onOpenNotificationAccess)
+        AccessibilityCaptureSetting(vm, onOpenAccessibilitySettings)
+        FloatingConfirmSetting(vm, onOpenOverlayPermission)
         SettingRow("防杀后台与自启动（保活设置）", onClick = onOpenKeepAlive)
         val pendingCount by vm.pendingCount.collectAsStateWithLifecycle(initialValue = 0)
         SettingRow(
             if (pendingCount > 0) "待确认账单（$pendingCount）" else "待确认账单",
             onClick = onOpenPending,
         )
-        SettingRow("通知捕获日志", onClick = onOpenCaptureLog)
+        SettingRow("捕获日志（通知/页面）", onClick = onOpenCaptureLog)
         CaptureToggles(vm)
         Text(
-            "无障碍抓取与银行短信识别将在后续版本提供。",
+            "银行短信识别将在后续版本提供。无障碍/悬浮窗被拦截时见保活设置中的支付保护说明。",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.outline,
             modifier = Modifier.padding(horizontal = 16.dp),
@@ -148,6 +159,114 @@ private fun NotificationAccessSetting(vm: LedgerViewModel, onOpenNotificationAcc
         if (!granted) {
             TextButton(onClick = onOpenNotificationAccess) { Text("去开启") }
         }
+    }
+}
+
+@Composable
+private fun AccessibilityCaptureSetting(vm: LedgerViewModel, onOpenAccessibilitySettings: () -> Unit) {
+    val connected by vm.a11yConnected.collectAsStateWithLifecycle()
+    // resumeTick 联动：从系统设置页返回时重新检测；状态流变化时（resumeTick 是 key）也会刷新
+    var resumeTick by remember { mutableIntStateOf(0) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) resumeTick++
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    val enabled = remember(resumeTick) { vm.isA11yEnabled() }
+    val captureOn by vm.a11yCaptureEnabled.collectAsStateWithLifecycle()
+
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("无障碍页面采集", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                when {
+                    enabled && connected -> "已连接，支付成功页/账单详情页自动补全收款方与支付方式"
+                    enabled -> "已开启（连接未知，若长时间无记录请重启手机）"
+                    else -> "未开启，需在系统无障碍设置中启用「AccBook 支付页面采集」"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.outline,
+            )
+        }
+        if (!enabled) {
+            TextButton(onClick = onOpenAccessibilitySettings) { Text("去开启") }
+        }
+    }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("自动记录支付页面", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                "无障碍开启时，从支付页/账单详情提取金额进入待确认队列；" +
+                    "页面信息与通知捕获同笔自动合并，只入账一次",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.outline,
+            )
+        }
+        Switch(checked = captureOn, onCheckedChange = { vm.setA11yCaptureEnabled(it) })
+    }
+}
+
+@Composable
+private fun FloatingConfirmSetting(vm: LedgerViewModel, onOpenOverlayPermission: () -> Unit) {
+    var resumeTick by remember { mutableIntStateOf(0) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) resumeTick++
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    val granted = remember(resumeTick) { vm.isOverlayGranted() }
+    val floatingOn by vm.floatingConfirmEnabled.collectAsStateWithLifecycle()
+
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("悬浮确认窗", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                if (granted) "已授权，支付完成后悬浮预填卡片，点一下即入账（不进待确认队列）"
+                else "需要「显示在其他应用上层」权限；未授权时降级为进入待确认队列",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.outline,
+            )
+        }
+        if (!granted) {
+            TextButton(onClick = onOpenOverlayPermission) { Text("去授权") }
+        }
+    }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("支付完成弹出悬浮窗", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                "需同时开启无障碍页面采集；华为/荣耀支付保护中心、小米支付保险箱可能拦截，见保活设置",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.outline,
+            )
+        }
+        Switch(checked = floatingOn, onCheckedChange = { vm.setFloatingConfirmEnabled(it) })
     }
 }
 

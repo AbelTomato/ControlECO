@@ -3,11 +3,13 @@ package com.accbook.app.data
 import android.app.Application
 import android.content.Context
 import android.net.Uri
+import android.provider.Settings
 import androidx.core.app.NotificationManagerCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.accbook.app.AccBookApp
 import com.accbook.app.BuildConfig
+import com.accbook.app.capture.AccBookAccessibilityService
 import com.accbook.app.capture.CaptureCenter
 import com.accbook.app.capture.NotificationRules
 import com.accbook.app.csv.BillParsers
@@ -316,6 +318,7 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
         captureDao.observeRecent(300).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val listenerConnected: StateFlow<Boolean> = CaptureCenter.connected
+    val a11yConnected: StateFlow<Boolean> = CaptureCenter.a11yConnected
     val lastCaptureAt: StateFlow<Long> = CaptureCenter.lastEventAt
 
     private val _captureEnabled = MutableStateFlow(CaptureCenter.isCaptureEnabled())
@@ -324,6 +327,22 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
     fun setCaptureEnabled(enabled: Boolean) {
         CaptureCenter.setCaptureEnabled(enabled)
         _captureEnabled.value = enabled
+    }
+
+    private val _a11yCaptureEnabled = MutableStateFlow(CaptureCenter.isA11yCaptureEnabled())
+    val a11yCaptureEnabled: StateFlow<Boolean> = _a11yCaptureEnabled
+
+    fun setA11yCaptureEnabled(enabled: Boolean) {
+        CaptureCenter.setA11yCaptureEnabled(enabled)
+        _a11yCaptureEnabled.value = enabled
+    }
+
+    private val _floatingConfirmEnabled = MutableStateFlow(CaptureCenter.isFloatingConfirmEnabled())
+    val floatingConfirmEnabled: StateFlow<Boolean> = _floatingConfirmEnabled
+
+    fun setFloatingConfirmEnabled(enabled: Boolean) {
+        CaptureCenter.setFloatingConfirmEnabled(enabled)
+        _floatingConfirmEnabled.value = enabled
     }
 
     private val _debugCaptureAll = MutableStateFlow(CaptureCenter.isDebugCaptureAll(BuildConfig.DEBUG))
@@ -338,6 +357,12 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
         val app = getApplication<AccBookApp>()
         return NotificationManagerCompat.getEnabledListenerPackages(app).contains(app.packageName)
     }
+
+    /** 系统无障碍设置中是否已开启采集服务 */
+    fun isA11yEnabled(): Boolean = AccBookAccessibilityService.isEnabled(getApplication())
+
+    /** 悬浮窗授权（悬浮确认窗的前置） */
+    fun isOverlayGranted(): Boolean = Settings.canDrawOverlays(getApplication())
 
     fun discardPending(id: Long) {
         viewModelScope.launch(Dispatchers.IO) {

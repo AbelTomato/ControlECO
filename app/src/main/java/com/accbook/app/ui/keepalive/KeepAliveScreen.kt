@@ -47,10 +47,16 @@ import android.os.Build
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun KeepAliveScreen(vm: LedgerViewModel, onBack: () -> Unit, onOpenNotificationAccess: () -> Unit) {
+fun KeepAliveScreen(
+    vm: LedgerViewModel,
+    onBack: () -> Unit,
+    onOpenNotificationAccess: () -> Unit,
+    onOpenAccessibilitySettings: () -> Unit,
+) {
     val brand = remember { Brand.current() }
     val context = LocalContext.current
     val connected by vm.listenerConnected.collectAsStateWithLifecycle()
+    val a11yConnected by vm.a11yConnected.collectAsStateWithLifecycle()
     val lastCaptureAt by vm.lastCaptureAt.collectAsStateWithLifecycle()
 
     // 从系统设置页返回时刷新可检测状态
@@ -64,6 +70,7 @@ fun KeepAliveScreen(vm: LedgerViewModel, onBack: () -> Unit, onOpenNotificationA
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
     val granted = remember(resumeTick) { vm.isListenerGranted() }
+    val a11yEnabled = remember(resumeTick) { vm.isA11yEnabled() }
     val batteryIgnoring = remember(resumeTick) { KeepAliveIntents.isIgnoringBatteryOptimizations(context) }
     val model = remember(resumeTick) { Build.MODEL ?: "" }
 
@@ -99,10 +106,38 @@ fun KeepAliveScreen(vm: LedgerViewModel, onBack: () -> Unit, onOpenNotificationA
                 action = if (!granted) "去开启" to onOpenNotificationAccess else null,
             )
             StatusRow(
-                label = "最近捕获通知",
+                label = "无障碍页面采集",
+                value = when {
+                    a11yEnabled && a11yConnected -> "已连接"
+                    a11yEnabled -> "已开启（连接未知）"
+                    else -> "未开启"
+                },
+                action = if (!a11yEnabled) "去开启" to onOpenAccessibilitySettings else null,
+            )
+            StatusRow(
+                label = "最近捕获通知/页面",
                 value = if (lastCaptureAt == 0L) "尚未收到" else formatTimestamp(lastCaptureAt),
                 action = null,
             )
+            HorizontalDivider()
+
+            Text(
+                "安卓 13+ 侧载解锁（重要，需最先做）",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+            Text(
+                "安卓 13 起侧载应用默认被禁止开启无障碍与通知使用权：先到 应用信息 → 右上角「⋯」→ " +
+                    "「允许受限制的设置」，然后才能在系统设置里开启 AccBook 的通知监听与无障碍。" +
+                    "若系统设置列表里找不到 AccBook，通常就是缺这一步。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.outline,
+                modifier = Modifier.padding(horizontal = 16.dp),
+            )
+            Row(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+                TextButton(onClick = { KeepAliveIntents.launchAppDetails(context) }) { Text("打开应用信息") }
+            }
             HorizontalDivider()
 
             Text(
