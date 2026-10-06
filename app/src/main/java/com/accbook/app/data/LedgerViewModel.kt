@@ -26,6 +26,7 @@ import com.accbook.app.data.db.TransactionRow
 import com.accbook.app.data.db.TypeTotalRow
 import com.accbook.app.data.db.TxSource
 import com.accbook.app.data.db.TxType
+import com.accbook.app.data.budget.Budget
 import com.accbook.app.data.model.BillSource
 import com.accbook.app.data.model.ImportCommitResult
 import com.accbook.app.data.model.ParsedBill
@@ -75,6 +76,35 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
         _showRefunds.value = enabled
         AppLog.i("settings", "showRefunds=$enabled")
     }
+
+    // ---------- 设置：月度预算（首页 HUD 的数据源） ----------
+
+    private val _monthlyBudget = MutableStateFlow(prefs.getLong(KEY_MONTHLY_BUDGET, 0L))
+    val monthlyBudgetCents: StateFlow<Long> = _monthlyBudget
+
+    /** cents ≤ 0 视为未设置 */
+    fun setMonthlyBudget(cents: Long) {
+        prefs.edit().putLong(KEY_MONTHLY_BUDGET, cents).apply()
+        _monthlyBudget.value = cents
+        AppLog.i("settings", "monthlyBudget=${Money.formatYuan(cents)}")
+    }
+
+    private val homeMonth = YearMonth.now(zone)
+
+    private val homeRange = range(homeMonth)
+
+    /**
+     * 首页"本月已花"：固定取当前自然月（不随流水页翻月变化）。
+     * 口径 = 当月支出合计 − 当月退款到账（现金净流出，退款始终计入，与显示开关无关）。
+     * 剩余/建议日花/状态由 UI 用 Budget.compute 纯函数计算。
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val homeNetSpent: StateFlow<Long> = combine(
+        txDao.observeTypeTotals(homeRange.first, homeRange.second, true),
+        txDao.observeRefundIncomeTotal(homeRange.first, homeRange.second),
+    ) { totals, refundIncome ->
+        (totals.firstOrNull { it.type == TxType.EXPENSE }?.totalCents ?: 0L) - refundIncome
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
 
     // ---------- 月份 ----------
 
@@ -542,5 +572,6 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
     private companion object {
         const val PREFS_NAME = "settings"
         const val KEY_SHOW_REFUNDS = "show_refunds"
+        const val KEY_MONTHLY_BUDGET = "monthly_budget_cents"
     }
 }
