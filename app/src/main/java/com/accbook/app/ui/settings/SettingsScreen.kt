@@ -20,6 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -34,6 +35,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.accbook.app.BuildConfig
 import com.accbook.app.data.LedgerViewModel
+import com.accbook.app.keepalive.Brand
 
 @Composable
 fun SettingsScreen(
@@ -221,6 +223,16 @@ private fun AccessibilityCaptureSetting(vm: LedgerViewModel, onOpenAccessibility
         }
         Switch(checked = captureOn, onCheckedChange = { vm.setA11yCaptureEnabled(it) })
     }
+    PermissionTutorial(
+        "无障碍开启教程",
+        listOf(
+            "安卓 13+ 侧载应用需先解锁：应用信息 → 右上角「⋯」→ 允许受限制的设置" +
+                "（否则无障碍列表里找不到或开不了 AccBook）。",
+            a11yPathFor(Brand.current()),
+            "打开「AccBook 支付页面采集」开关；系统弹 10 秒倒计时确认属正常（小米十秒盾）。",
+            "回到本页状态应显示「已连接」；付款后在捕获日志的「页面」通道能看到页面快照。",
+        ),
+    )
 }
 
 @Composable
@@ -279,6 +291,53 @@ private fun FloatingConfirmSetting(vm: LedgerViewModel, onOpenOverlayPermission:
             )
         }
         Switch(checked = floatingOn, onCheckedChange = { vm.setFloatingConfirmEnabled(it) })
+    }
+    PermissionTutorial(
+        "悬浮窗授权教程",
+        listOf(
+            "推荐：点上方「去授权」，直达「显示在其他应用上层 / 悬浮窗」开关，打开即可。",
+            overlayPathFor(Brand.current()),
+            "若开关为灰色不可开：安卓 13+ 需先做「允许受限制的设置」（见无障碍教程第 1 步）。",
+            "授权后用「测试弹窗」验证；支付时若 Logcat 有 floating confirm shown 但看不到窗，" +
+                "是支付保护中心/支付保险箱拦截，见保活设置。",
+        ),
+    )
+}
+
+/** 分品牌的系统无障碍设置路径 */
+private fun a11yPathFor(brand: Brand): String = when (brand) {
+    Brand.XIAOMI -> "或：设置 → 更多设置 → 无障碍 → 已下载的应用 → AccBook 支付页面采集"
+    Brand.HUAWEI, Brand.HONOR -> "或：设置 → 辅助功能 → 无障碍 → 已下载的服务 → AccBook 支付页面采集"
+    Brand.OPPO, Brand.ONEPLUS, Brand.REALME ->
+        "或：设置 → 其他设置 → 无障碍 → 已下载的应用（版本间路径有差异，可在设置中搜索「无障碍」）"
+    else -> "或：系统设置中搜索「无障碍」→ 已下载的服务/应用 → AccBook 支付页面采集"
+}
+
+/** 分品牌的悬浮窗权限路径 */
+private fun overlayPathFor(brand: Brand): String = when (brand) {
+    Brand.XIAOMI -> "或：设置 → 应用设置 → 应用管理 → AccBook → 权限管理 → 「显示悬浮窗」允许"
+    Brand.HUAWEI, Brand.HONOR -> "或：设置 → 应用和服务 → 应用管理 → AccBook → 权限 → 「悬浮窗」允许"
+    Brand.OPPO, Brand.ONEPLUS, Brand.REALME -> "或：手机管家 → 权限与隐私 → 悬浮窗管理，允许 AccBook"
+    else -> "或：系统设置 → 应用 → AccBook → 权限 → 「显示在其他应用上层」允许"
+}
+
+@Composable
+private fun PermissionTutorial(title: String, steps: List<String>) {
+    var expanded by remember { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp)) {
+        TextButton(onClick = { expanded = !expanded }) {
+            Text(if (expanded) "收起教程" else title)
+        }
+        if (expanded) {
+            steps.forEachIndexed { i, step ->
+                Text(
+                    "${i + 1}. $step",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.outline,
+                    modifier = Modifier.padding(vertical = 2.dp),
+                )
+            }
+        }
     }
 }
 

@@ -166,6 +166,63 @@ class PageRulesTest {
         assertEquals("com.eg.android.AlipayGphone|EXPENSE|1290|${capturedAt / 60_000}", r.dedupKey)
     }
 
+    @Test
+    fun `alipay real cashier page skipped`() {
+        // 真机样本：收银台页（还没付款），"支付成功得xx券"营销文案会让它命中"支付成功"
+        assertNull(
+            parse(
+                NotificationRules.ALIPAY,
+                listOf(
+                    "关闭", "使用密码", "付款给陈自有(**有)", "支付金额0.00元", "支付成功得公交地铁1.5元多次券",
+                    "订单金额,¥ 0.01", "订单金额", "¥ 0.01", "支付遇财神,-¥ 0.01", "支付遇财神", "-¥ 0.01",
+                    "付款,确认付款，付款给陈自有(**有)，付款金额0.00元人民币", "付款",
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun `alipay real zero-paid success page skipped`() {
+        // 真机样本：遇财神全额优惠，实付￥0.00（标题节点）；订单金额￥0.01 不是实付，不能入队
+        assertNull(
+            parse(
+                NotificationRules.ALIPAY,
+                listOf(
+                    "支付成功￥0.00", "陈自有", "￥0.01", "支付遇财神", "-￥0.01",
+                    "点击给商家对账", "完成", "回首页", "回首页",
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun `embedded label sentence does not produce a value`() {
+        // "点击给商家对账"里嵌着标签"商家"，不能把"对账"当收款方
+        val r = parse(
+            NotificationRules.ALIPAY,
+            listOf("支付成功", "￥12.90", "点击给商家对账", "付款方式", "零钱"),
+        )!!
+        assertEquals("", r.counterparty)
+        assertEquals("零钱", r.paymentMethod)
+        assertEquals(1290L, r.amountCents)
+    }
+
+    @Test
+    fun `space separated same line label value`() {
+        val r = parse(NotificationRules.ALIPAY, listOf("付款成功", "¥9.90", "收款方 某某水果店"))!!
+        assertEquals("某某水果店", r.counterparty)
+    }
+
+    @Test
+    fun `discount amount in anchor is not taken as paid`() {
+        // 优惠行紧邻实付时不能抓错：-￥0.01 是优惠，￥12.90 才是实付
+        val r = parse(
+            NotificationRules.ALIPAY,
+            listOf("支付成功￥12.90", "支付遇财神", "-￥0.01", "付款方式", "零钱"),
+        )!!
+        assertEquals(1290L, r.amountCents)
+    }
+
     // ---------- 捕获日志入库判定 ----------
 
     @Test

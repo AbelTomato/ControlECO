@@ -20,6 +20,9 @@ import java.time.ZoneId
  */
 object PageRules {
 
+    /** 收银台页（还没付）关键词：出现即跳过——"支付成功得xx券"这类营销文案会让收银台页误判成支付成功页 */
+    private val cashierKeywords = listOf("确认付款", "使用密码", "请验证")
+
     /** 页面类型判定关键词 */
     private val billDetailKeywords = listOf("账单详情", "交易详情")
     private val successKeywords = listOf("支付成功", "付款成功", "支付完成", "支付详情")
@@ -84,6 +87,12 @@ object PageRules {
         if (nodes.isEmpty()) return null
         val joined = nodes.joinToString(" ")
 
+        // 收银台页（还没付）：含"确认付款/使用密码/请验证"，直接跳过
+        if (cashierKeywords.any { joined.contains(it) }) {
+            AppLog.i("Page", "skip (cashier page, payment not completed) pkg=$packageName")
+            return null
+        }
+
         val isBillDetail = billDetailKeywords.any { joined.contains(it) }
         val isSuccess = successKeywords.any { joined.contains(it) }
         if (!isBillDetail && !isSuccess) {
@@ -109,7 +118,12 @@ object PageRules {
             return null
         }
 
-        val amountText = labeledAmount.find(joined)?.groupValues?.get(1)
+        // 金额优先级：锚点节点里的实付金额（"支付成功￥12.90"，真实样本标题节点即含实付）
+        // → "金额"标签行 → 独立 ¥ 节点 → 任意 ¥ 金额。
+        // 锚点优先是因为成功页会同时出现订单金额/优惠金额等干扰节点。
+        val anchorIdx = nodes.indexOfFirst { node -> (successKeywords + billDetailKeywords).any { node.contains(it) } }
+        val amountText = (if (anchorIdx >= 0) paidAmountInAnchor(nodes[anchorIdx]) else null)
+            ?: labeledAmount.find(joined)?.groupValues?.get(1)
             ?: nodes.firstNotNullOfOrNull { standaloneAmount.find(it)?.groupValues?.get(1) }
             ?: anyAmount.find(joined)?.groupValues?.get(1)
         if (amountText == null) {
@@ -118,7 +132,8 @@ object PageRules {
         }
         val amountCents = Money.parseCents(amountText)
         if (amountCents == null || amountCents <= 0) {
-            AppLog.d("Page", "bad amount '$amountText' pkg=$packageName kind=$kind")
+            // 实付 0 元（全额优惠）无需记账；此前把订单金额 ¥0.01 当实付就是这种场景
+            AppLog.i("Page", "skip (zero amount, nothing to record) pkg=$packageName kind=$kind amount=$amountText")
             return null
         }
 
@@ -169,8 +184,18 @@ object PageRules {
     }
 
     /**
-     * "标签→值"提取：优先同行"标签：值"；否则标签独占一个节点时取其后的第一个有效值节点。
-     * 只认冒号/空格分隔，且值不能是状态短语或纯数字（订单号），避免把"对方已收钱"当收款方。
+     * 锚点节点里的实付金额：跳过优惠项（前缀为 -/减/惠 的 ¥ 金额，如"支付遇财神 -￥0.01"）。
+     */
+    private fun paidAmountInAnchor(node: String): String? =
+        anyAmount.findAll(node).firstOrNull { m ->
+            val prev = if (m.range.first > 0) node[m.range.first - 1] else '　'
+            prev != '-' && prev != '－' && prev != '减' && prev != '惠'
+        }?.groupValues?.get(1)
+
+    /**
+     * "标签→值"提取：同行值必须紧跟分隔符（冒号或空格）——
+     * "点击给商家对账"这类标签嵌在长句里的节点不产生值（曾把"对账"误当收款方）；
+     * 标签独占一个节点时取其后的第一个有效值节点。
      */
     private fun valueAfterLabel(nodes: List<String>, labels: List<String>): String? {
         for ((index, node) in nodes.withIndex()) {
@@ -178,13 +203,16 @@ object PageRules {
                 val idx = node.indexOf(label)
                 if (idx < 0) continue
 
-                // 同行："收款方：某某" / "收款方 某某"
-                val rest = node.substring(idx + label.length)
-                    .trimStart('：', ':', ' ', '　').trim()
-                if (rest.isNotBlank() && isUsableValue(rest, labels)) return rest.take(30)
+                val after = node.substring(idx + label.length)
+                val rest = when {
+                    after.startsWith("：") || after.startsWith(":") -> after.substring(1).trim()
+                    after.startsWith(" ") || after.startsWith("　") -> after.trimStart(' ', '　').trim()
+                    else -> null // 标签嵌在句中，不是键值对
+                }
+                if (rest != null && isUsableValue(rest, labels)) return rest.take(30)
 
-                // 分行：标签独占节点（或行内无值）→ 顺序取下一个有效值节点
-                if (node.trim() == label || rest.isBlank()) {
+                // 标签独占一个节点 → 顺序取下一个有效值节点
+                if (node.trim() == label) {
                     for (j in index + 1 until nodes.size) {
                         val next = nodes[j]
                         if (isUsableValue(next, labels)) return next.take(30)
@@ -206,14 +234,15 @@ object PageRules {
 
     /**
      * 无标签商户兜底：从页面锚点节点（"支付成功"等）向后扫最多 5 个节点，
-     * 取第一个"像名称"的文本。排除金额/状态/按钮/标签/序号等；只在标签提取失败时调用，
-     * 填错的代价低（确认弹窗里可见可改）。
+     * 取第一个"像名称"的文本。排除金额/状态/按钮/标签/其他标签的值节点；
+     * 只在标签提取失败时调用，填错的代价低（确认弹窗里可见可改）。
      */
     private fun guessCounterparty(nodes: List<String>): String? {
         val anchorIdx = nodes.indexOfFirst { node ->
             (successKeywords + billDetailKeywords).any { node.contains(it) }
         }
         if (anchorIdx < 0) return null
+        val allLabels = counterpartyLabels + paymentMethodLabels + timeLabels
         val end = minOf(nodes.size, anchorIdx + 6)
         for (i in anchorIdx + 1 until end) {
             val t = nodes[i]
@@ -223,6 +252,8 @@ object PageRules {
             if (stepperNode.matches(t)) continue
             if (statusPhrases.any { t.contains(it) }) continue
             if (fallbackExcluded.any { t.contains(it) }) continue
+            // 上一节点是某个标签 → 本节点是该标签的值（如"付款方式→零钱"），不是商户
+            if (i > 0 && allLabels.any { nodes[i - 1] == it }) continue
             return t.take(30)
         }
         return null
