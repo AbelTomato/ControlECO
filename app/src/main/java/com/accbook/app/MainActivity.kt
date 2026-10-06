@@ -41,6 +41,16 @@ class MainActivity : ComponentActivity() {
         consumeRoute(intent)
     }
 
+    override fun onResume() {
+        super.onResume()
+        CaptureCenter.setAppForeground(true)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        CaptureCenter.setAppForeground(false)
+    }
+
     private fun consumeRoute(intent: Intent?) {
         val route = intent?.getStringExtra(CaptureCenter.EXTRA_ROUTE) ?: return
         // 点击通知进 App 时关闭悬浮卡（冲突处理：两通道只留一个待处理入口）

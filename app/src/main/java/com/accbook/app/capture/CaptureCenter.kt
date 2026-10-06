@@ -54,13 +54,24 @@ object CaptureCenter {
     const val ROUTE_REFUND_LINK = "refundLink"
 
     /** 渠道 v2：横幅提醒（IMPORTANCE_HIGH 才会弹屏幕上方横幅）；旧渠道 capture（DEFAULT 静默）删除 */
-    private const val CHANNEL_CAPTURE = "capture_alert"
+    const val CHANNEL_CAPTURE = "capture_alert"
     private const val CHANNEL_LEGACY = "capture"
     private const val NOTIF_TAG = "capture"
 
     /** 同一内容通知的重发窗口（微信/支付宝常会更新同一条通知导致重复回调） */
     private const val REPOST_WINDOW_MS = 10_000L
     private const val RECENT_KEY_CAP = 256
+
+    /** 自动悬浮窗延迟：页面捕获后仍在支付成功页停留期，立刻弹必被拦截 */
+    private const val FLOATING_DELAY_MS = 4_000L
+
+    /** 本应用是否在前台（MainActivity onResume/onPause 维护；前台时悬浮窗无意义） */
+    @Volatile
+    private var appInForeground = false
+
+    fun setAppForeground(foreground: Boolean) {
+        appInForeground = foreground
+    }
 
     /** 捕获日志保留策略 */
     private const val KEEP_DAYS = 7L
@@ -596,7 +607,13 @@ object CaptureCenter {
             AppLog.w("Page", "floating confirm skipped (no categories/accounts to prefill)")
             return
         }
-        mainHandler.post {
+        // 页面捕获发生在支付成功页停留期（约 1 秒后），此刻弹窗必被支付保护拦截——
+        // 延迟到用户大概率已离开支付页时再弹（横幅通知先行兜底）
+        mainHandler.postDelayed({
+            if (appInForeground) {
+                AppLog.i("Page", "floating confirm skipped（本应用在前台，待确认列表里直接处理）")
+                return@postDelayed
+            }
             FloatingConfirmWindow.show(
                 appContext,
                 parsed,
@@ -620,7 +637,7 @@ object CaptureCenter {
             if (BuildConfig.DEBUG) {
                 android.widget.Toast.makeText(appContext, "自动悬浮窗已尝试弹出（debug）", android.widget.Toast.LENGTH_LONG).show()
             }
-        }
+        }, FLOATING_DELAY_MS)
     }
 
     /**
@@ -679,7 +696,10 @@ object CaptureCenter {
         }
         scope.launch {
             showSampleFloating()
-            onResult("悬浮窗已尝试弹出；若看不到，多半被支付保护/支付保险箱拦截（见保活设置），或看 Logcat [Page] 日志")
+            // onResult 可能触发 UI 操作（Toast），必须回主线程——IO 线程直接 Toast 会崩溃
+            mainHandler.post {
+                onResult("悬浮窗已尝试弹出；若看不到，多半被支付保护/支付保险箱拦截（见保活设置），或看 Logcat [Page] 日志")
+            }
         }
     }
 

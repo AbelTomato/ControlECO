@@ -36,6 +36,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.accbook.app.BuildConfig
+import com.accbook.app.capture.CaptureCenter
 import com.accbook.app.data.LedgerViewModel
 import com.accbook.app.keepalive.Brand
 
@@ -420,8 +421,28 @@ private fun CaptureNotifySetting(vm: LedgerViewModel) {
                     permissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
                 }
             }) { Text("申请权限") }
+        } else {
+            TextButton(onClick = { openCaptureChannelSettings(context) }) { Text("横幅设置") }
         }
         Switch(checked = enabled, onCheckedChange = { vm.setCaptureNotifyEnabled(it) })
+    }
+}
+
+/** 跳转"自动记账提醒"渠道的通知设置（横幅/悬浮通知、重要性都在这里开） */
+private fun openCaptureChannelSettings(context: android.content.Context) {
+    runCatching {
+        context.startActivity(
+            android.content.Intent(android.provider.Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+                .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+                .putExtra(android.provider.Settings.EXTRA_CHANNEL_ID, CaptureCenter.CHANNEL_CAPTURE),
+        )
+    }.onFailure {
+        runCatching {
+            context.startActivity(
+                android.content.Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                    .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName),
+            )
+        }.onFailure { Toast.makeText(context, "未找到通知设置页", Toast.LENGTH_SHORT).show() }
     }
 }
 
