@@ -15,7 +15,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         CapturedNotificationEntity::class,
         PendingTransactionEntity::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = true,
 )
 abstract class AccBookDatabase : RoomDatabase() {
@@ -78,6 +78,13 @@ abstract class AccBookDatabase : RoomDatabase() {
             }
         }
 
+        /** v5：捕获日志表新增通道列，区分通知监听与无障碍页面抓取（defaultValue 与实体声明一致） */
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE captured_notifications ADD COLUMN source TEXT NOT NULL DEFAULT 'NOTIFICATION'")
+            }
+        }
+
         @Volatile
         private var instance: AccBookDatabase? = null
 
@@ -88,7 +95,7 @@ abstract class AccBookDatabase : RoomDatabase() {
                     AccBookDatabase::class.java,
                     "accbook.db",
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                     .build().also { instance = it }
             }
     }

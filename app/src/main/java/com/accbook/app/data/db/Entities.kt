@@ -9,6 +9,9 @@ import androidx.room.PrimaryKey
 /** 交易方向 */
 enum class TxType { EXPENSE, INCOME }
 
+/** 捕获通道：通知监听 / 无障碍页面抓取（捕获日志共用一张表，用 source 区分） */
+enum class CaptureChannel { NOTIFICATION, A11Y }
+
 /** 交易来源：手动输入 / 微信账单 / 支付宝账单 / 通知捕获（后续新增：短信、无障碍） */
 enum class TxSource { MANUAL, WECHAT, ALIPAY, NOTIFICATION }
 
@@ -75,7 +78,7 @@ data class TransactionEntity(
 /** 待确认条目状态（确认/丢弃后条目即删除，状态仅用于极端情况的残留清理） */
 enum class PendingStatus { PENDING, CONFIRMED, DISCARDED }
 
-/** 原始通知捕获日志：采集层立即落库的原始快照，不解析；兼做调试证据与"未匹配样本池"，定期清理 */
+/** 原始捕获日志：采集层立即落库的原始快照，不解析；兼做调试证据与"未匹配样本池"，定期清理 */
 @Entity(tableName = "captured_notifications")
 data class CapturedNotificationEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
@@ -85,6 +88,9 @@ data class CapturedNotificationEntity(
     val bigText: String = "",
     val postTime: Long,
     val receivedAt: Long = System.currentTimeMillis(),
+    /** 捕获通道：通知监听 / 无障碍页面抓取 */
+    @ColumnInfo(defaultValue = "NOTIFICATION")
+    val source: CaptureChannel = CaptureChannel.NOTIFICATION,
     /** 命中的规则名；空 = 未匹配 */
     val matchedRule: String = "",
     /** 是否已进入待确认队列 */

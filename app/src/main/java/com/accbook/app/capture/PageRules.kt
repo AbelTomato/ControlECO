@@ -1,0 +1,194 @@
+package com.accbook.app.capture
+
+import com.accbook.app.data.db.TxType
+import com.accbook.app.util.AppLog
+import com.accbook.app.util.Money
+import java.time.LocalDateTime
+import java.time.ZoneId
+
+/**
+ * 阶段三页面规则引擎：解析无障碍服务送来的页面文本快照（微信/支付宝的「支付成功页」「账单详情页」）。
+ * 方法论与 NotificationRules 一致：纯函数、可单测、样本驱动；规则失效时靠 debug 页面快照日志定位。
+ *
+ * 输入是"文本节点列表"（按控件树顺序，展开 text 与 contentDescription），刻意不依赖 viewId——
+ * 目标应用改版时文本特征比控件结构稳定得多。
+ *
+ * v1 覆盖范围（宁漏勿错）：
+ * - 支出方向的支付成功页（微信"支付成功"/支付宝"付款成功"）与账单详情页（"账单详情"）
+ * - 退款页、收入页、超过 24 小时的旧账单详情一律跳过（通知/账单导入通道已覆盖，页面误开旧账单不产生垃圾条目）
+ * - 提取字段：金额、收款方/商家、支付方式、交易时间（note 只存这些字段，不存整页文本，避免卡号/余额入库）
+ */
+object PageRules {
+
+    /** 页面类型判定关键词 */
+    private val billDetailKeywords = listOf("账单详情", "交易详情")
+    private val successKeywords = listOf("支付成功", "付款成功", "支付完成", "支付详情")
+
+    /** 状态短语：提取"标签→值"时用于排除把状态行当收款方/支付方式 */
+    private val statusPhrases = listOf(
+        "对方已收钱", "已收钱", "已存入", "支付成功", "付款成功", "支付完成",
+        "退款成功", "交易成功", "已支付", "已领取", "待收钱", "已退款", "已全额退款",
+    )
+
+    /** 收款方/商家标签（具体在前，"对方"最宽泛放最后） */
+    private val counterpartyLabels = listOf("商户全称", "商户名称", "收单商户", "商家全称", "收款方", "收款人", "商家", "对方")
+
+    private val paymentMethodLabels = listOf("支付方式", "付款方式")
+    private val timeLabels = listOf("交易时间", "付款时间", "支付时间", "创建时间")
+
+    /** 金额：优先"金额标签"同行，其次独立金额节点（成功页大字），最后任意 ¥ 金额 */
+    private val labeledAmount = Regex("""(?:付款金额|支付金额|交易金额|金额)\s*[：:]?\s*[￥¥]?\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)""")
+    private val standaloneAmount = Regex("""^[￥¥]\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)$""")
+    private val anyAmount = Regex("""[￥¥]\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)""")
+
+    /** 时间：2026-10-06 12:34[:56] / 2026.10.6 12:34 / 2026年10月6日 12:34 */
+    private val timePattern = Regex("""(\d{4})[-/.年]\s*(\d{1,2})[-/.月]\s*(\d{1,2})日?\s*(\d{1,2}):(\d{2})(?::(\d{2}))?""")
+
+    /** 交易时间与查看时刻的最大允许偏差：超过视为在翻旧账单，不入队 */
+    private const val MAX_AGE_MS = 24 * 3_600_000L
+
+    private const val MAX_TEXTS = 200
+
+    data class ParsedPage(
+        val type: TxType,
+        val amountCents: Long,
+        /** 收款方/商家（入账进 counterparty 字段） */
+        val counterparty: String,
+        /** 支付方式（零钱/银行卡/余额宝…），进入 note 供确认时参考 */
+        val paymentMethod: String?,
+        /** 页面上的交易时间；无则由调用方用捕获时刻 */
+        val txTime: Long?,
+        val sourceLabel: String,
+        val ruleName: String,
+        val note: String,
+        /** 与通知通道同构：包名|TYPE|金额分|分钟（txTime 优先，跨通道同一笔可对齐去重） */
+        val dedupKey: String,
+    )
+
+    /**
+     * 解析页面文本快照。返回 null = 不感兴趣/无法安全解析（方向不明、无金额、退款/收入页、旧账单）。
+     */
+    fun parse(packageName: String, texts: List<String>, capturedAt: Long): ParsedPage? {
+        if (packageName !in NotificationRules.knownPackages) return null
+        val nodes = texts.asSequence().map { it.trim() }.filter { it.isNotEmpty() }.take(MAX_TEXTS).toList()
+        if (nodes.isEmpty()) return null
+        val joined = nodes.joinToString(" ")
+
+        val isBillDetail = billDetailKeywords.any { joined.contains(it) }
+        val isSuccess = successKeywords.any { joined.contains(it) }
+        if (!isBillDetail && !isSuccess) {
+            AppLog.d("Page", "skip (not a payment page) pkg=$packageName head=${joined.take(120)}")
+            return null
+        }
+        val kind = if (isBillDetail) "账单详情" else "支付页"
+
+        // 退款页跳过：退款到账由通知通道与账单导入覆盖，页面侧暂不识别（见维护指南，扩规则再加）
+        if (joined.contains("退款") || joined.contains("退回")) {
+            AppLog.d("Page", "skip (refund page, v1 not covered) pkg=$packageName kind=$kind")
+            return null
+        }
+
+        // 方向判定。注意："对方已收钱"是微信转账支出的状态，其中的"已收钱"不代表收入；
+        // "收款方"标签在转账支出页也出现，同样不能当收入依据。
+        val transferOut = joined.contains("对方已收钱")
+        val incomeHit = joined.contains("已存入") || joined.contains("收入") ||
+            (joined.contains("已收钱") && !transferOut)
+        val expenseHit = joined.contains("支出") || isSuccess || transferOut
+        if (incomeHit || !expenseHit) {
+            AppLog.d("Page", "skip (direction income/unclear, v1 expense-only) pkg=$packageName kind=$kind")
+            return null
+        }
+
+        val amountText = labeledAmount.find(joined)?.groupValues?.get(1)
+            ?: nodes.firstNotNullOfOrNull { standaloneAmount.find(it)?.groupValues?.get(1) }
+            ?: anyAmount.find(joined)?.groupValues?.get(1)
+        if (amountText == null) {
+            AppLog.d("Page", "rule amount not found pkg=$packageName kind=$kind head=${joined.take(160)}")
+            return null
+        }
+        val amountCents = Money.parseCents(amountText)
+        if (amountCents == null || amountCents <= 0) {
+            AppLog.d("Page", "bad amount '$amountText' pkg=$packageName kind=$kind")
+            return null
+        }
+
+        val counterparty = valueAfterLabel(nodes, counterpartyLabels).orEmpty()
+        val paymentMethod = valueAfterLabel(nodes, paymentMethodLabels)
+        val txTimeText = valueAfterLabel(nodes, timeLabels) ?: joined
+        val txTime = timePattern.find(txTimeText)?.let { m ->
+            runCatching {
+                LocalDateTime.of(
+                    m.groupValues[1].toInt(), m.groupValues[2].toInt(), m.groupValues[3].toInt(),
+                    m.groupValues[4].toInt(), m.groupValues[5].toInt(),
+                    m.groupValues[6].ifEmpty { "0" }.toInt(),
+                ).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+            }.getOrNull()
+        }
+
+        if (txTime != null && capturedAt - txTime > MAX_AGE_MS) {
+            AppLog.d("Page", "skip (old bill detail) pkg=$packageName kind=$kind ageHours=${(capturedAt - txTime) / 3_600_000}")
+            return null
+        }
+
+        val label = NotificationRules.sourceLabel(packageName)
+        val note = paymentMethod?.let { "支付方式 $it" }.orEmpty()
+
+        return ParsedPage(
+            type = TxType.EXPENSE,
+            amountCents = amountCents,
+            counterparty = counterparty,
+            paymentMethod = paymentMethod,
+            txTime = txTime,
+            sourceLabel = label,
+            ruleName = "$label·$kind",
+            note = note,
+            dedupKey = "$packageName|${TxType.EXPENSE}|$amountCents|${(txTime ?: capturedAt) / 60_000}",
+        )
+    }
+
+    /**
+     * 页面是否值得存进捕获日志（未匹配样本池）：支付类关键词命中即存，
+     * 聊天/朋友圈等无关页面不落库，避免捕获日志被无障碍事件刷爆。
+     */
+    fun looksInteresting(texts: List<String>): Boolean {
+        val joined = texts.joinToString(" ")
+        return (successKeywords + billDetailKeywords + counterpartyLabels + paymentMethodLabels +
+            listOf("交易金额", "付款金额", "交易时间", "交易单号")).any { joined.contains(it) }
+    }
+
+    /**
+     * "标签→值"提取：优先同行"标签：值"；否则标签独占一个节点时取其后的第一个有效值节点。
+     * 只认冒号/空格分隔，且值不能是状态短语或纯数字（订单号），避免把"对方已收钱"当收款方。
+     */
+    private fun valueAfterLabel(nodes: List<String>, labels: List<String>): String? {
+        for ((index, node) in nodes.withIndex()) {
+            for (label in labels) {
+                val idx = node.indexOf(label)
+                if (idx < 0) continue
+
+                // 同行："收款方：某某" / "收款方 某某"
+                val rest = node.substring(idx + label.length)
+                    .trimStart('：', ':', ' ', '　').trim()
+                if (rest.isNotBlank() && isUsableValue(rest, labels)) return rest.take(30)
+
+                // 分行：标签独占节点（或行内无值）→ 顺序取下一个有效值节点
+                if (node.trim() == label || rest.isBlank()) {
+                    for (j in index + 1 until nodes.size) {
+                        val next = nodes[j]
+                        if (isUsableValue(next, labels)) return next.take(30)
+                    }
+                }
+            }
+        }
+        return null
+    }
+
+    private fun isUsableValue(text: String, labels: List<String>): Boolean {
+        val t = text.trim()
+        if (t.isEmpty()) return false
+        if (statusPhrases.any { t.contains(it) }) return false
+        if (labels.any { t == it }) return false
+        if (t.all { it.isDigit() }) return false // 订单号/单号之类
+        return true
+    }
+}
