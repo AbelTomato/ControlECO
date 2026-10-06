@@ -6,6 +6,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
 import com.accbook.app.AccBookApp
+import com.accbook.app.BuildConfig
 import com.accbook.app.data.db.AccountDao
 import com.accbook.app.data.db.AccountEntity
 import com.accbook.app.data.db.CaptureChannel
@@ -254,6 +255,9 @@ object CaptureCenter {
                     return@launch
                 }
 
+                // 支付类页面快照进 INFO 日志（华为默认隐藏 DEBUG 级日志）；聊天等噪音不打
+                AppLog.i("Page", "page snapshot pkg=$packageName texts=[${texts.joinToString(" | ").take(1200)}]")
+
                 val rawId = captureDao.insert(
                     CapturedNotificationEntity(
                         packageName = packageName,
@@ -264,7 +268,14 @@ object CaptureCenter {
                     ),
                 )
                 if (parsed == null) {
-                    AppLog.d("Page", "page snapshot stored (unmatched) pkg=$packageName")
+                    AppLog.i("Page", "page not matched pkg=$packageName（对照上方快照扩规则）")
+                    return@launch
+                }
+
+                if (!isA11yCaptureEnabled()) {
+                    // 采样模式（页面抓取关 + 调试全量开）：只留证据，不入队不弹窗
+                    captureDao.updateMatch(rawId, parsed.ruleName, false)
+                    AppLog.i("Page", "skip enqueue（设置页「自动记录支付页面」开关关闭）${parsed.ruleName}")
                     return@launch
                 }
 
@@ -298,7 +309,6 @@ object CaptureCenter {
                     return@launch
                 }
 
-                if (!isA11yCaptureEnabled()) return@launch // 仅调试快照，不入队
                 pendingDao.insert(
                     PendingTransactionEntity(
                         type = parsed.type,
@@ -343,11 +353,11 @@ object CaptureCenter {
 
     private suspend fun maybeShowFloatingConfirm(parsed: PageRules.ParsedPage) {
         if (!isFloatingConfirmEnabled()) {
-            AppLog.d("Page", "floating confirm disabled")
+            AppLog.i("Page", "floating confirm skipped（设置页「支付完成弹出悬浮窗」开关关闭）")
             return
         }
         if (!Settings.canDrawOverlays(appContext)) {
-            AppLog.d("Page", "floating confirm skipped (no overlay permission)")
+            AppLog.i("Page", "floating confirm skipped（未授权悬浮窗权限/显示在其他应用上层）")
             return
         }
         val categories = categoryDao.getAll().filter { it.type == parsed.type }
@@ -370,6 +380,11 @@ object CaptureCenter {
                     }
                 },
             )
+            // debug 判别器：Toast 是系统级窗口不受支付保护拦截——
+            // Toast 可见而悬浮窗不可见 = 悬浮窗被系统/支付保护层拦截的铁证
+            if (BuildConfig.DEBUG) {
+                android.widget.Toast.makeText(appContext, "自动悬浮窗已尝试弹出（debug）", android.widget.Toast.LENGTH_LONG).show()
+            }
         }
     }
 

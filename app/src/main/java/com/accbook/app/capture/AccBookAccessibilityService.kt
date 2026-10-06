@@ -95,11 +95,11 @@ class AccBookAccessibilityService : AccessibilityService() {
         // 抓取开关全关时不白耗控件树遍历
         if (!CaptureCenter.isA11yCaptureEnabled() && !CaptureCenter.isDebugCaptureAll(BuildConfig.DEBUG)) return
 
-        // 事件到达诊断（2s 节流）：微信页面没捕获时，先看这行有没有出现
+        // 事件到达诊断（2s 节流，INFO 级——华为默认隐藏 DEBUG 级日志）：微信页面没捕获时，先看这行有没有出现
         val now = SystemClock.elapsedRealtime()
         if (now - (lastEventLogAt[pkg] ?: 0L) > EVENT_LOG_INTERVAL_MS) {
             lastEventLogAt[pkg] = now
-            AppLog.d("Page", "a11y event pkg=$pkg type=0x${Integer.toHexString(event.eventType)}")
+            AppLog.i("Page", "a11y event pkg=$pkg type=0x${Integer.toHexString(event.eventType)}")
         }
 
         pendingPkg = pkg
@@ -136,7 +136,7 @@ class AccBookAccessibilityService : AccessibilityService() {
             }.onFailure { AppLog.w("Page", "windows enumerate failed", it) }
         }
         if (texts.isEmpty()) {
-            AppLog.d("Page", "collect empty pkg=$pkg（窗口内容不可读？）")
+            AppLog.i("Page", "collect empty pkg=$pkg（窗口内容不可读？）")
             return
         }
 
@@ -151,7 +151,7 @@ class AccBookAccessibilityService : AccessibilityService() {
             recentFingerprints[fingerprint] = now
         }
 
-        // debug 构建全量打印页面快照（tag=AccBook [Page]），真实页面样本靠它收集
+        // DEBUG 级全量快照（华为需开 AP 日志才可见）；INFO 级的快照日志由 CaptureCenter 只对支付类页面打
         AppLog.d("Page", "snapshot pkg=$pkg nodes=${texts.size} texts=[${texts.joinToString(" | ").take(1200)}]")
         CaptureCenter.onPageCaptured(pkg, texts, System.currentTimeMillis(), BuildConfig.DEBUG)
     }
