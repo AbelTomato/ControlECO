@@ -201,6 +201,9 @@ interface PendingDao {
     @Query("SELECT COUNT(*) FROM pending_transactions WHERE dedupKey = :dedupKey")
     suspend fun countByDedupKey(dedupKey: String): Int
 
+    @Query("UPDATE pending_transactions SET counterparty = :counterparty, note = :note WHERE id = :id")
+    suspend fun updateEnrichment(id: Long, counterparty: String, note: String)
+
     @Query("SELECT * FROM pending_transactions WHERE status = 'PENDING' ORDER BY createdAt DESC")
     fun observePending(): Flow<List<PendingTransactionEntity>>
 
@@ -212,4 +215,7 @@ interface PendingDao {
 
     @Query("DELETE FROM pending_transactions WHERE id = :id")
     suspend fun deleteById(id: Long)
+
+    @Query("DELETE FROM pending_transactions WHERE dedupKey = :dedupKey")
+    suspend fun deleteByDedupKey(dedupKey: String)
 }

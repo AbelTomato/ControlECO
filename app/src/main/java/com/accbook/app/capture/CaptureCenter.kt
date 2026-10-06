@@ -1,13 +1,25 @@
 package com.accbook.app.capture
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
+import android.provider.Settings
 import com.accbook.app.AccBookApp
+import com.accbook.app.data.db.AccountDao
+import com.accbook.app.data.db.AccountEntity
+import com.accbook.app.data.db.CaptureChannel
 import com.accbook.app.data.db.CaptureDao
 import com.accbook.app.data.db.CapturedNotificationEntity
+import com.accbook.app.data.db.CategoryDao
+import com.accbook.app.data.db.CategoryEntity
 import com.accbook.app.data.db.PendingDao
 import com.accbook.app.data.db.PendingTransactionEntity
 import com.accbook.app.data.db.RefundMark
+import com.accbook.app.data.db.TransactionDao
+import com.accbook.app.data.db.TransactionEntity
+import com.accbook.app.data.db.TxSource
+import com.accbook.app.data.db.TxType
 import com.accbook.app.util.AppLog
 import com.accbook.app.util.Money
 import kotlinx.coroutines.CoroutineScope
@@ -18,14 +30,18 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
 /**
- * 通知采集中心：采集层唯一入口。
- * 职责：重发去重 → 原始快照落库（不解析）→ 感兴趣包名走规则引擎 → 待确认队列。
- * debug 构建可记录所有应用的通知（设置开关），便于用真实样本调试规则。
+ * 采集中心：通知监听与无障碍页面两条通道的唯一入口。
+ * 通道流程一致：原始快照落库（不解析）→ 规则引擎 → 待确认队列。
+ * 跨通道去重：dedupKey 同构（包名|TYPE|金额分|分钟），按 ±1 分钟容错查找既有条目——
+ * 同一笔交易"通知+页面"双捕获时只保留一条，页面侧信息更全（收款方/支付方式）则回填富化。
+ * debug 构建可全量记录（设置开关），Logcat tag=AccBook 便于真实样本调试。
  */
 object CaptureCenter {
 
     private const val PREFS_NAME = "settings"
     private const val KEY_CAPTURE_ENABLED = "auto_capture_enabled"
+    private const val KEY_A11Y_CAPTURE_ENABLED = "a11y_capture_enabled"
+    private const val KEY_FLOATING_CONFIRM_ENABLED = "floating_confirm_enabled"
     private const val KEY_DEBUG_CAPTURE_ALL = "debug_capture_all"
 
     /** 同一内容通知的重发窗口（微信/支付宝常会更新同一条通知导致重复回调） */
@@ -37,15 +53,22 @@ object CaptureCenter {
     private const val KEEP_ROWS = 2_000
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val mainHandler = Handler(Looper.getMainLooper())
     private val recentKeys = LinkedHashMap<String, Long>()
 
     private lateinit var appContext: Context
+    private lateinit var txDao: TransactionDao
     private lateinit var captureDao: CaptureDao
     private lateinit var pendingDao: PendingDao
+    private lateinit var categoryDao: CategoryDao
+    private lateinit var accountDao: AccountDao
     private val initialized get() = this::appContext.isInitialized
 
     private val _connected = MutableStateFlow(false)
     val connected: StateFlow<Boolean> = _connected
+
+    private val _a11yConnected = MutableStateFlow(false)
+    val a11yConnected: StateFlow<Boolean> = _a11yConnected
 
     private val _lastEventAt = MutableStateFlow(0L)
     val lastEventAt: StateFlow<Long> = _lastEventAt
@@ -53,8 +76,11 @@ object CaptureCenter {
     fun init(context: Context) {
         appContext = context.applicationContext
         val db = (appContext as AccBookApp).db
+        txDao = db.transactionDao()
         captureDao = db.captureDao()
         pendingDao = db.pendingDao()
+        categoryDao = db.categoryDao()
+        accountDao = db.accountDao()
         cleanup()
     }
 
@@ -63,12 +89,33 @@ object CaptureCenter {
         AppLog.i("Ntf", "listener connected=$connected")
     }
 
+    fun markA11yConnected(connected: Boolean) {
+        _a11yConnected.value = connected
+        AppLog.i("Page", "a11y service connected=$connected")
+    }
+
     fun isCaptureEnabled(): Boolean =
         prefs().getBoolean(KEY_CAPTURE_ENABLED, true)
 
     fun setCaptureEnabled(enabled: Boolean) {
         prefs().edit().putBoolean(KEY_CAPTURE_ENABLED, enabled).apply()
         AppLog.i("Ntf", "captureEnabled=$enabled")
+    }
+
+    fun isA11yCaptureEnabled(): Boolean =
+        prefs().getBoolean(KEY_A11Y_CAPTURE_ENABLED, true)
+
+    fun setA11yCaptureEnabled(enabled: Boolean) {
+        prefs().edit().putBoolean(KEY_A11Y_CAPTURE_ENABLED, enabled).apply()
+        AppLog.i("Page", "a11yCaptureEnabled=$enabled")
+    }
+
+    fun isFloatingConfirmEnabled(): Boolean =
+        prefs().getBoolean(KEY_FLOATING_CONFIRM_ENABLED, true)
+
+    fun setFloatingConfirmEnabled(enabled: Boolean) {
+        prefs().edit().putBoolean(KEY_FLOATING_CONFIRM_ENABLED, enabled).apply()
+        AppLog.i("Page", "floatingConfirmEnabled=$enabled")
     }
 
     fun isDebugCaptureAll(isDebugBuild: Boolean): Boolean =
@@ -85,6 +132,8 @@ object CaptureCenter {
             captureDao.keepNewest(KEEP_ROWS)
         }
     }
+
+    // ---------- 通道一：通知监听 ----------
 
     /** 由通知监听服务回调（主线程）；数据库操作全部转移到 IO */
     fun onNotificationPosted(
@@ -145,8 +194,12 @@ object CaptureCenter {
                     AppLog.d("Ntf", "no rule matched pkg=$packageName title=[$title] text=[$text]")
                     return@launch
                 }
-                if (pendingDao.countByDedupKey(parsed.dedupKey) > 0) {
-                    AppLog.d("Ntf", "skip duplicate pending ${parsed.dedupKey}")
+                // 跨通道去重（±1 分钟容错）：通知先到时页面捕获会富化这条，而不是另起一条
+                val related = findRelatedPending(
+                    packageName, parsed.type, parsed.isRefund, parsed.amountCents, postTime / 60_000,
+                )
+                if (related != null) {
+                    AppLog.d("Ntf", "skip duplicate pending ${parsed.dedupKey} (related ${related.dedupKey})")
                     return@launch
                 }
                 pendingDao.insert(
@@ -171,6 +224,182 @@ object CaptureCenter {
             } catch (e: Exception) {
                 AppLog.e("Ntf", "capture handling failed", e)
             }
+        }
+    }
+
+    // ---------- 通道二：无障碍页面抓取 ----------
+
+    /** 由无障碍服务回调（主线程），texts 为页面文本快照（控件树顺序） */
+    fun onPageCaptured(
+        packageName: String,
+        texts: List<String>,
+        capturedAt: Long,
+        isDebugBuild: Boolean,
+    ) {
+        _lastEventAt.value = System.currentTimeMillis()
+
+        if (!initialized || texts.isEmpty()) return
+        val captureAll = isDebugCaptureAll(isDebugBuild)
+        if (!isA11yCaptureEnabled() && !captureAll) {
+            AppLog.d("Page", "skip (a11y capture disabled) pkg=$packageName")
+            return
+        }
+
+        scope.launch {
+            try {
+                val parsed = PageRules.parse(packageName, texts, capturedAt)
+                // 感兴趣的页面（或调试全量）才落快照，聊天/朋友圈等噪音不进捕获日志
+                if (parsed == null && !captureAll && !PageRules.looksInteresting(texts)) {
+                    AppLog.d("Page", "skip (not interesting) pkg=$packageName nodes=${texts.size}")
+                    return@launch
+                }
+
+                val rawId = captureDao.insert(
+                    CapturedNotificationEntity(
+                        packageName = packageName,
+                        title = parsed?.ruleName ?: "页面快照",
+                        text = texts.joinToString(" | ").take(4000),
+                        postTime = capturedAt,
+                        source = CaptureChannel.A11Y,
+                    ),
+                )
+                if (parsed == null) {
+                    AppLog.d("Page", "page snapshot stored (unmatched) pkg=$packageName")
+                    return@launch
+                }
+
+                val related = findRelatedPending(
+                    packageName, parsed.type, isRefund = false, parsed.amountCents,
+                    (parsed.txTime ?: capturedAt) / 60_000,
+                )
+                if (related != null) {
+                    // 富化：通知捕获的条目缺收款方/支付方式，页面侧信息补进去（同一笔只入一次）
+                    val note = buildString {
+                        append(related.note)
+                        if (parsed.counterparty.isNotBlank() && !related.note.contains(parsed.counterparty)) {
+                            if (isNotEmpty()) append(" · ")
+                            append(parsed.counterparty)
+                        }
+                        val method = parsed.paymentMethod
+                        if (method != null && !related.note.contains(method)) {
+                            if (isNotEmpty()) append(" · ")
+                            append("支付方式 $method")
+                        }
+                    }.take(300)
+                    pendingDao.updateEnrichment(
+                        related.id,
+                        counterparty = parsed.counterparty.ifBlank { related.counterparty },
+                        note = note,
+                    )
+                    captureDao.updateMatch(rawId, parsed.ruleName, true)
+                    AppLog.i("Page", "enriched pending #${related.id} ${parsed.ruleName} ${Money.formatYuan(parsed.amountCents)}")
+                    return@launch
+                }
+
+                if (!isA11yCaptureEnabled()) return@launch // 仅调试快照，不入队
+                pendingDao.insert(
+                    PendingTransactionEntity(
+                        type = parsed.type,
+                        amountCents = parsed.amountCents,
+                        timestamp = parsed.txTime ?: capturedAt,
+                        counterparty = parsed.counterparty,
+                        note = parsed.note,
+                        sourcePackage = packageName,
+                        ruleName = parsed.ruleName,
+                        dedupKey = parsed.dedupKey,
+                        rawNotificationId = rawId,
+                    ),
+                )
+                captureDao.updateMatch(rawId, parsed.ruleName, true)
+                AppLog.i("Page", "queued pending: ${parsed.ruleName} ${Money.formatYuan(parsed.amountCents)} 收款方=${parsed.counterparty}")
+
+                maybeShowFloatingConfirm(parsed)
+            } catch (e: Exception) {
+                AppLog.e("Page", "page capture handling failed", e)
+            }
+        }
+    }
+
+    /**
+     * ±1 分钟容错的待确认条目查找：通知 postTime 与页面捕获/交易时间可能跨分钟。
+     * 待确认队列表很小（确认即删），全量内存比对足够。
+     */
+    private suspend fun findRelatedPending(
+        packageName: String,
+        type: TxType,
+        isRefund: Boolean,
+        amountCents: Long,
+        minute: Long,
+    ): PendingTransactionEntity? {
+        val candidates = (minute - 1..minute + 1)
+            .map { "$packageName|$type${if (isRefund) "|R" else ""}|$amountCents|$it" }
+            .toSet()
+        return pendingDao.getAllPending().firstOrNull { it.dedupKey in candidates }
+    }
+
+    // ---------- 悬浮确认窗 ----------
+
+    private suspend fun maybeShowFloatingConfirm(parsed: PageRules.ParsedPage) {
+        if (!isFloatingConfirmEnabled()) {
+            AppLog.d("Page", "floating confirm disabled")
+            return
+        }
+        if (!Settings.canDrawOverlays(appContext)) {
+            AppLog.d("Page", "floating confirm skipped (no overlay permission)")
+            return
+        }
+        val categories = categoryDao.getAll().filter { it.type == parsed.type }
+        val accounts = accountDao.getAll()
+        if (categories.isEmpty() || accounts.isEmpty()) return
+        mainHandler.post {
+            FloatingConfirmWindow.show(
+                appContext,
+                parsed,
+                categories,
+                accounts,
+                onConfirm = { categoryId, accountId -> confirmDirect(parsed, categoryId, accountId) },
+                onIgnore = {
+                    scope.launch {
+                        pendingDao.deleteByDedupKey(parsed.dedupKey)
+                        AppLog.i("Page", "floating ignored, removed pending ${parsed.dedupKey}")
+                    }
+                },
+            )
+        }
+    }
+
+    /** 悬浮窗确认：直接入账（不走待确认），并清掉同笔待确认条目；externalId 防双通道重复 */
+    private fun confirmDirect(parsed: PageRules.ParsedPage, categoryId: Long, accountId: Long) {
+        scope.launch {
+            try {
+                val externalId = "NTF:${parsed.dedupKey}"
+                txDao.insert(
+                    TransactionEntity(
+                        type = parsed.type,
+                        amountCents = parsed.amountCents,
+                        categoryId = categoryId,
+                        accountId = accountId,
+                        timestamp = parsed.txTime ?: System.currentTimeMillis(),
+                        note = parsed.note,
+                        counterparty = parsed.counterparty,
+                        source = TxSource.NOTIFICATION,
+                        externalId = externalId,
+                    ),
+                )
+                pendingDao.deleteByDedupKey(parsed.dedupKey)
+                toast("已入账 ${Money.formatYuan(parsed.amountCents)}")
+                AppLog.i("Page", "floating confirmed externalId=$externalId")
+            } catch (e: Exception) {
+                // externalId 唯一索引冲突 = 该笔已经入过账（如通知通道先行确认）
+                toast("该笔已入账，跳过重复记录")
+                AppLog.w("Page", "floating confirm rejected", e)
+            }
+        }
+    }
+
+    private fun toast(message: String) {
+        mainHandler.post {
+            android.widget.Toast.makeText(appContext, message, android.widget.Toast.LENGTH_SHORT).show()
         }
     }
 

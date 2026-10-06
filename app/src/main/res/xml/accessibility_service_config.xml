@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  无障碍采集配置：只看微信/支付宝（云闪付后续加），只订阅窗口变化事件，只读窗口内容。
+  刻意不申请手势/按键等能力（最小化权限）；notificationTimeout 做系统级事件节流第一道闸。
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagDefault"
+    android:canRetrieveWindowContent="true"
+    android:description="@string/a11y_service_description"
+    android:notificationTimeout="300"
+    android:packageNames="com.tencent.mm,com.eg.android.AlipayGphone" />
