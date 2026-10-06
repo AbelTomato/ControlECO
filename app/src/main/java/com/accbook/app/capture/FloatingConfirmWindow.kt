@@ -201,6 +201,92 @@ object FloatingConfirmWindow {
             setOnClickListener { onClick() }
         }
 
+    /**
+     * 退款关联提醒卡：无金额的退款到账通知触发，点击跳进 App 选择被退款的账单。
+     * 独立于入账确认卡（没有金额可预填，只有跳转动作）。
+     */
+    fun showRefundLink(
+        context: Context,
+        sourceLabel: String,
+        onOpen: () -> Unit,
+        onIgnore: () -> Unit,
+    ) {
+        dismiss()
+        val wm = context.getSystemService(Context.WINDOW_SERVICE) as? WindowManager ?: return
+        val density = context.resources.displayMetrics.density
+        val dp: (Int) -> Int = { v -> (v * density + 0.5f).toInt() }
+
+        val root = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(12), dp(16), dp(10))
+            background = GradientDrawable().apply {
+                setColor(0xF21C1C1E.toInt())
+                cornerRadius = dp(16).toFloat()
+            }
+        }
+        fun line(text: String, size: Float, color: Int, bold: Boolean = false, topPad: Int = 0): TextView =
+            TextView(context).apply {
+                this.text = text
+                this.textSize = size
+                setTextColor(color)
+                setTypeface(typeface, if (bold) Typeface.BOLD else Typeface.NORMAL)
+                setPadding(0, dp(topPad), 0, 0)
+            }
+
+        root.addView(line("AccBook · 退款提醒", 12f, 0x99FFFFFF.toInt()))
+        root.addView(line("${sourceLabel}退款到账", 18f, Color.WHITE, bold = true, topPad = 4))
+        root.addView(line("退款通知未带金额，请选择被退款的账单以记录退款收入", 13f, 0xB3FFFFFF.toInt(), topPad = 4))
+
+        val buttons = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(10), 0, 0)
+        }
+        val ignore = TextView(context).apply {
+            text = "忽略"
+            textSize = 14f
+            setTextColor(0x99FFFFFF.toInt())
+            setPadding(dp(20), dp(8), dp(20), dp(8))
+            setOnClickListener {
+                dismiss()
+                onIgnore()
+            }
+        }
+        val open = Button(context).apply {
+            text = "去关联账单"
+            textSize = 14f
+            isAllCaps = false
+            setOnClickListener {
+                dismiss()
+                onOpen()
+            }
+        }
+        buttons.addView(ignore)
+        buttons.addView(View(context), LinearLayout.LayoutParams(0, 0, 1f))
+        buttons.addView(open)
+        root.addView(buttons)
+
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            PixelFormat.TRANSLUCENT,
+        ).apply {
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            y = dp(64)
+            horizontalMargin = 0.03f
+        }
+        runCatching {
+            wm.addView(root, params)
+            current = root
+            AppLog.i("Page", "refund link floating shown")
+            autoDismiss = Runnable { dismiss() }.also { mainHandler.postDelayed(it, AUTO_DISMISS_MS) }
+        }.onFailure {
+            AppLog.e("Page", "refund floating addView failed", it)
+        }
+    }
+
     fun dismiss() {
         autoDismiss?.let { mainHandler.removeCallbacks(it) }
         autoDismiss = null

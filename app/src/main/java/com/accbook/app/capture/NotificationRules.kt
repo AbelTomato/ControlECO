@@ -27,6 +27,15 @@ object NotificationRules {
 
     fun isInterested(packageName: String): Boolean = packageName in knownPackages
 
+    /**
+     * 无金额的退款到账提醒（微信折叠通知"退款到账通知"常不带金额，实测样本：
+     * title=微信支付 text=退款到账通知）——无法入队，转"退款关联"流程让用户选择原账单。
+     * 带金额的退款在 parse() 里已正常入队，不会走到这里。
+     */
+    fun isAmountlessRefundNotice(packageName: String, title: String, text: String): Boolean =
+        packageName in knownPackages &&
+            ((title + text).contains("退款") || (title + text).contains("退回"))
+
     fun sourceLabel(packageName: String): String = when (packageName) {
         WECHAT -> "微信"
         ALIPAY -> "支付宝"

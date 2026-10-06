@@ -20,6 +20,7 @@ import com.accbook.app.data.db.CapturedNotificationEntity
 import com.accbook.app.data.db.CategoryEntity
 import com.accbook.app.data.db.CategorySumRow
 import com.accbook.app.data.db.PendingTransactionEntity
+import com.accbook.app.data.db.RefundMark
 import com.accbook.app.data.db.TransactionEntity
 import com.accbook.app.data.db.TransactionRow
 import com.accbook.app.data.db.TypeTotalRow
@@ -29,6 +30,7 @@ import com.accbook.app.data.model.BillSource
 import com.accbook.app.data.model.ImportCommitResult
 import com.accbook.app.data.model.ParsedBill
 import com.accbook.app.util.AppLog
+import com.accbook.app.util.Money
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -369,6 +371,78 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
     fun isListenerGranted(): Boolean {
         val app = getApplication<AccBookApp>()
         return NotificationManagerCompat.getEnabledListenerPackages(app).contains(app.packageName)
+    }
+
+    private val _refundLinkEnabled = MutableStateFlow(CaptureCenter.isRefundLinkEnabled())
+    val refundLinkEnabled: StateFlow<Boolean> = _refundLinkEnabled
+
+    fun setRefundLinkEnabled(enabled: Boolean) {
+        CaptureCenter.setRefundLinkEnabled(enabled)
+        _refundLinkEnabled.value = enabled
+    }
+
+    private val _captureNotifyEnabled = MutableStateFlow(CaptureCenter.isCaptureNotifyEnabled())
+    val captureNotifyEnabled: StateFlow<Boolean> = _captureNotifyEnabled
+
+    fun setCaptureNotifyEnabled(enabled: Boolean) {
+        CaptureCenter.setCaptureNotifyEnabled(enabled)
+        _captureNotifyEnabled.value = enabled
+    }
+
+    /** 通知权限（安卓 13+ 运行时） */
+    fun canPostNotifications(): Boolean = CaptureCenter.canPostNotifications()
+
+    /** debug：20 秒后弹测试悬浮窗（切到支付页验证是否被拦截） */
+    fun scheduleFloatingTest(onResult: (String) -> Unit) = CaptureCenter.scheduleFloatingTest(onResult)
+
+    /** debug：20 秒后发测试捕获通知 */
+    fun scheduleNotifyTest(onResult: (String) -> Unit) = CaptureCenter.scheduleNotifyTest(onResult)
+
+    // ---------- 退款关联（无金额退款通知 → 手动选择原账单） ----------
+
+    /** 近 60 天未退款的支出候选 */
+    suspend fun refundCandidates(): List<TransactionRow> = withContext(Dispatchers.IO) {
+        txDao.recentUnrefundedExpenses(System.currentTimeMillis() - 60L * 24 * 3_600_000)
+    }
+
+    /**
+     * 关联退款：生成退款收入（REFUND_INCOME，金额可改以支持部分退款，入原账户），
+     * 并把原支出标记为 REFUNDED_EXPENSE——与账单导入口径一致，受"显示退款记录"开关控制。
+     */
+    fun linkRefund(expenseId: Long, amountCents: Long, onDone: (String?) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val expense = txDao.getById(expenseId)
+                when {
+                    expense == null -> { onDone("原支出记录不存在"); return@launch }
+                    expense.refundMark != RefundMark.NONE -> { onDone("该笔支出已标记退款"); return@launch }
+                    amountCents <= 0 -> { onDone("退款金额需大于 0"); return@launch }
+                }
+                val cats = categoryDao.getAll()
+                val incomeCat = cats.firstOrNull { it.type == TxType.INCOME && it.name == "其他" }
+                    ?: cats.firstOrNull { it.type == TxType.INCOME }
+                    ?: error("缺少收入分类，请先在分类管理中添加")
+                txDao.insert(
+                    TransactionEntity(
+                        type = TxType.INCOME,
+                        amountCents = amountCents,
+                        categoryId = incomeCat.id,
+                        accountId = expense.accountId,
+                        timestamp = System.currentTimeMillis(),
+                        note = "退款收入（手动关联）",
+                        counterparty = expense.counterparty,
+                        source = TxSource.NOTIFICATION,
+                        refundMark = RefundMark.REFUND_INCOME,
+                    ),
+                )
+                txDao.update(expense.copy(refundMark = RefundMark.REFUNDED_EXPENSE))
+                AppLog.i("refund", "linked refund for expense #$expenseId amount=${Money.formatYuan(amountCents)}")
+                withContext(Dispatchers.Main) { onDone(null) }
+            } catch (e: Exception) {
+                AppLog.e("refund", "link failed", e)
+                withContext(Dispatchers.Main) { onDone("关联失败：${e.message ?: "未知错误"}") }
+            }
+        }
     }
 
     /** 系统无障碍设置中是否已开启采集服务 */

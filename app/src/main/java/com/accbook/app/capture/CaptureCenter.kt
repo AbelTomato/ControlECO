@@ -1,6 +1,7 @@
 package com.accbook.app.capture
 
 import android.content.Context
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -43,7 +44,17 @@ object CaptureCenter {
     private const val KEY_CAPTURE_ENABLED = "auto_capture_enabled"
     private const val KEY_A11Y_CAPTURE_ENABLED = "a11y_capture_enabled"
     private const val KEY_FLOATING_CONFIRM_ENABLED = "floating_confirm_enabled"
+    private const val KEY_REFUND_LINK_ENABLED = "refund_link_enabled"
+    private const val KEY_CAPTURE_NOTIFY_ENABLED = "capture_notify_enabled"
     private const val KEY_DEBUG_CAPTURE_ALL = "debug_capture_all"
+
+    /** 点击通知/悬浮卡跳转的路由（MainActivity intent extra） */
+    const val EXTRA_ROUTE = "accbook.route"
+    const val ROUTE_PENDING = "pending"
+    const val ROUTE_REFUND_LINK = "refundLink"
+
+    private const val CHANNEL_CAPTURE = "capture"
+    private const val NOTIF_TAG = "capture"
 
     /** 同一内容通知的重发窗口（微信/支付宝常会更新同一条通知导致重复回调） */
     private const val REPOST_WINDOW_MS = 10_000L
@@ -82,7 +93,49 @@ object CaptureCenter {
         pendingDao = db.pendingDao()
         categoryDao = db.categoryDao()
         accountDao = db.accountDao()
+        createNotificationChannel()
         cleanup()
+    }
+
+    private fun createNotificationChannel() {
+        val channel = android.app.NotificationChannel(
+            CHANNEL_CAPTURE,
+            "自动记账提醒",
+            android.app.NotificationManager.IMPORTANCE_DEFAULT,
+        ).apply { description = "捕获到动账/退款时提醒确认入账" }
+        runCatching {
+            (appContext.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager)
+                .createNotificationChannel(channel)
+        }.onFailure { AppLog.w("Ntf", "create channel failed", it) }
+    }
+
+    /** 系统通知：点击跳转 App 内对应页面（待确认队列 / 退款关联） */
+    private fun postCaptureNotification(title: String, text: String, route: String) {
+        if (!isCaptureNotifyEnabled()) return
+        if (!canPostNotifications()) {
+            AppLog.i("Ntf", "notify skipped (POST_NOTIFICATIONS not granted)")
+            return
+        }
+        val intent = android.content.Intent(appContext, com.accbook.app.MainActivity::class.java)
+            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            .putExtra(EXTRA_ROUTE, route)
+        val pi = android.app.PendingIntent.getActivity(
+            appContext,
+            (NOTIF_TAG + route + title + text).hashCode(),
+            intent,
+            android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val notification = androidx.core.app.NotificationCompat.Builder(appContext, CHANNEL_CAPTURE)
+            .setSmallIcon(android.R.drawable.ic_menu_add)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setContentIntent(pi)
+            .setAutoCancel(true)
+            .build()
+        runCatching {
+            androidx.core.app.NotificationManagerCompat.from(appContext).notify(NOTIF_TAG, title.hashCode(), notification)
+            AppLog.i("Ntf", "capture notification posted: $title")
+        }.onFailure { AppLog.w("Ntf", "post notification failed", it) }
     }
 
     fun markConnected(connected: Boolean) {
@@ -118,6 +171,30 @@ object CaptureCenter {
         prefs().edit().putBoolean(KEY_FLOATING_CONFIRM_ENABLED, enabled).apply()
         AppLog.i("Page", "floatingConfirmEnabled=$enabled")
     }
+
+    fun isRefundLinkEnabled(): Boolean =
+        prefs().getBoolean(KEY_REFUND_LINK_ENABLED, true)
+
+    fun setRefundLinkEnabled(enabled: Boolean) {
+        prefs().edit().putBoolean(KEY_REFUND_LINK_ENABLED, enabled).apply()
+        AppLog.i("Ntf", "refundLinkEnabled=$enabled")
+    }
+
+    fun isCaptureNotifyEnabled(): Boolean =
+        prefs().getBoolean(KEY_CAPTURE_NOTIFY_ENABLED, true)
+
+    fun setCaptureNotifyEnabled(enabled: Boolean) {
+        prefs().edit().putBoolean(KEY_CAPTURE_NOTIFY_ENABLED, enabled).apply()
+        AppLog.i("Ntf", "captureNotifyEnabled=$enabled")
+    }
+
+    /** 悬浮窗被支付保护拦截时，用系统通知提醒用户确认入账（安卓 13+ 需 POST_NOTIFICATIONS） */
+    fun canPostNotifications(): Boolean =
+        if (Build.VERSION.SDK_INT >= 33) {
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                appContext, android.Manifest.permission.POST_NOTIFICATIONS,
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        } else true
 
     fun isDebugCaptureAll(isDebugBuild: Boolean): Boolean =
         prefs().getBoolean(KEY_DEBUG_CAPTURE_ALL, isDebugBuild)
@@ -193,6 +270,12 @@ object CaptureCenter {
                 val parsed = NotificationRules.parse(packageName, title, text, bigText, postTime)
                 if (parsed == null) {
                     AppLog.d("Ntf", "no rule matched pkg=$packageName title=[$title] text=[$text]")
+                    // 无金额的退款到账通知（微信折叠通知实测样本）→ 转退款关联提醒
+                    if (interested && isCaptureEnabled() &&
+                        NotificationRules.isAmountlessRefundNotice(packageName, title, text)
+                    ) {
+                        handleRefundNotice(packageName, rawId)
+                    }
                     return@launch
                 }
                 // 跨通道去重（±1 分钟容错）：通知先到时页面捕获会富化这条，而不是另起一条
@@ -222,10 +305,53 @@ object CaptureCenter {
                     "queued pending: ${parsed.ruleName} ${parsed.type} ${Money.formatYuan(parsed.amountCents)}" +
                         (if (parsed.isRefund) " [退款]" else "") + " pkg=$packageName",
                 )
+                postCaptureNotification(
+                    "捕获到一笔${if (parsed.type == TxType.EXPENSE) "支出" else if (parsed.isRefund) "退款" else "收入"}",
+                    "${NotificationRules.sourceLabel(packageName)} ${Money.formatYuan(parsed.amountCents)} · 点击确认入账",
+                    ROUTE_PENDING,
+                )
             } catch (e: Exception) {
                 AppLog.e("Ntf", "capture handling failed", e)
             }
         }
+    }
+
+    // ---------- 退款关联提醒（无金额退款通知） ----------
+
+    /** 微信"退款到账通知"没有金额，无法直接入队：提醒用户进 App 选择被退款的账单 */
+    private suspend fun handleRefundNotice(packageName: String, rawId: Long) {
+        captureDao.updateMatch(rawId, "退款·待关联", false)
+        AppLog.i("Ntf", "amountless refund notice -> link reminder pkg=$packageName")
+        if (!isRefundLinkEnabled()) return
+        val label = NotificationRules.sourceLabel(packageName)
+        if (Settings.canDrawOverlays(appContext)) {
+            mainHandler.post {
+                FloatingConfirmWindow.showRefundLink(
+                    appContext,
+                    label,
+                    onOpen = { openRoute(ROUTE_REFUND_LINK) },
+                    onIgnore = {},
+                )
+            }
+        } else {
+            AppLog.i("Page", "refund floating skipped (no overlay permission)")
+        }
+        postCaptureNotification(
+            "${label}退款到账",
+            "点击选择被退款的账单，记录退款收入",
+            ROUTE_REFUND_LINK,
+        )
+    }
+
+    /** 从悬浮卡/通知跳进 App 内页面（调用点均在主线程） */
+    private fun openRoute(route: String) {
+        runCatching {
+            appContext.startActivity(
+                android.content.Intent(appContext, com.accbook.app.MainActivity::class.java)
+                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    .putExtra(EXTRA_ROUTE, route),
+            )
+        }.onFailure { AppLog.w("Page", "open route $route failed", it) }
     }
 
     // ---------- 通道二：无障碍页面抓取 ----------
@@ -324,6 +450,13 @@ object CaptureCenter {
                 )
                 captureDao.updateMatch(rawId, parsed.ruleName, true)
                 AppLog.i("Page", "queued pending: ${parsed.ruleName} ${Money.formatYuan(parsed.amountCents)} 收款方=${parsed.counterparty}")
+                postCaptureNotification(
+                    "捕获到一笔支出",
+                    "${parsed.sourceLabel} ${Money.formatYuan(parsed.amountCents)}" +
+                        (if (parsed.counterparty.isNotBlank()) " · ${parsed.counterparty}" else "") +
+                        " · 点击确认入账",
+                    ROUTE_PENDING,
+                )
 
                 maybeShowFloatingConfirm(parsed)
             } catch (e: Exception) {
@@ -442,34 +575,71 @@ object CaptureCenter {
             return
         }
         scope.launch {
-            val categories = categoryDao.getAll().filter { it.type == TxType.EXPENSE }
-            val accounts = accountDao.getAll()
-            if (categories.isEmpty() || accounts.isEmpty()) {
-                onResult("无分类/账户数据，无法预填")
-                return@launch
+            showSampleFloating()
+            onResult("悬浮窗已尝试弹出；若看不到，多半被支付保护/支付保险箱拦截（见保活设置），或看 Logcat [Page] 日志")
+        }
+    }
+
+    /**
+     * debug：延迟弹测试悬浮窗——按下后 20 秒才弹，用于切到支付宝付款页验证
+     * "悬浮窗在支付页上层是否被系统/支付保护拦截"（测试弹窗本身能弹但支付页上不弹的判别）。
+     */
+    fun scheduleFloatingTest(onResult: (String) -> Unit) {
+        if (!initialized) return
+        if (!Settings.canDrawOverlays(appContext)) {
+            onResult("未授权悬浮窗权限：设置页「悬浮确认窗」→ 去授权")
+            return
+        }
+        mainHandler.postDelayed({
+            scope.launch {
+                showSampleFloating()
+                toast("延迟测试：悬浮窗已尝试弹出")
             }
-            val parsed = PageRules.ParsedPage(
-                type = TxType.EXPENSE,
-                amountCents = 1290,
-                counterparty = "拼多多平台商户",
-                paymentMethod = "中国银行储蓄卡(8920)",
-                txTime = null,
-                sourceLabel = "测试",
-                ruleName = "悬浮窗测试",
-                note = "测试数据，确认不会入账",
-                dedupKey = "test|floating",
+        }, 20_000L)
+        onResult("已安排：20 秒后弹窗，请立刻切到支付宝付款页并停留等待")
+    }
+
+    /** debug：延迟 20 秒发一条样例捕获通知（验证通知通道可用性与点击跳转） */
+    fun scheduleNotifyTest(onResult: (String) -> Unit) {
+        if (!initialized) return
+        if (!canPostNotifications()) {
+            onResult("未授权通知权限：设置页「动账通知提醒」→ 申请权限")
+            return
+        }
+        mainHandler.postDelayed({
+            postCaptureNotification("测试通知（AccBook）", "这是一条样例动账提醒 · 点击应进入待确认队列", ROUTE_PENDING)
+            toast("延迟测试：通知已发送")
+        }, 20_000L)
+        onResult("已安排：20 秒后发送测试通知（可切到任意界面等待）")
+    }
+
+    private suspend fun showSampleFloating() {
+        val categories = categoryDao.getAll().filter { it.type == TxType.EXPENSE }
+        val accounts = accountDao.getAll()
+        if (categories.isEmpty() || accounts.isEmpty()) {
+            toast("无分类/账户数据，无法预填")
+            return
+        }
+        val parsed = PageRules.ParsedPage(
+            type = TxType.EXPENSE,
+            amountCents = 1290,
+            counterparty = "拼多多平台商户",
+            paymentMethod = "中国银行储蓄卡(8920)",
+            txTime = null,
+            sourceLabel = "测试",
+            ruleName = "悬浮窗测试",
+            note = "测试数据，确认不会入账",
+            dedupKey = "test|floating",
+        )
+        mainHandler.post {
+            FloatingConfirmWindow.show(
+                appContext,
+                parsed,
+                categories,
+                accounts,
+                onConfirm = { _, _ -> toast("测试窗口：确认回调正常（未入账）") },
+                onIgnore = { toast("测试窗口：忽略回调正常") },
             )
-            mainHandler.post {
-                FloatingConfirmWindow.show(
-                    appContext,
-                    parsed,
-                    categories,
-                    accounts,
-                    onConfirm = { _, _ -> toast("测试窗口：确认回调正常（未入账）") },
-                    onIgnore = { toast("测试窗口：忽略回调正常") },
-                )
-                onResult("悬浮窗已尝试弹出；若看不到，多半被支付保护/支付保险箱拦截（见保活设置），或看 Logcat [Page] 日志")
-            }
         }
     }
 

@@ -7,6 +7,9 @@
     <!-- 悬浮确认窗：支付页上方弹出预填确认卡片（用户在设置中单独授权） -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
+    <!-- 捕获通知：检测到动账/退款时发系统通知提醒确认（安卓 13+ 运行时申请） -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <!-- 各品牌自启动/安全中心页面包可见性（Android 11+ 显式跳转其他应用组件需要声明） -->
     <queries>
         <package android:name="com.miui.securitycenter" />
@@ -32,6 +35,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTask"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

@@ -1,5 +1,7 @@
 package com.accbook.app.ui.settings
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -93,6 +95,8 @@ fun SettingsScreen(
         NotificationAccessSetting(vm, onOpenNotificationAccess)
         AccessibilityCaptureSetting(vm, onOpenAccessibilitySettings)
         FloatingConfirmSetting(vm, onOpenOverlayPermission)
+        RefundLinkSetting(vm)
+        CaptureNotifySetting(vm)
         SettingRow("防杀后台与自启动（保活设置）", onClick = onOpenKeepAlive)
         val pendingCount by vm.pendingCount.collectAsStateWithLifecycle(initialValue = 0)
         SettingRow(
@@ -271,6 +275,11 @@ private fun FloatingConfirmSetting(vm: LedgerViewModel, onOpenOverlayPermission:
                     Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                 }
             }) { Text("测试弹窗") }
+            TextButton(onClick = {
+                vm.scheduleFloatingTest { msg ->
+                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                }
+            }) { Text("20秒后弹窗") }
         }
         if (!granted) {
             TextButton(onClick = onOpenOverlayPermission) { Text("去授权") }
@@ -338,6 +347,80 @@ private fun PermissionTutorial(title: String, steps: List<String>) {
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun RefundLinkSetting(vm: LedgerViewModel) {
+    val enabled by vm.refundLinkEnabled.collectAsStateWithLifecycle()
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("退款到账关联提醒", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                "微信「退款到账通知」不带金额无法自动入账：弹出提醒卡/通知，" +
+                    "点击进入 App 选择被退款的账单（生成退款收入并标记原支出已退款）",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.outline,
+            )
+        }
+        Switch(checked = enabled, onCheckedChange = { vm.setRefundLinkEnabled(it) })
+    }
+}
+
+@Composable
+private fun CaptureNotifySetting(vm: LedgerViewModel) {
+    val enabled by vm.captureNotifyEnabled.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    var resumeTick by remember { mutableIntStateOf(0) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) resumeTick++
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    val notifGranted = remember(resumeTick) { vm.canPostNotifications() }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        Toast.makeText(context, if (granted) "通知权限已授予" else "未授予通知权限，将收不到入账提醒", Toast.LENGTH_LONG).show()
+    }
+
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("动账通知提醒", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                "捕获到动账/退款时发系统通知（悬浮窗被支付保护拦截时的可靠替代），点击进入待确认队列",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.outline,
+            )
+        }
+        if (BuildConfig.DEBUG) {
+            TextButton(onClick = {
+                vm.scheduleNotifyTest { msg ->
+                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                }
+            }) { Text("20秒后测通知") }
+        }
+        if (!notifGranted) {
+            TextButton(onClick = {
+                if (Build.VERSION.SDK_INT >= 33) {
+                    permissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                }
+            }) { Text("申请权限") }
+        }
+        Switch(checked = enabled, onCheckedChange = { vm.setCaptureNotifyEnabled(it) })
     }
 }
 

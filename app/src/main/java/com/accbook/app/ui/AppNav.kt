@@ -33,15 +33,24 @@ import com.accbook.app.ui.debug.CaptureLogScreen
 import com.accbook.app.ui.imports.ImportScreen
 import com.accbook.app.ui.keepalive.KeepAliveScreen
 import com.accbook.app.ui.pending.PendingScreen
+import com.accbook.app.ui.refund.RefundLinkScreen
 import com.accbook.app.ui.settings.SettingsScreen
 import com.accbook.app.ui.stats.StatsScreen
 import com.accbook.app.ui.transactions.EditTransactionScreen
 import com.accbook.app.ui.transactions.TransactionListScreen
+import androidx.compose.runtime.LaunchedEffect
 
 @Composable
-fun AccBookNav(vm: LedgerViewModel) {
+fun AccBookNav(vm: LedgerViewModel, navEvent: Pair<Long, String?> = 0L to null) {
     val navController = rememberNavController()
     val context = LocalContext.current
+    // 悬浮卡/系统通知点击跳转（MainActivity 传入 route 事件）
+    LaunchedEffect(navEvent.first) {
+        when (navEvent.second) {
+            com.accbook.app.capture.CaptureCenter.ROUTE_PENDING -> navController.navigate("pending")
+            com.accbook.app.capture.CaptureCenter.ROUTE_REFUND_LINK -> navController.navigate("refundLink")
+        }
+    }
     NavHost(navController = navController, startDestination = "main") {
         composable("main") {
             MainScaffold(
@@ -84,6 +93,7 @@ fun AccBookNav(vm: LedgerViewModel) {
         composable("categories") { CategoriesScreen(vm = vm, onBack = { navController.popBackStack() }) }
         composable("import") { ImportScreen(vm = vm, onBack = { navController.popBackStack() }) }
         composable("pending") { PendingScreen(vm = vm, onBack = { navController.popBackStack() }) }
+        composable("refundLink") { RefundLinkScreen(vm = vm, onBack = { navController.popBackStack() }) }
         composable("captureLog") { CaptureLogScreen(vm = vm, onBack = { navController.popBackStack() }) }
         composable("keepAlive") {
             KeepAliveScreen(

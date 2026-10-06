@@ -98,6 +98,20 @@ interface TransactionDao {
     @Query("SELECT * FROM transactions WHERE id = :id")
     suspend fun getById(id: Long): TransactionEntity?
 
+    /** 退款关联候选：近 60 天未退款的支出（供"无金额退款通知→手动关联"使用） */
+    @Query(
+        """SELECT t.id AS id, t.type AS type, t.amountCents AS amountCents, t.timestamp AS timestamp,
+           t.note AS note, t.counterparty AS counterparty, t.source AS source,
+           c.id AS categoryId, c.name AS categoryName, a.id AS accountId, a.name AS accountName,
+           t.refundMark AS refundMark
+           FROM transactions t
+           JOIN categories c ON t.categoryId = c.id
+           JOIN accounts a ON t.accountId = a.id
+           WHERE t.type = 'EXPENSE' AND t.refundMark = 'NONE' AND t.timestamp >= :since
+           ORDER BY t.timestamp DESC LIMIT 50"""
+    )
+    suspend fun recentUnrefundedExpenses(since: Long): List<TransactionRow>
+
     @Query("SELECT COUNT(*) FROM transactions WHERE categoryId = :categoryId")
     suspend fun countByCategory(categoryId: Long): Int
 
