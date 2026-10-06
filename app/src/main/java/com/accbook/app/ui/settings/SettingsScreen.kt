@@ -115,7 +115,7 @@ fun SettingsScreen(
         HorizontalDivider()
 
         Text(
-            "AccBook v0.2.1 · 数据仅保存在本机",
+            "AccBook v${BuildConfig.VERSION_NAME} · 数据仅保存在本机",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.outline,
             modifier = Modifier.padding(16.dp),
