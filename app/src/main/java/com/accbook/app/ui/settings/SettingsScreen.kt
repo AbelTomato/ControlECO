@@ -401,7 +401,8 @@ private fun CaptureNotifySetting(vm: LedgerViewModel) {
         Column(Modifier.weight(1f)) {
             Text("动账通知提醒", style = MaterialTheme.typography.bodyLarge)
             Text(
-                "捕获到动账/退款时发系统通知（悬浮窗被支付保护拦截时的可靠替代），点击进入待确认队列",
+                "捕获到动账/退款时屏幕上方横幅提醒（支付宝支付页会拦截悬浮窗，通知是可靠入口），" +
+                    "点击进入待确认队列；与悬浮卡同笔二选一操作即可，操作后另一方自动消失",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.outline,
             )

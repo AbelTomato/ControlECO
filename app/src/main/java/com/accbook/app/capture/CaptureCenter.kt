@@ -53,7 +53,9 @@ object CaptureCenter {
     const val ROUTE_PENDING = "pending"
     const val ROUTE_REFUND_LINK = "refundLink"
 
-    private const val CHANNEL_CAPTURE = "capture"
+    /** 渠道 v2：横幅提醒（IMPORTANCE_HIGH 才会弹屏幕上方横幅）；旧渠道 capture（DEFAULT 静默）删除 */
+    private const val CHANNEL_CAPTURE = "capture_alert"
+    private const val CHANNEL_LEGACY = "capture"
     private const val NOTIF_TAG = "capture"
 
     /** 同一内容通知的重发窗口（微信/支付宝常会更新同一条通知导致重复回调） */
@@ -98,19 +100,28 @@ object CaptureCenter {
     }
 
     private fun createNotificationChannel() {
-        val channel = android.app.NotificationChannel(
-            CHANNEL_CAPTURE,
-            "自动记账提醒",
-            android.app.NotificationManager.IMPORTANCE_DEFAULT,
-        ).apply { description = "捕获到动账/退款时提醒确认入账" }
         runCatching {
-            (appContext.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager)
-                .createNotificationChannel(channel)
+            val nm = appContext.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+            nm.deleteNotificationChannel(CHANNEL_LEGACY)
+            val channel = android.app.NotificationChannel(
+                CHANNEL_CAPTURE,
+                "自动记账提醒",
+                android.app.NotificationManager.IMPORTANCE_HIGH,
+            ).apply {
+                description = "捕获到动账/退款时横幅提醒确认入账"
+                enableVibration(true)
+            }
+            nm.createNotificationChannel(channel)
         }.onFailure { AppLog.w("Ntf", "create channel failed", it) }
     }
 
-    /** 系统通知：点击跳转 App 内对应页面（待确认队列 / 退款关联） */
-    private fun postCaptureNotification(title: String, text: String, route: String) {
+    /** 系统通知（横幅）：点击跳转 App 内对应页面（待确认队列 / 退款关联） */
+    private fun postCaptureNotification(
+        title: String,
+        text: String,
+        route: String,
+        notifId: Int = title.hashCode(),
+    ) {
         if (!isCaptureNotifyEnabled()) return
         if (!canPostNotifications()) {
             AppLog.i("Ntf", "notify skipped (POST_NOTIFICATIONS not granted)")
@@ -130,12 +141,78 @@ object CaptureCenter {
             .setContentTitle(title)
             .setContentText(text)
             .setContentIntent(pi)
+            .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
+            .setCategory(androidx.core.app.NotificationCompat.CATEGORY_REMINDER)
             .setAutoCancel(true)
             .build()
         runCatching {
-            androidx.core.app.NotificationManagerCompat.from(appContext).notify(NOTIF_TAG, title.hashCode(), notification)
+            androidx.core.app.NotificationManagerCompat.from(appContext).notify(NOTIF_TAG, notifId, notification)
             AppLog.i("Ntf", "capture notification posted: $title")
         }.onFailure { AppLog.w("Ntf", "post notification failed", it) }
+    }
+
+    /** 待确认入账通知的确定性 id（跨通道同一笔可互相撤销） */
+    private fun pendingNotifId(dedupKey: String): Int = "pending|$dedupKey".hashCode()
+
+    private fun cancelCaptureNotification(notifId: Int) {
+        runCatching {
+            androidx.core.app.NotificationManagerCompat.from(appContext).cancel(NOTIF_TAG, notifId)
+        }
+    }
+
+    /**
+     * 捕获入队后的双通道提醒：系统通知（横幅，可靠）+ 悬浮确认卡（支付页上方会被拦截，
+     * 离开支付页后可见）。冲突处理：悬浮卡确认/忽略 → 自动删除同笔通知；
+     * 点击通知 → 打开 App 时关闭悬浮卡（onRouteOpened）。
+     */
+    private suspend fun announceCapture(
+        type: TxType,
+        isRefund: Boolean,
+        amountCents: Long,
+        sourceLabel: String,
+        counterparty: String,
+        paymentMethod: String?,
+        dedupKey: String,
+        ruleName: String,
+        txTime: Long?,
+        note: String,
+    ) {
+        val notifId = pendingNotifId(dedupKey)
+        val kind = when {
+            isRefund -> "退款"
+            type == TxType.EXPENSE -> "支出"
+            else -> "收入"
+        }
+        postCaptureNotification(
+            "捕获到一笔$kind",
+            "$sourceLabel ${Money.formatYuan(amountCents)}" +
+                (if (counterparty.isNotBlank()) " · $counterparty" else "") +
+                " · 点击确认入账",
+            ROUTE_PENDING,
+            notifId,
+        )
+        maybeShowFloatingConfirm(
+            PageRules.ParsedPage(
+                type = type,
+                amountCents = amountCents,
+                counterparty = counterparty,
+                paymentMethod = paymentMethod,
+                txTime = txTime,
+                sourceLabel = sourceLabel,
+                ruleName = ruleName,
+                note = note,
+                dedupKey = dedupKey,
+            ),
+            notifId,
+            isRefund,
+        )
+    }
+
+    /** MainActivity 收到悬浮卡/通知的跳转后回调：点通知进 App 时关闭悬浮卡，避免悬在本应用上层 */
+    fun onRouteOpened(route: String) {
+        if (!initialized) return
+        mainHandler.post { FloatingConfirmWindow.dismiss() }
+        AppLog.d("Page", "route opened: $route, floating dismissed if any")
     }
 
     fun markConnected(connected: Boolean) {
@@ -274,7 +351,7 @@ object CaptureCenter {
                     if (interested && isCaptureEnabled() &&
                         NotificationRules.isAmountlessRefundNotice(packageName, title, text)
                     ) {
-                        handleRefundNotice(packageName, rawId)
+                        handleRefundNotice(packageName, rawId, postTime)
                     }
                     return@launch
                 }
@@ -305,10 +382,17 @@ object CaptureCenter {
                     "queued pending: ${parsed.ruleName} ${parsed.type} ${Money.formatYuan(parsed.amountCents)}" +
                         (if (parsed.isRefund) " [退款]" else "") + " pkg=$packageName",
                 )
-                postCaptureNotification(
-                    "捕获到一笔${if (parsed.type == TxType.EXPENSE) "支出" else if (parsed.isRefund) "退款" else "收入"}",
-                    "${NotificationRules.sourceLabel(packageName)} ${Money.formatYuan(parsed.amountCents)} · 点击确认入账",
-                    ROUTE_PENDING,
+                announceCapture(
+                    type = parsed.type,
+                    isRefund = parsed.isRefund,
+                    amountCents = parsed.amountCents,
+                    sourceLabel = NotificationRules.sourceLabel(packageName),
+                    counterparty = "",
+                    paymentMethod = null,
+                    dedupKey = parsed.dedupKey,
+                    ruleName = parsed.ruleName,
+                    txTime = null,
+                    note = parsed.note,
                 )
             } catch (e: Exception) {
                 AppLog.e("Ntf", "capture handling failed", e)
@@ -319,18 +403,22 @@ object CaptureCenter {
     // ---------- 退款关联提醒（无金额退款通知） ----------
 
     /** 微信"退款到账通知"没有金额，无法直接入队：提醒用户进 App 选择被退款的账单 */
-    private suspend fun handleRefundNotice(packageName: String, rawId: Long) {
+    private suspend fun handleRefundNotice(packageName: String, rawId: Long, postTime: Long) {
         captureDao.updateMatch(rawId, "退款·待关联", false)
         AppLog.i("Ntf", "amountless refund notice -> link reminder pkg=$packageName")
         if (!isRefundLinkEnabled()) return
         val label = NotificationRules.sourceLabel(packageName)
+        val notifId = ("refund|$packageName|$postTime").hashCode()
         if (Settings.canDrawOverlays(appContext)) {
             mainHandler.post {
                 FloatingConfirmWindow.showRefundLink(
                     appContext,
                     label,
-                    onOpen = { openRoute(ROUTE_REFUND_LINK) },
-                    onIgnore = {},
+                    onOpen = {
+                        cancelCaptureNotification(notifId)
+                        openRoute(ROUTE_REFUND_LINK)
+                    },
+                    onIgnore = { cancelCaptureNotification(notifId) },
                 )
             }
         } else {
@@ -340,6 +428,7 @@ object CaptureCenter {
             "${label}退款到账",
             "点击选择被退款的账单，记录退款收入",
             ROUTE_REFUND_LINK,
+            notifId,
         )
     }
 
@@ -431,7 +520,8 @@ object CaptureCenter {
                     )
                     captureDao.updateMatch(rawId, parsed.ruleName, true)
                     AppLog.i("Page", "enriched pending #${related.id} ${parsed.ruleName} ${Money.formatYuan(parsed.amountCents)}")
-                    maybeShowFloatingConfirm(parsed)
+                    // 通知通道已发过横幅通知；这里只弹富化后的悬浮卡，确认/忽略会撤掉原通知
+                    maybeShowFloatingConfirm(parsed, pendingNotifId(related.dedupKey))
                     return@launch
                 }
 
@@ -450,15 +540,18 @@ object CaptureCenter {
                 )
                 captureDao.updateMatch(rawId, parsed.ruleName, true)
                 AppLog.i("Page", "queued pending: ${parsed.ruleName} ${Money.formatYuan(parsed.amountCents)} 收款方=${parsed.counterparty}")
-                postCaptureNotification(
-                    "捕获到一笔支出",
-                    "${parsed.sourceLabel} ${Money.formatYuan(parsed.amountCents)}" +
-                        (if (parsed.counterparty.isNotBlank()) " · ${parsed.counterparty}" else "") +
-                        " · 点击确认入账",
-                    ROUTE_PENDING,
+                announceCapture(
+                    type = parsed.type,
+                    isRefund = false,
+                    amountCents = parsed.amountCents,
+                    sourceLabel = parsed.sourceLabel,
+                    counterparty = parsed.counterparty,
+                    paymentMethod = parsed.paymentMethod,
+                    dedupKey = parsed.dedupKey,
+                    ruleName = parsed.ruleName,
+                    txTime = parsed.txTime,
+                    note = parsed.note,
                 )
-
-                maybeShowFloatingConfirm(parsed)
             } catch (e: Exception) {
                 AppLog.e("Page", "page capture handling failed", e)
             }
@@ -484,7 +577,11 @@ object CaptureCenter {
 
     // ---------- 悬浮确认窗 ----------
 
-    private suspend fun maybeShowFloatingConfirm(parsed: PageRules.ParsedPage) {
+    private suspend fun maybeShowFloatingConfirm(
+        parsed: PageRules.ParsedPage,
+        notifId: Int? = null,
+        isRefund: Boolean = false,
+    ) {
         if (!isFloatingConfirmEnabled()) {
             AppLog.i("Page", "floating confirm skipped（设置页「支付完成弹出悬浮窗」开关关闭）")
             return
@@ -505,8 +602,13 @@ object CaptureCenter {
                 parsed,
                 categories,
                 accounts,
-                onConfirm = { categoryId, accountId -> confirmDirect(parsed, categoryId, accountId) },
+                onConfirm = { categoryId, accountId ->
+                    // 冲突处理：悬浮窗操作 → 撤掉同笔通知
+                    if (notifId != null) cancelCaptureNotification(notifId)
+                    confirmDirect(parsed, categoryId, accountId, isRefund)
+                },
                 onIgnore = {
+                    if (notifId != null) cancelCaptureNotification(notifId)
                     scope.launch {
                         deletePendingFor(parsed)
                         AppLog.i("Page", "floating ignored, removed same-transaction pending entries")
@@ -525,7 +627,7 @@ object CaptureCenter {
      * 悬浮窗确认：直接入账（不走待确认），并清掉同笔待确认条目（含 ±1 分钟邻键——
      * 通知通道先建的条目 dedupKey 与页面键不同）；externalId 唯一索引兜底防双通道重复。
      */
-    private fun confirmDirect(parsed: PageRules.ParsedPage, categoryId: Long, accountId: Long) {
+    private fun confirmDirect(parsed: PageRules.ParsedPage, categoryId: Long, accountId: Long, isRefund: Boolean = false) {
         scope.launch {
             try {
                 val externalId = "NTF:${parsed.dedupKey}"
@@ -540,6 +642,7 @@ object CaptureCenter {
                         counterparty = parsed.counterparty,
                         source = TxSource.NOTIFICATION,
                         externalId = externalId,
+                        refundMark = if (isRefund) RefundMark.REFUND_INCOME else RefundMark.NONE,
                     ),
                 )
                 deletePendingFor(parsed)
