@@ -70,6 +70,7 @@ fun SettingsScreen(
         SettingRow("账户管理", onClick = onOpenAccounts)
         SettingRow("分类管理", onClick = onOpenCategories)
         BudgetSetting(vm)
+        HomeAnimationSetting(vm)
         HorizontalDivider(color = MaterialTheme.accBook.hairline)
 
         RefundDisplaySetting(vm)
@@ -535,5 +536,27 @@ private fun BudgetSetting(vm: LedgerViewModel) {
             onSave = { vm.setMonthlyBudget(it); show = false },
             onDismiss = { show = false },
         )
+    }
+}
+
+@Composable
+private fun HomeAnimationSetting(vm: LedgerViewModel) {
+    val enabled by vm.homeAnimationsEnabled.collectAsStateWithLifecycle()
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("首页记账动画", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                "金币堆入场、支出弹出碎裂、收入落币等结算动画。低性能设备或不喜欢动效时可关闭：" +
+                    "数字直接显示，仅保留 ±金额提示。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(checked = enabled, onCheckedChange = { vm.setHomeAnimationsEnabled(it) })
     }
 }

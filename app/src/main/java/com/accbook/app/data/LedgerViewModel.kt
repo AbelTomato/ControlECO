@@ -27,6 +27,8 @@ import com.accbook.app.data.db.TypeTotalRow
 import com.accbook.app.data.db.TxSource
 import com.accbook.app.data.db.TxType
 import com.accbook.app.data.budget.Budget
+import com.accbook.app.data.budget.HomeSettlement
+import com.accbook.app.data.budget.MonthCashFlow
 import com.accbook.app.data.model.BillSource
 import com.accbook.app.data.model.ImportCommitResult
 import com.accbook.app.data.model.ParsedBill
@@ -40,6 +42,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -94,17 +97,53 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
     private val homeRange = range(homeMonth)
 
     /**
-     * 首页"本月已花"：固定取当前自然月（不随流水页翻月变化）。
-     * 口径 = 当月支出合计 − 当月退款到账（现金净流出，退款始终计入，与显示开关无关）。
-     * 剩余/建议日花/状态由 UI 用 Budget.compute 纯函数计算。
+     * 首页金币堆数据源：固定取当前自然月（不随流水页翻月变化），退款始终计入（includeRefunds=true）。
+     * 支出与收入独立暴露——结算动画要求两者分别表现，不得合并为净额。
+     * 剩余预算 = 预算 + 收入 − 支出，由 UI 计算；跨天/跨月不主动刷新（重开应用对齐）。
      */
     @OptIn(ExperimentalCoroutinesApi::class)
-    val homeNetSpent: StateFlow<Long> = combine(
-        txDao.observeTypeTotals(homeRange.first, homeRange.second, true),
-        txDao.observeRefundIncomeTotal(homeRange.first, homeRange.second),
-    ) { totals, refundIncome ->
-        (totals.firstOrNull { it.type == TxType.EXPENSE }?.totalCents ?: 0L) - refundIncome
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
+    val homeCashFlow: StateFlow<MonthCashFlow?> = txDao
+        .observeTypeTotals(homeRange.first, homeRange.second, true)
+        .map { rows ->
+            MonthCashFlow(
+                expenseCents = rows.firstOrNull { it.type == TxType.EXPENSE }?.totalCents ?: 0L,
+                incomeCents = rows.firstOrNull { it.type == TxType.INCOME }?.totalCents ?: 0L,
+            )
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    // ---------- 设置：首页动画开关（照顾低性能设备） ----------
+
+    private val _homeAnimations = MutableStateFlow(prefs.getBoolean(KEY_HOME_ANIMATIONS, true))
+    val homeAnimationsEnabled: StateFlow<Boolean> = _homeAnimations
+
+    fun setHomeAnimationsEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_HOME_ANIMATIONS, enabled).apply()
+        _homeAnimations.value = enabled
+        AppLog.i("settings", "homeAnimations=$enabled")
+    }
+
+    // ---------- 首页结算会话（金币堆动画的事件边界） ----------
+
+    private val _lastHomeSnapshot = MutableStateFlow<HomeSettlement.HomeSnapshot?>(null)
+
+    /**
+     * 进入首页时开始一次结算会话：与上次快照求独立的支出/收入 delta。
+     * 快照边界在会话开始时即推进（消费即记录）：动画中断、App 后台、进程被杀都不会
+     * 导致重复播放或账务错误——动画永远不是数据真源，数据库才是。
+     */
+    fun beginHomeSession(
+        budgetCents: Long,
+        expenseCents: Long,
+        incomeCents: Long,
+        month: YearMonth,
+    ): HomeSettlement.HomeSession {
+        val current = HomeSettlement.HomeSnapshot(month, budgetCents, expenseCents, incomeCents)
+        val session = HomeSettlement.compute(_lastHomeSnapshot.value, current)
+        _lastHomeSnapshot.value = current
+        AppLog.i("home", "session: expenseDelta=${session.expenseDelta} incomeDelta=${session.incomeDelta}")
+        return session
+    }
 
     // ---------- 月份 ----------
 
@@ -573,5 +612,6 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
         const val PREFS_NAME = "settings"
         const val KEY_SHOW_REFUNDS = "show_refunds"
         const val KEY_MONTHLY_BUDGET = "monthly_budget_cents"
+        const val KEY_HOME_ANIMATIONS = "home_animations"
     }
 }
