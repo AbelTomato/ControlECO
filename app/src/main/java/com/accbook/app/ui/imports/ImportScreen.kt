@@ -13,7 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -38,6 +38,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.accbook.app.data.LedgerViewModel
+import com.accbook.app.ui.theme.accBook
 import com.accbook.app.data.db.RefundMark
 import com.accbook.app.data.db.TxType
 import com.accbook.app.ui.common.DropdownSelector
@@ -71,7 +72,7 @@ fun ImportScreen(vm: LedgerViewModel, onBack: () -> Unit) {
             TopAppBar(
                 title = { Text("导入账单") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) { Icon(Icons.Filled.ArrowBack, contentDescription = "返回") }
+                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回") }
                 },
             )
         },
@@ -106,7 +107,7 @@ fun ImportScreen(vm: LedgerViewModel, onBack: () -> Unit) {
                             "共 ${b.rows.size} 条（支出 $expenseCount，收入 $incomeCount）；" +
                                 "已跳过不计收支 ${b.skippedOtherType} 条、未完成 ${b.skippedStatus} 条。",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.outline,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         if (b.refundCount > 0) {
                             Text(
@@ -149,7 +150,7 @@ fun ImportScreen(vm: LedgerViewModel, onBack: () -> Unit) {
                                                 " ｜" + if (r.refundMark == RefundMark.REFUND_INCOME) "退款收入" else "已退款"
                                             } else "",
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.outline,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
                                     )
@@ -157,7 +158,7 @@ fun ImportScreen(vm: LedgerViewModel, onBack: () -> Unit) {
                                 Text(
                                     (if (r.type == TxType.EXPENSE) "-" else "+") + Money.formatYuan(r.amountCents),
                                     style = MaterialTheme.typography.titleSmall,
-                                    color = if (r.type == TxType.INCOME) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurface,
+                                    color = if (r.type == TxType.INCOME) MaterialTheme.accBook.income else MaterialTheme.colorScheme.onSurface,
                                 )
                             }
                         }
@@ -183,7 +184,7 @@ fun ImportScreen(vm: LedgerViewModel, onBack: () -> Unit) {
                             "· 微信：我 → 服务 → 钱包 → 账单 → 右上角常见问题 → 下载账单 → 用于个人对账（xlsx 发送到邮箱）\n" +
                             "· 支付宝：我的 → 账单 → 右上角“…” → 开具交易流水证明 → 用于个人对账（CSV 发送到邮箱）",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.outline,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }

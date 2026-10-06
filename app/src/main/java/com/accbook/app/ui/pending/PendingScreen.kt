@@ -13,7 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.accbook.app.capture.NotificationRules
 import com.accbook.app.data.LedgerViewModel
+import com.accbook.app.ui.theme.accBook
 import com.accbook.app.data.db.AccountEntity
 import com.accbook.app.data.db.CategoryEntity
 import com.accbook.app.data.db.PendingTransactionEntity
@@ -62,7 +63,7 @@ fun PendingScreen(vm: LedgerViewModel, onBack: () -> Unit) {
             TopAppBar(
                 title = { Text("待确认账单") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) { Icon(Icons.Filled.ArrowBack, contentDescription = "返回") }
+                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回") }
                 },
                 actions = {
                     if (pending.isNotEmpty()) {
@@ -77,7 +78,7 @@ fun PendingScreen(vm: LedgerViewModel, onBack: () -> Unit) {
                 Text(
                     "暂无待确认账单\n开启通知监听后，收款/动账通知会出现在这里",
                     textAlign = TextAlign.Center,
-                    color = MaterialTheme.colorScheme.outline,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         } else {
@@ -140,18 +141,18 @@ private fun PendingRow(item: PendingTransactionEntity, onConfirm: () -> Unit, on
             Text(
                 (if (item.type == TxType.EXPENSE) "-" else "+") + Money.formatYuan(item.amountCents),
                 style = MaterialTheme.typography.titleSmall,
-                color = if (item.type == TxType.INCOME) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurface,
+                color = if (item.type == TxType.INCOME) MaterialTheme.accBook.income else MaterialTheme.colorScheme.onSurface,
             )
             Text(
                 "${NotificationRules.sourceLabel(item.sourcePackage)} · ${item.ruleName}",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.outline,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             if (item.note.isNotBlank()) {
                 Text(
                     item.note,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.outline,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -159,7 +160,7 @@ private fun PendingRow(item: PendingTransactionEntity, onConfirm: () -> Unit, on
             Text(
                 formatTimestamp(item.timestamp),
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.outline,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         TextButton(onClick = onConfirm) { Text("确认") }
@@ -191,13 +192,13 @@ private fun ConfirmPendingDialog(
                 Text(
                     "${NotificationRules.sourceLabel(item.sourcePackage)} · ${item.ruleName} · ${formatTimestamp(item.timestamp)}",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.outline,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 if (item.note.isNotBlank()) {
                     Text(
                         item.note,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.outline,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 3,
                         overflow = TextOverflow.Ellipsis,
                     )

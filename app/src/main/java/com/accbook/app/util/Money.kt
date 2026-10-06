@@ -38,4 +38,18 @@ object Money {
         val negative = cents < 0
         return (if (negative) "-" else "") + "¥" + formatCents(if (negative) -cents else cents)
     }
+
+    /**
+     * 分 → "¥2,884"（整数金额不带小数、千分位分组；有小数时保留两位，如 ¥32.50）。
+     * 首页/汇总等大金额展示用，短且易读。
+     */
+    fun formatYuanGrouped(cents: Long): String {
+        val negative = cents < 0
+        val abs = if (negative) -cents else cents
+        val whole = abs / 100
+        val frac = abs % 100
+        val grouped = java.text.DecimalFormat("#,##0").format(whole)
+        val body = if (frac == 0L) grouped else "$grouped." + frac.toString().padStart(2, '0')
+        return (if (negative) "-" else "") + "¥" + body
+    }
 }

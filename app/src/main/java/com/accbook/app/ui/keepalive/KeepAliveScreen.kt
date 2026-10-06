@@ -9,7 +9,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -79,7 +79,7 @@ fun KeepAliveScreen(
             TopAppBar(
                 title = { Text("防杀后台与自启动") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) { Icon(Icons.Filled.ArrowBack, contentDescription = "返回") }
+                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回") }
                 },
             )
         },
@@ -93,7 +93,7 @@ fun KeepAliveScreen(
             Text(
                 "服务状态（${brand.displayName} · $model）",
                 style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.outline,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             )
             StatusRow(
@@ -132,7 +132,7 @@ fun KeepAliveScreen(
                     "「允许受限制的设置」，然后才能在系统设置里开启 AccBook 的通知监听与无障碍。" +
                     "若系统设置列表里找不到 AccBook，通常就是缺这一步。",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.outline,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 16.dp),
             )
             Row(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
@@ -143,7 +143,7 @@ fun KeepAliveScreen(
             Text(
                 "电池优化白名单",
                 style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.outline,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             )
             Row(
@@ -158,7 +158,7 @@ fun KeepAliveScreen(
                     Text(
                         "申请系统忽略电池优化（Doze 白名单）；品牌的省电策略仍需按下方步骤手动设置。",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.outline,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 if (!batteryIgnoring) {
@@ -172,7 +172,7 @@ fun KeepAliveScreen(
             Text(
                 "${brand.displayName} 设置步骤",
                 style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.outline,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             )
             DeviceBrands.stepsFor(brand).forEachIndexed { index, step ->
@@ -181,7 +181,7 @@ fun KeepAliveScreen(
                     Text(
                         step.detail,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.outline,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     if (step.actions.isNotEmpty()) {
                         Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -206,7 +206,7 @@ fun KeepAliveScreen(
                     "若开关都正常仍长时间收不到通知：重启手机 → 打开应用 → 到「通知捕获日志」查看是否有事件；" +
                     "仍无事件则把通知使用权重新开关一次。",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.outline,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(16.dp),
             )
         }
@@ -223,7 +223,7 @@ private fun StatusRow(label: String, value: String, action: Pair<String, () -> U
         Text(
             value,
             style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.outline,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         if (action != null) {
             TextButton(onClick = action.second) { Text(action.first) }

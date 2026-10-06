@@ -10,7 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -59,7 +59,7 @@ fun RefundLinkScreen(vm: LedgerViewModel, onBack: () -> Unit) {
             TopAppBar(
                 title = { Text("选择被退款的账单") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) { Icon(Icons.Filled.ArrowBack, contentDescription = "返回") }
+                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回") }
                 },
             )
         },
@@ -69,20 +69,20 @@ fun RefundLinkScreen(vm: LedgerViewModel, onBack: () -> Unit) {
                 "选择与这笔退款对应的支出记录：将生成一条退款收入（默认等于原支出金额，可修改以支持部分退款），" +
                     "并把原支出标记为「已退款」。仅显示近 60 天未退款的支出。",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.outline,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             )
             HorizontalDivider()
 
             when {
                 loading -> {
-                    Text("加载中…", Modifier.padding(16.dp), color = MaterialTheme.colorScheme.outline)
+                    Text("加载中…", Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 rows.isEmpty() -> {
                     Text(
                         "近 60 天没有可关联的支出记录",
                         Modifier.padding(16.dp),
-                        color = MaterialTheme.colorScheme.outline,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 else -> {
@@ -108,7 +108,7 @@ fun RefundLinkScreen(vm: LedgerViewModel, onBack: () -> Unit) {
                                     Text(
                                         desc.ifBlank { " " },
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.outline,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         maxLines = 2,
                                         overflow = TextOverflow.Ellipsis,
                                     )
@@ -116,7 +116,7 @@ fun RefundLinkScreen(vm: LedgerViewModel, onBack: () -> Unit) {
                                 Text(
                                     formatTimestamp(row.timestamp),
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.outline,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
                             HorizontalDivider()
@@ -163,12 +163,12 @@ private fun LinkRefundDialog(
                     "原支出：${Money.formatYuan(row.amountCents)} · ${row.categoryName} · " +
                         "${row.accountName} · ${formatTimestamp(row.timestamp)}",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.outline,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
                     row.counterparty.ifBlank { row.note.ifBlank { "无备注" } },
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.outline,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )

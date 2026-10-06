@@ -16,7 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -62,7 +62,7 @@ fun CaptureLogScreen(vm: LedgerViewModel, onBack: () -> Unit) {
             TopAppBar(
                 title = { Text("捕获日志") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) { Icon(Icons.Filled.ArrowBack, contentDescription = "返回") }
+                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回") }
                 },
                 actions = {
                     if (rows.isNotEmpty()) {
@@ -117,7 +117,7 @@ fun CaptureLogScreen(vm: LedgerViewModel, onBack: () -> Unit) {
                 "共 ${rows.size} 条（仅保留最近记录）；点条目可复制原文；" +
                     "debug 构建下 Logcat 过滤 AccBook 可看全部明细（[Ntf] 通知 / [Page] 页面）。",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.outline,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
             )
             HorizontalDivider()
@@ -127,7 +127,7 @@ fun CaptureLogScreen(vm: LedgerViewModel, onBack: () -> Unit) {
                     Text(
                         "暂无捕获记录\n收到通知或打开支付页面后会出现",
                         textAlign = TextAlign.Center,
-                        color = MaterialTheme.colorScheme.outline,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             } else {
@@ -150,7 +150,7 @@ fun CaptureLogScreen(vm: LedgerViewModel, onBack: () -> Unit) {
                                     "${if (n.source == CaptureChannel.A11Y) "页面" else "通知"} · ${n.packageName} · " +
                                         n.matchedRule.ifBlank { "未匹配" } + if (n.queued) " · 已入待确认" else "",
                                     style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.outline,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                                 if (n.title.isNotBlank()) {
                                     Text(
@@ -165,7 +165,7 @@ fun CaptureLogScreen(vm: LedgerViewModel, onBack: () -> Unit) {
                                     Text(
                                         body,
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.outline,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         maxLines = 3,
                                         overflow = TextOverflow.Ellipsis,
                                     )
@@ -174,7 +174,7 @@ fun CaptureLogScreen(vm: LedgerViewModel, onBack: () -> Unit) {
                             Text(
                                 formatTimestamp(n.receivedAt),
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.outline,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                         HorizontalDivider()

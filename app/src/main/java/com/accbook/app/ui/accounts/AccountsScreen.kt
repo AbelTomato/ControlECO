@@ -13,7 +13,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
@@ -54,7 +54,7 @@ fun AccountsScreen(vm: LedgerViewModel, onBack: () -> Unit) {
             TopAppBar(
                 title = { Text("账户管理") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) { Icon(Icons.Filled.ArrowBack, contentDescription = "返回") }
+                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回") }
                 },
             )
         },
@@ -66,7 +66,7 @@ fun AccountsScreen(vm: LedgerViewModel, onBack: () -> Unit) {
     ) { padding ->
         if (accounts.isEmpty()) {
             Box(Modifier.padding(padding).fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("暂无账户，点右下角 + 新增", color = MaterialTheme.colorScheme.outline)
+                Text("暂无账户，点右下角 + 新增", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         } else {
             LazyColumn(Modifier.padding(padding)) {
@@ -83,7 +83,7 @@ fun AccountsScreen(vm: LedgerViewModel, onBack: () -> Unit) {
                         Column(Modifier.weight(1f)) {
                             Text(a.name, style = MaterialTheme.typography.bodyLarge)
                             if (a.note.isNotBlank()) {
-                                Text(a.note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+                                Text(a.note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                         Text(Money.formatYuan(current), style = MaterialTheme.typography.titleSmall)
