@@ -39,6 +39,9 @@ import com.accbook.app.BuildConfig
 import com.accbook.app.capture.CaptureCenter
 import com.accbook.app.data.LedgerViewModel
 import com.accbook.app.keepalive.Brand
+import com.accbook.app.ui.common.BudgetEditDialog
+import com.accbook.app.ui.theme.accBook
+import com.accbook.app.util.Money
 
 @Composable
 fun SettingsScreen(
@@ -66,7 +69,8 @@ fun SettingsScreen(
 
         SettingRow("账户管理", onClick = onOpenAccounts)
         SettingRow("分类管理", onClick = onOpenCategories)
-        HorizontalDivider()
+        BudgetSetting(vm)
+        HorizontalDivider(color = MaterialTheme.accBook.hairline)
 
         RefundDisplaySetting(vm)
         HorizontalDivider()
@@ -74,7 +78,7 @@ fun SettingsScreen(
         Text(
             "数据导入",
             style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.outline,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
         )
         SettingRow("导入微信/支付宝账单", onClick = onImport)
@@ -82,7 +86,7 @@ fun SettingsScreen(
             "导出路径：微信 我 → 服务 → 钱包 → 账单 → 常见问题 → 下载账单（用于个人对账，xlsx 发到邮箱）；" +
                 "支付宝 我的 → 账单 → 右上角“…” → 开具交易流水证明（用于个人对账，CSV 发到邮箱）。",
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.outline,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 16.dp),
         )
         HorizontalDivider()
@@ -90,7 +94,7 @@ fun SettingsScreen(
         Text(
             "自动记账",
             style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.outline,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
         )
         NotificationAccessSetting(vm, onOpenNotificationAccess)
@@ -109,7 +113,7 @@ fun SettingsScreen(
         Text(
             "银行短信识别将在后续版本提供。无障碍/悬浮窗被拦截时见保活设置中的支付保护说明。",
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.outline,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 16.dp),
         )
         HorizontalDivider()
@@ -117,7 +121,7 @@ fun SettingsScreen(
         Text(
             "AccBook v${BuildConfig.VERSION_NAME} · 数据仅保存在本机",
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.outline,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(16.dp),
         )
     }
@@ -138,7 +142,7 @@ private fun RefundDisplaySetting(vm: LedgerViewModel) {
                 "开启后，账单中退回的金额标记「退款收入」、被全额退款的支出标记「已退款」，" +
                     "计入总收支并额外显示「已取消收支」合计；关闭则不显示、不计入。切换立即生效。",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.outline,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         Switch(checked = showRefunds, onCheckedChange = { vm.setShowRefunds(it) })
@@ -164,7 +168,7 @@ private fun NotificationAccessSetting(vm: LedgerViewModel, onOpenNotificationAcc
                     else -> "未开启，需在系统设置中授予“通知使用权”"
                 },
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.outline,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         if (!granted) {
@@ -204,7 +208,7 @@ private fun AccessibilityCaptureSetting(vm: LedgerViewModel, onOpenAccessibility
                     else -> "未开启，需在系统无障碍设置中启用「AccBook 支付页面采集」"
                 },
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.outline,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         if (!enabled) {
@@ -223,7 +227,7 @@ private fun AccessibilityCaptureSetting(vm: LedgerViewModel, onOpenAccessibility
                 "无障碍开启时，从支付页/账单详情提取金额进入待确认队列；" +
                     "页面信息与通知捕获同笔自动合并，只入账一次",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.outline,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         Switch(checked = captureOn, onCheckedChange = { vm.setA11yCaptureEnabled(it) })
@@ -267,7 +271,7 @@ private fun FloatingConfirmSetting(vm: LedgerViewModel, onOpenOverlayPermission:
                 if (granted) "已授权，支付完成后悬浮预填卡片，点一下即入账（不进待确认队列）"
                 else "需要「显示在其他应用上层」权限；未授权时降级为进入待确认队列",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.outline,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         if (BuildConfig.DEBUG) {
@@ -297,7 +301,7 @@ private fun FloatingConfirmSetting(vm: LedgerViewModel, onOpenOverlayPermission:
             Text(
                 "需同时开启无障碍页面采集；华为/荣耀支付保护中心、小米支付保险箱可能拦截，见保活设置",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.outline,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         Switch(checked = floatingOn, onCheckedChange = { vm.setFloatingConfirmEnabled(it) })
@@ -343,7 +347,7 @@ private fun PermissionTutorial(title: String, steps: List<String>) {
                 Text(
                     "${i + 1}. $step",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.outline,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(vertical = 2.dp),
                 )
             }
@@ -366,7 +370,7 @@ private fun RefundLinkSetting(vm: LedgerViewModel) {
                 "微信「退款到账通知」不带金额无法自动入账：弹出提醒卡/通知，" +
                     "点击进入 App 选择被退款的账单（生成退款收入并标记原支出已退款）",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.outline,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         Switch(checked = enabled, onCheckedChange = { vm.setRefundLinkEnabled(it) })
@@ -405,7 +409,7 @@ private fun CaptureNotifySetting(vm: LedgerViewModel) {
                 "捕获到动账/退款时屏幕上方横幅提醒（支付宝支付页会拦截悬浮窗，通知是可靠入口），" +
                     "点击进入待确认队列；与悬浮卡同笔二选一操作即可，操作后另一方自动消失",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.outline,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         if (BuildConfig.DEBUG) {
@@ -462,7 +466,7 @@ private fun CaptureToggles(vm: LedgerViewModel) {
             Text(
                 "捕获微信/支付宝/云闪付的收款与动账通知，解析后进入待确认队列",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.outline,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         Switch(checked = captureEnabled, onCheckedChange = { vm.setCaptureEnabled(it) })
@@ -479,7 +483,7 @@ private fun CaptureToggles(vm: LedgerViewModel) {
             Text(
                 "debug 排查用：所有应用的通知都进捕获日志（保留 7 天 / 最多 2000 条）",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.outline,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         Switch(checked = debugCaptureAll, onCheckedChange = { vm.setDebugCaptureAll(it) })
@@ -487,20 +491,49 @@ private fun CaptureToggles(vm: LedgerViewModel) {
 }
 
 @Composable
-private fun SettingRow(title: String, onClick: () -> Unit) {
+private fun SettingRow(title: String, subtitle: String? = null, onClick: (() -> Unit)? = null) {
     Row(
         Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(title, style = MaterialTheme.typography.bodyLarge)
-        androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
-        Icon(
-            Icons.Filled.KeyboardArrowRight,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.outline,
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            subtitle?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        if (onClick != null) {
+            androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
+            Icon(
+                Icons.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun BudgetSetting(vm: LedgerViewModel) {
+    val budget by vm.monthlyBudgetCents.collectAsStateWithLifecycle()
+    var show by remember { mutableStateOf(false) }
+    SettingRow(
+        title = "每月预算",
+        subtitle = if (budget > 0) {
+            "当前 ${Money.formatYuanGrouped(budget)} · 首页显示剩余可用"
+        } else {
+            "未设置 · 设置后首页显示剩余可用与今天建议花销"
+        },
+        onClick = { show = true },
+    )
+    if (show) {
+        BudgetEditDialog(
+            currentCents = budget,
+            onSave = { vm.setMonthlyBudget(it); show = false },
+            onDismiss = { show = false },
         )
     }
 }
