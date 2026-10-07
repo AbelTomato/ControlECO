@@ -1,6 +1,19 @@
 package com.accbook.app.ui.common
 
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -8,9 +21,12 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material3.AlertDialog
@@ -28,6 +44,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -35,9 +53,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.accbook.app.ui.theme.accBook
 import com.accbook.app.ui.theme.categoryColor
 import com.accbook.app.util.Money
@@ -209,4 +233,79 @@ fun BudgetEditDialog(currentCents: Long, onSave: (Long) -> Unit, onDismiss: () -
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
+}
+
+/** 系统"减少动画"（动画时长缩放为 0）时返回 true；ON_RESUME 刷新，供动效降级使用 */
+@Composable
+fun rememberReducedMotion(): Boolean {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var reduced by remember { mutableStateOf(readReducedMotion(context)) }
+    DisposableEffect(context, lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) reduced = readReducedMotion(context)
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    return reduced
+}
+
+private fun readReducedMotion(context: android.content.Context): Boolean = runCatching {
+    android.provider.Settings.Global.getFloat(
+        context.contentResolver,
+        android.provider.Settings.Global.ANIMATOR_DURATION_SCALE,
+        1f,
+    ) == 0f
+}.getOrDefault(false)
+
+/**
+ * 悬浮"记一笔"胶囊（首页/账单页共用）：主色实心 + 阴影悬浮，
+ * 轻微呼吸缩放提示"方便快速记账"，按压回弹；系统减少动画时保持静态。
+ * 连续缩放只在 draw 阶段读取动画状态，不触发重组。
+ */
+@Composable
+fun QuickAddPill(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val reduced = rememberReducedMotion()
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val pressScale by animateFloatAsState(
+        targetValue = if (pressed) 0.95f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
+        label = "quickAddPress",
+    )
+    val pulse = rememberInfiniteTransition(label = "quickAddPulse")
+    val breathe: State<Float>? = if (reduced) {
+        null
+    } else {
+        pulse.animateFloat(
+            initialValue = 1f,
+            targetValue = 1.05f,
+            animationSpec = infiniteRepeatable(tween(1000, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+            label = "quickAddBreathe",
+        )
+    }
+    val shape = RoundedCornerShape(28.dp)
+    Row(
+        modifier
+            .graphicsLayer {
+                val b = breathe?.value ?: 1f
+                scaleX = pressScale * b
+                scaleY = pressScale * b
+            }
+            .shadow(elevation = 8.dp, shape = shape)
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.primary)
+            .clickable(interactionSource = interaction, indication = LocalIndication.current, onClick = onClick)
+            .padding(horizontal = 22.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.Filled.Add, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary)
+        androidx.compose.foundation.layout.Spacer(Modifier.width(6.dp))
+        Text(
+            "记一笔",
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onPrimary,
+        )
+    }
 }

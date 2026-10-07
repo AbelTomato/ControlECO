@@ -7,6 +7,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -211,7 +212,11 @@ fun TransactionListScreen(vm: LedgerViewModel, onEditTransaction: (Long) -> Unit
             val grouped: Map<LocalDate, List<TransactionRow>> = rows.groupBy {
                 Instant.ofEpochMilli(it.timestamp).atZone(ZoneId.systemDefault()).toLocalDate()
             }
-            LazyColumn(Modifier.weight(1f)) {
+            LazyColumn(
+                Modifier.weight(1f),
+                // 底部给悬浮"记一笔"胶囊留出空间，最后一行不被遮挡
+                contentPadding = PaddingValues(bottom = 88.dp),
+            ) {
                 grouped.forEach { (day, dayRows) ->
                     stickyHeader(key = "d${day.toEpochDay()}") {
                         val dayExpense = dayRows.filter { it.type == TxType.EXPENSE }.sumOf { it.amountCents }

@@ -6,12 +6,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -33,6 +31,7 @@ import androidx.navigation.compose.rememberNavController
 import com.accbook.app.data.LedgerViewModel
 import com.accbook.app.ui.accounts.AccountsScreen
 import com.accbook.app.ui.accounts.CategoriesScreen
+import com.accbook.app.ui.common.QuickAddPill
 import com.accbook.app.ui.debug.CaptureLogScreen
 import com.accbook.app.ui.home.HomeScreen
 import com.accbook.app.ui.imports.ImportScreen
@@ -159,21 +158,15 @@ private fun MainScaffold(
             }
         },
         floatingActionButton = {
-            // 快速记账主入口在首页；账单页保留小 FAB 方便随手补录
-            if (tab == 1) {
-                FloatingActionButton(
-                    onClick = onQuickAdd,
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary,
-                ) {
-                    Icon(Icons.Filled.Add, contentDescription = "记一笔")
-                }
+            // 首页/账单页共用悬浮"记一笔"胶囊（填充主色 + 悬浮动效），随手补录都能一眼看到
+            if (tab == 0 || tab == 1) {
+                QuickAddPill(onClick = onQuickAdd)
             }
         },
     ) { padding ->
         Box(Modifier.padding(padding).fillMaxSize()) {
             when (tab) {
-                0 -> HomeScreen(vm = vm, onQuickAdd = onQuickAdd, onOpenPending = onOpenPending)
+                0 -> HomeScreen(vm = vm, onOpenPending = onOpenPending)
                 1 -> TransactionListScreen(
                     vm = vm,
                     onEditTransaction = onEditTransaction,
