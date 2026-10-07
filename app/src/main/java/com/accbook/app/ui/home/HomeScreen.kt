@@ -13,6 +13,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -35,6 +36,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -73,6 +75,7 @@ import com.accbook.app.ui.theme.accBook
 import com.accbook.app.util.Money
 import java.time.LocalDate
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.roundToInt
 import kotlin.math.sin
@@ -91,6 +94,9 @@ import kotlinx.coroutines.launch
  * 系统"减少动画"时全部降级（含切换改为瞬时）。
  */
 private const val MODE_COUNT = 3
+
+/** 滑动翻页阈值：跟手旋转超过该角度视为一次翻页，否则回弹 */
+private const val DRAG_FLIP_THRESHOLD_DEG = 45f
 
 /** 分类环数据：分类预算 + 当月支出 → 剩余、额度档位；isOther = "其他"聚合环 */
 internal data class CategoryRingData(
@@ -126,44 +132,33 @@ fun HomeScreen(vm: LedgerViewModel, onOpenPending: () -> Unit) {
         Budget.compute(budgetCents, spentCents, today)
     }
 
-    if (budgetCents <= 0L) {
-        NoBudgetContent(
-            spentCents = spentCents,
-            today = today,
-            pendingCount = pendingCount,
-            onSetBudget = { showBudgetDialog = true },
-            onOpenPending = onOpenPending,
-        )
-        if (showBudgetDialog) {
-            BudgetEditDialog(
-                currentCents = 0L,
-                onSave = { vm.setMonthlyBudget(it); showBudgetDialog = false },
-                onDismiss = { showBudgetDialog = false },
-            )
-        }
-        return
-    }
-
-    // budget > 0 时 compute 必返回非空，此分支仅为编译器收窄
-    val s = snapshot ?: return
+    // budget > 0 时 compute 必返回非空
+    val s = snapshot
 
     val reducedMotion = rememberReducedMotion()
     val scope = rememberCoroutineScope()
     var mode by remember { mutableIntStateOf(0) }
     val flip = remember { Animatable(0f) }
     val density = LocalDensity.current.density
+    var dragging by remember { mutableStateOf(false) }
+    var dragRotation by remember { mutableFloatStateOf(0f) }
 
-    // 切换 = 翻转（绕 Y 轴转到 90° 侧立 → 换内容 → 从 −90° 转回），可循环 1→2→3→1
+    fun wrap(target: Int): Int = ((target % MODE_COUNT) + MODE_COUNT) % MODE_COUNT
+
+    // 翻转方向约定：下一个 = 负向旋转（视觉上向左翻，与左滑一致）；上一个 = 正向
+    // 点击/圆点：切到目标模式；翻转进行中防重入；减少动画时瞬时
     val flipTo: (Int) -> Unit = { target ->
-        val t = ((target % MODE_COUNT) + MODE_COUNT) % MODE_COUNT
+        val t = wrap(target)
         if (!flip.isRunning && t != mode) {
             scope.launch {
                 if (reducedMotion) {
                     mode = t
                 } else {
-                    flip.animateTo(90f, tween(150, easing = FastOutSlowInEasing))
+                    val forward = wrap(t - mode)
+                    val sign = if (forward == MODE_COUNT - 1) 1f else -1f
+                    flip.animateTo(90f * sign, tween(150, easing = FastOutSlowInEasing))
                     mode = t
-                    flip.snapTo(-90f)
+                    flip.snapTo(-90f * sign)
                     flip.animateTo(0f, tween(150, easing = FastOutSlowInEasing))
                 }
             }
@@ -171,6 +166,35 @@ fun HomeScreen(vm: LedgerViewModel, onOpenPending: () -> Unit) {
     }
     val latestFlipTo by rememberUpdatedState(flipTo)
     val advance: () -> Unit = { latestFlipTo(mode + 1) }
+
+    // 滑动翻转：跟手旋转，越过阈值完成翻转换页，未越过回弹；方向与跟手方向一致
+    val onDragEnd: (Float) -> Unit = { rotation ->
+        if (dragging) {
+            scope.launch {
+                flip.snapTo(rotation)
+                dragging = false
+                if (reducedMotion) {
+                    if (abs(rotation) >= DRAG_FLIP_THRESHOLD_DEG) {
+                        mode = wrap(mode + if (rotation < 0f) 1 else -1)
+                    }
+                    flip.snapTo(0f)
+                    return@launch
+                }
+                if (abs(rotation) >= DRAG_FLIP_THRESHOLD_DEG) {
+                    val next = rotation < 0f
+                    val sign = if (next) -1f else 1f
+                    flip.animateTo(90f * sign, tween(130, easing = FastOutSlowInEasing))
+                    mode = wrap(mode + if (next) 1 else -1)
+                    flip.snapTo(-90f * sign)
+                    flip.animateTo(0f, tween(130, easing = FastOutSlowInEasing))
+                } else {
+                    flip.animateTo(0f, tween(150, easing = FastOutSlowInEasing))
+                }
+            }
+        }
+    }
+
+    val latestOnDragEnd by rememberUpdatedState(onDragEnd)
 
     val rings = remember(categoryBudgets, categorySums, categories, budgetCents, spentCents) {
         buildCategoryRings(categoryBudgets, categorySums, categories, budgetCents, spentCents)
@@ -191,23 +215,58 @@ fun HomeScreen(vm: LedgerViewModel, onOpenPending: () -> Unit) {
                 .weight(1f)
                 .fillMaxWidth()
                 .graphicsLayer {
-                    // 翻转角度只在 draw 阶段读取，不触发重组
-                    rotationY = flip.value
+                    // 旋转角度只在 draw 阶段读取，不触发重组
+                    rotationY = if (dragging) dragRotation else flip.value
                     cameraDistance = 14f * density
                 }
-                .pointerInput(Unit) { detectTapGestures { advance() } },
+                .pointerInput(Unit) { detectTapGestures { advance() } }
+                .pointerInput(Unit) {
+                    detectHorizontalDragGestures(
+                        onDragStart = { if (!flip.isRunning) { dragging = true; dragRotation = 0f } },
+                        onHorizontalDrag = { change, dragAmount ->
+                            if (dragging) {
+                                change.consume()
+                                val k = 90f / (size.width * 0.45f)
+                                dragRotation = (dragRotation + dragAmount * k).coerceIn(-90f, 90f)
+                            }
+                        },
+                        onDragEnd = { latestOnDragEnd(dragRotation) },
+                        onDragCancel = {
+                            if (dragging) {
+                                dragging = false
+                                dragRotation = 0f
+                            }
+                        },
+                    )
+                },
             contentAlignment = Alignment.Center,
         ) {
             when (mode) {
-                0 -> ModeRemaining(s, today)
-                1 -> ModeCategories(rings)
-                else -> ModeSpentAndDeposit(s, totalDepositCents)
+                0 -> if (s != null) {
+                    ModeRemaining(s, today)
+                } else {
+                    ModeNeedsBudget(mode = 1, onSetBudget = { showBudgetDialog = true })
+                }
+                1 -> if (s != null) {
+                    ModeCategories(rings)
+                } else {
+                    ModeNeedsBudget(mode = 2, onSetBudget = { showBudgetDialog = true })
+                }
+                else -> ModeSpentAndDeposit(snapshot = s, spentCents = spentCents, totalDepositCents = totalDepositCents)
             }
         }
 
         ModeIndicator(
             current = mode,
             onSelect = { index -> flipTo(index) },
+        )
+    }
+
+    if (showBudgetDialog) {
+        BudgetEditDialog(
+            currentCents = budgetCents,
+            onSave = { vm.setMonthlyBudget(it); showBudgetDialog = false },
+            onDismiss = { showBudgetDialog = false },
         )
     }
 }
@@ -225,9 +284,9 @@ private fun ModeRemaining(s: Budget.Snapshot, today: LocalDate) {
     val percent = (s.remainingRatio * 100).roundToInt().coerceIn(0, 100)
     val timeRatio = (today.dayOfMonth.toFloat() / today.lengthOfMonth()).coerceIn(0f, 1f)
     val trackColor = ab.hairline
-    // 月份环（本月已过时间）：淡蓝，与预算主环区分
-    val timeTrackColor = MaterialTheme.colorScheme.primaryContainer
-    val timeColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
+    // 月份环（本月已过时间）：饱和蓝，与预算主环明显区分（此前灰调不起眼）
+    val timeTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.22f)
+    val timeColor = ab.primaryStrong
     val ink = MaterialTheme.colorScheme.onBackground
     val overColor = toneColor(Budget.Tone.LOW, severity)
 
@@ -341,10 +400,13 @@ private fun ModeCategories(items: List<CategoryRingData>) {
         val sizeByHeight = (maxHeight - gap * (rows - 1) - hintSpace) / rows
         val ringSize = minOf(sizeByWidth, sizeByHeight, 124.dp).coerceAtLeast(68.dp)
         val stroke = (ringSize * 0.09f).coerceAtLeast(5.dp)
+        // 仅内容溢出时启用纵向滚动（避免与横向翻转滑动争手势）
+        val contentHeight = ringSize * rows + gap * (rows - 1) + hintSpace
+        val needsScroll = contentHeight > maxHeight
 
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Column(
-                modifier = Modifier.verticalScroll(rememberScrollState()),
+                modifier = if (needsScroll) Modifier.verticalScroll(rememberScrollState()) else Modifier,
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 items.chunked(cols).forEach { rowItems ->
@@ -424,11 +486,16 @@ private fun CategoryRing(data: CategoryRingData, ringSize: Dp, stroke: Dp, track
 // ---------------- 模式 3：已花费与总存款（中央大字，无圆环） ----------------
 
 @Composable
-private fun ModeSpentAndDeposit(s: Budget.Snapshot, totalDepositCents: Long) {
+private fun ModeSpentAndDeposit(snapshot: Budget.Snapshot?, spentCents: Long, totalDepositCents: Long) {
     val ab = MaterialTheme.accBook
-    val severity = warningSeverity(s.remainingRatio)
-    val spentAlarm = s.tone == Budget.Tone.LOW
-    val spentColor by animateColorAsState(toneColor(s.tone, severity), tween(420), label = "mode3Spent")
+    val severity = snapshot?.let { warningSeverity(it.remainingRatio) } ?: 0f
+    val spentAlarm = snapshot?.tone == Budget.Tone.LOW
+    val spentTarget = if (snapshot != null) {
+        toneColor(snapshot.tone, severity)
+    } else {
+        MaterialTheme.colorScheme.onBackground
+    }
+    val spentColor by animateColorAsState(spentTarget, tween(420), label = "mode3Spent")
     val depositNegative = totalDepositCents < 0L
     val depositColor by animateColorAsState(
         if (depositNegative) ab.criticalAlert else MaterialTheme.colorScheme.primary,
@@ -444,7 +511,7 @@ private fun ModeSpentAndDeposit(s: Budget.Snapshot, totalDepositCents: Long) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             AutoScaledText(
-                text = Money.formatYuanCompact(s.spentCents),
+                text = Money.formatYuanCompact(snapshot?.spentCents ?: spentCents),
                 style = MaterialTheme.typography.displayMedium,
                 color = spentColor,
                 maxWidth = textMaxWidth,
@@ -629,49 +696,32 @@ private fun PendingBadge(count: Int, onClick: () -> Unit) {
     }
 }
 
-/** 未设预算：中性占位环 + 本月已花 + 引导设置（无预算时比例无意义） */
+/** 未设预算时的模式内提示（模式①/②保留可切换，只是引导先设置预算） */
 @Composable
-private fun NoBudgetContent(
-    spentCents: Long,
-    today: LocalDate,
-    pendingCount: Int,
-    onSetBudget: () -> Unit,
-    onOpenPending: () -> Unit,
-) {
-    BoxWithConstraints(Modifier.fillMaxSize()) {
-        val contentMaxWidth = maxWidth - 40.dp
-        Column(Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
-            Spacer(Modifier.height(10.dp))
-            Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
-                MonthChip("${today.year}年${today.monthValue}月")
-                Spacer(Modifier.weight(1f))
-                if (pendingCount > 0) {
-                    PendingBadge(count = pendingCount, onClick = onOpenPending)
-                }
-            }
-            Spacer(Modifier.weight(1f))
-            BudgetRingPlaceholder(modifier = Modifier.align(Alignment.CenterHorizontally))
-            Spacer(Modifier.height(28.dp))
-            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                AutoScaledText(
-                    text = Money.formatYuanCompact(spentCents),
-                    style = MaterialTheme.typography.displayMedium,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    maxWidth = contentMaxWidth,
-                )
-            }
-            Text(
-                "本月已花 · 设置预算后这里显示还能花多少",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(16.dp))
-            TextButton(onClick = onSetBudget, modifier = Modifier.fillMaxWidth()) { Text("设置本月预算") }
-            Spacer(Modifier.weight(1f))
-            Spacer(Modifier.height(78.dp))
-        }
+private fun ModeNeedsBudget(mode: Int, onSetBudget: () -> Unit) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.padding(horizontal = 28.dp),
+    ) {
+        BudgetRingPlaceholder()
+        Spacer(Modifier.height(20.dp))
+        Text(
+            if (mode == 1) "还没有设置月预算" else "还没有分类预算",
+            style = MaterialTheme.typography.titleMedium,
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            if (mode == 1) {
+                "设置月预算后，这里显示本月还可以花与本日剩余"
+            } else {
+                "设置月预算后到「设置 → 分类管理」为分类设定预算，这里显示各分类剩余"
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(Modifier.height(12.dp))
+        TextButton(onClick = onSetBudget) { Text("设置本月预算") }
     }
 }
 
