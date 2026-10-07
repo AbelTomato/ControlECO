@@ -1,5 +1,6 @@
 package com.accbook.app.data.budget
 
+import kotlin.math.ln
 import java.time.YearMonth
 
 /** 首页金币堆数据源：当前自然月的支出/收入合计（两者独立，供结算动画分别表现） */
@@ -53,6 +54,20 @@ object HomeSettlement {
             from = last,
             to = current,
         )
+    }
+
+    /**
+     * 预算金额决定视觉池的基准规模，剩余比例决定池内保留程度；金额不是金币数量。
+     * 对数规模因子让大预算即使剩余比例较低，也可以表现为更大的资源堆。
+     */
+    fun remainingToPileCount(remainingCents: Long, monthlyBudgetCents: Long, capacity: Int): Float {
+        if (remainingCents <= 0L || monthlyBudgetCents <= 0L || capacity <= 0) return 0f
+        val ratio = (remainingCents.toDouble() / monthlyBudgetCents.toDouble()).coerceIn(0.0, 1.0)
+        val budgetYuan = monthlyBudgetCents / 100.0
+        val budgetScale = (0.12 + 0.18 * ln(1.0 + budgetYuan / 2_000.0))
+            .coerceIn(0.12, 1.0)
+        val ratioShape = 0.35 + 0.65 * ratio
+        return (capacity * budgetScale * ratioShape).toFloat().coerceIn(0f, capacity.toFloat())
     }
 
     /**

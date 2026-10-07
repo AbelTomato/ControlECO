@@ -82,7 +82,36 @@ class HomeSettlementTest {
         assertEquals(3_000_00, snap(budget = 5_000_00, expense = 2_116_00, income = 116_00).remainingCents())
     }
 
-    // ---------- moneyToVisualCoinCount ----------
+    @Test
+    fun `支出收入下降不产生伪结算`() {
+        val last = snap(budget = 5_000_00, expense = 2_000_00, income = 200_00)
+        val current = snap(budget = 5_000_00, expense = 1_900_00, income = 100_00)
+        val s = HomeSettlement.compute(last, current)
+        assertEquals(0L, s.expenseDelta)
+        assertEquals(0L, s.incomeDelta)
+        assertFalse(s.hasDeltas)
+    }
+
+    @Test
+    fun `负余额仍保留真实剩余值但视觉映射应为空`() {
+        val current = snap(budget = 1_000_00, expense = 1_250_00, income = 0)
+        assertEquals(-25_000L, current.remainingCents())
+    }
+
+
+    @Test
+    fun `预算规模参与金币堆数量_不能只看剩余比例`() {
+        val smallBudget = HomeSettlement.remainingToPileCount(1_900_00, 2_000_00, 100)
+        val largeBudget = HomeSettlement.remainingToPileCount(100_000_00, 1_000_000_00, 100)
+        assertTrue(largeBudget > smallBudget)
+    }
+
+    @Test
+    fun `金币堆映射_负数零预算为空且不超过容量`() {
+        assertEquals(0f, HomeSettlement.remainingToPileCount(-1, 2_000_00, 100), 0.001f)
+        assertEquals(0f, HomeSettlement.remainingToPileCount(1_000, 0, 100), 0.001f)
+        assertTrue(HomeSettlement.remainingToPileCount(Long.MAX_VALUE, 1, 100) <= 100f)
+    }
 
     @Test
     fun `零与负数无视觉金币`() {

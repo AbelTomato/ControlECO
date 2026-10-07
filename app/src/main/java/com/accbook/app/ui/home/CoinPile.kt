@@ -1,12 +1,22 @@
 package com.accbook.app.ui.home
 
+import android.graphics.Paint
+import android.graphics.Typeface
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.tooling.preview.Preview
+import com.accbook.app.ui.theme.AccBookTheme
+import com.accbook.app.ui.theme.accBook
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -16,6 +26,8 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.dp
 import com.accbook.app.ui.theme.AccBookColors
 import kotlinx.coroutines.Job
@@ -23,6 +35,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -33,9 +46,8 @@ import kotlin.random.Random
 
 /** 金币堆尺寸常量（dp） */
 object CoinPileSpecs {
-    const val COIN_RADIUS_DP = 11f
-    const val GROUND_PAD_DP = 30f
-    /** FALL 粒子从画布顶部出现时相对基线的高度上限保护值 */
+    const val COIN_RADIUS_DP = 15f
+    const val GROUND_PAD_DP = 38f
     const val MAX_PILE_ROWS = 8
 }
 
@@ -56,26 +68,26 @@ data class PileCoinSpec(
 object CoinPileLayout {
     fun build(canvasWidthDp: Float, coinRadiusDp: Float = CoinPileSpecs.COIN_RADIUS_DP, seed: Long = 2026L): List<PileCoinSpec> {
         val rnd = Random(seed)
-        val stepX = coinRadiusDp * 1.5f
-        val rowH = coinRadiusDp * 1.1f
-        val maxRow = ((canvasWidthDp * 0.62f) / stepX).toInt().coerceIn(7, 12)
-        val specs = ArrayList<PileCoinSpec>(64)
+        val maxRow = ((canvasWidthDp * 0.80f) / (coinRadiusDp * 1.42f)).toInt().coerceIn(10, 18)
+        val specs = ArrayList<PileCoinSpec>(120)
         var row = 0
         while (row < CoinPileSpecs.MAX_PILE_ROWS) {
             val rowCoins = maxRow - row * 2
             if (rowCoins < 1) break
+            val stepX = coinRadiusDp * (1.30f + row * 0.025f)
             val rowWidth = (rowCoins - 1) * stepX
             repeat(rowCoins) { c ->
-                val jx = (rnd.nextFloat() - 0.5f) * coinRadiusDp * 0.5f
-                val jy = (rnd.nextFloat() - 0.5f) * coinRadiusDp * 0.22f
-                val shrink = (1f - row * 0.016f).coerceIn(0.82f, 1f)
+                val jx = (rnd.nextFloat() - 0.5f) * coinRadiusDp * 0.56f
+                val jy = (rnd.nextFloat() - 0.5f) * coinRadiusDp * 0.30f
+                val depth = row.toFloat() / (CoinPileSpecs.MAX_PILE_ROWS - 1)
+                val scale = (1.06f - depth * 0.20f) * (0.96f + rnd.nextFloat() * 0.08f)
                 specs += PileCoinSpec(
                     cx = -rowWidth / 2f + c * stepX + jx,
-                    cy = -row * rowH + jy,
-                    rx = coinRadiusDp * shrink,
-                    ry = coinRadiusDp * 0.78f * shrink,
-                    rotation = (rnd.nextFloat() - 0.5f) * 22f,
-                    alpha = 0.85f + 0.15f * shrink,
+                    cy = -row * coinRadiusDp * 1.02f + jy,
+                    rx = coinRadiusDp * scale,
+                    ry = coinRadiusDp * 0.74f * scale,
+                    rotation = (rnd.nextFloat() - 0.5f) * 28f,
+                    alpha = 0.78f + 0.22f * (1f - depth),
                 )
             }
             row++
@@ -90,19 +102,27 @@ data class CoinPalette(
     val face: Color,
     val highlight: Color,
     val shadow: Color,
+    val mark: Color,
+    val markPaint: Paint,
 )
 
 fun coinPalette(ab: AccBookColors): CoinPalette = CoinPalette(
-    base = ab.gold,
-    rim = ab.goldDeep,
-    face = lerp(ab.gold, Color.White, 0.24f),
-    highlight = Color.White.copy(alpha = 0.32f),
-    shadow = Color.Black.copy(alpha = 0.07f),
+    base = ab.goldDeep,
+    rim = lerp(ab.goldDeep, Color(0xFF6C4511), 0.30f),
+    face = lerp(ab.gold, Color(0xFFFFE8A8), 0.42f),
+    highlight = Color.White.copy(alpha = 0.62f),
+    shadow = Color(0xFF4A3210).copy(alpha = 0.18f),
+    mark = lerp(ab.goldDeep, Color(0xFF5B3B10), 0.42f),
+    markPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+        textAlign = Paint.Align.CENTER
+        style = Paint.Style.FILL
+    },
 )
 
 /**
- * 单枚金币：底形 + 边缘环 + 内面 + 小高光 + 轻影；扁椭圆呈现轻微俯视透视。
- * 无厚重描边、无渐变；squash 用于落币时的轻微压扁。
+ * 独立金币几何：正圆币面 + 偏移币身 + 内圈 + 金属高光 + 中心人民币符号。
+ * 所有首页金币（堆、入场、收入、支出碎裂、HUD）共用这一个绘制函数。
  */
 fun DrawScope.drawCoin(
     cx: Float,
@@ -115,14 +135,47 @@ fun DrawScope.drawCoin(
     squash: Float = 0f,
 ) {
     if (alpha <= 0.01f || rx <= 0f) return
-    val sy = ry * (1f - squash)
-    val sx = rx * (1f + squash * 0.6f)
+    val radius = rx * (1f + squash * 0.10f)
+    val sideDepth = radius * 0.18f
+    val faceY = cy - sideDepth * 0.28f
+    val a = (alpha * 255f).toInt().coerceIn(0, 255)
     rotate(rotation, pivot = Offset(cx, cy)) {
-        drawOval(p.shadow, Offset(cx - sx * 0.92f, cy + sy * 0.62f), Size(sx * 1.84f, sy * 0.9f), alpha = alpha * 0.8f)
-        drawOval(p.base, Offset(cx - sx, cy - sy), Size(sx * 2f, sy * 2f), alpha = alpha)
-        drawOval(p.rim, Offset(cx - sx * 0.88f, cy - sy * 0.88f), Size(sx * 1.76f, sy * 1.76f), alpha = alpha * 0.5f, style = Stroke(sx * 0.09f))
-        drawOval(p.face, Offset(cx - sx * 0.6f, cy - sy * 0.6f), Size(sx * 1.2f, sy * 1.2f), alpha = alpha)
-        drawOval(p.highlight, Offset(cx - sx * 0.5f, cy - sy * 0.64f), Size(sx * 0.52f, sy * 0.42f), alpha = alpha)
+        drawCircle(p.shadow, radius * 1.04f, Offset(cx, cy + radius * 0.95f), alpha = alpha * 0.25f)
+        drawCircle(p.rim, radius, Offset(cx, cy + sideDepth), alpha = alpha)
+        drawCircle(lerp(p.base, Color.Black, 0.10f), radius * 0.92f, Offset(cx, cy + sideDepth * 0.72f), alpha = alpha)
+        drawCircle(p.base, radius, Offset(cx, faceY), alpha = alpha)
+        drawCircle(p.face, radius * 0.86f, Offset(cx, faceY), alpha = alpha)
+        drawCircle(
+            p.rim,
+            radius * 0.72f,
+            Offset(cx, faceY),
+            alpha = alpha * 0.54f,
+            style = Stroke(radius * 0.055f),
+        )
+        drawArc(
+            color = p.highlight,
+            startAngle = 205f,
+            sweepAngle = 112f,
+            useCenter = false,
+            topLeft = Offset(cx - radius * 0.78f, faceY - radius * 0.78f),
+            size = Size(radius * 1.56f, radius * 1.56f),
+            style = Stroke(radius * 0.085f),
+            alpha = alpha * 0.82f,
+        )
+        drawArc(
+            color = Color.White.copy(alpha = 0.34f),
+            startAngle = 225f,
+            sweepAngle = 62f,
+            useCenter = false,
+            topLeft = Offset(cx - radius * 0.63f, faceY - radius * 0.63f),
+            size = Size(radius * 1.26f, radius * 1.26f),
+            style = Stroke(radius * 0.055f),
+            alpha = alpha,
+        )
+        p.markPaint.color = p.mark.toArgb()
+        p.markPaint.alpha = a
+        p.markPaint.textSize = radius * 0.92f
+        drawContext.canvas.nativeCanvas.drawText("¥", cx, faceY + radius * 0.33f, p.markPaint)
     }
 }
 
@@ -162,11 +215,13 @@ internal enum class ParticleKind { FALL, BURST }
  * 每帧仅读 Animatable 进度在 draw phase 解析求值，零临时对象、零布局改动。
  * 同时存在的动画金币 ≤ poolSize，碎片由 BURST 粒子的第二进度解析绘制，不单独占池。
  */
-class CoinFxController(private val poolSize: Int = 18) {
+class CoinFxController(private val poolSize: Int = 24) {
 
     /** 金币堆视觉数量（连续值；小数部分 = 顶币长出比例） */
     val pileCount = Animatable(0f)
-    /** 堆整体的入场 layer 动画（scale/alpha，不触发重绘内容） */
+    var forming = false
+        private set
+    /** 堆整体的入场 layer 动画；金币主体只由实际落币进入 */
     val layerAlpha = Animatable(0f)
     val layerScale = Animatable(0.94f)
 
@@ -194,26 +249,59 @@ class CoinFxController(private val poolSize: Int = 18) {
     private fun acquire(): Slot? = slots.firstOrNull { !it.inUse }?.also { it.inUse = true }
     private fun release(s: Slot) { s.inUse = false }
 
-    /** 入场 layer 动画：轻微 scale/alpha 出现（不逐币构建） */
-    suspend fun reveal(durationMs: Int = 340) {
-        layerScale.snapTo(0.94f)
-        coroutineScope {
-            launch { layerAlpha.animateTo(1f, tween(durationMs)) }
-            launch { layerScale.animateTo(1f, tween(durationMs, easing = FastOutSlowInEasing)) }
+    suspend fun clearParticles() {
+        slots.forEach { slot ->
+            slot.inUse = false
+            slot.progress.stop()
+            slot.second.stop()
+            slot.progress.snapTo(0f)
+            slot.second.snapTo(0f)
         }
     }
 
-    suspend fun snapVisible() {
-        layerAlpha.snapTo(1f)
-        layerScale.snapTo(1f)
+    suspend fun formPile(
+        layout: List<PileCoinSpec>,
+        targetCount: Int,
+        spawnYDp: Float,
+    ) {
+        val target = targetCount.coerceIn(0, layout.size)
+        forming = true
+        try {
+            layerAlpha.snapTo(1f)
+            layerScale.snapTo(1f)
+            clearParticles()
+            pileCount.snapTo(0f)
+            if (target == 0) return
+            var next = 0
+            val settled = AtomicInteger(0)
+            while (next < target) {
+                val batchEnd = minOf(target, next + 10)
+                val indices = (next until batchEnd).toList()
+                fallOntoSlots(
+                    layout = layout,
+                    slotIndices = indices,
+                    spawnYDp = spawnYDp,
+                    staggerMs = 52,
+                    onSettled = {
+                        val count = settled.incrementAndGet()
+                        pileCount.snapTo(count.toFloat().coerceAtMost(target.toFloat()))
+                    },
+                )
+                next = batchEnd
+            }
+            pileCount.snapTo(target.toFloat())
+        } finally {
+            forming = false
+        }
     }
 
-    /** 掉落金币落到指定槽位（入场装饰 / 收入入池），带重力加速、落定 squash、随后融入淡出 */
+    /** 掉落金币落到指定槽位（入场形成 / 收入入池），带重力加速、落定 squash、随后融入堆体 */
     suspend fun fallOntoSlots(
         layout: List<PileCoinSpec>,
         slotIndices: List<Int>,
         spawnYDp: Float,
         staggerMs: Long = 55,
+        onSettled: (suspend () -> Unit)? = null,
     ) = coroutineScope {
         if (layout.isEmpty() || slotIndices.isEmpty()) return@coroutineScope
         val rnd = Random(77)
@@ -223,19 +311,23 @@ class CoinFxController(private val poolSize: Int = 18) {
             jobs += launch {
                 delay(k * staggerMs + rnd.nextLong(50))
                 val slot = acquire() ?: return@launch
-                slot.kind = ParticleKind.FALL
-                slot.targetX = spec.cx; slot.targetY = spec.cy
-                slot.startX = spec.cx + (rnd.nextFloat() - 0.5f) * 56f
-                slot.startY = spawnYDp
-                slot.durationMs = 470 + rnd.nextInt(190)
-                slot.rotation0 = (rnd.nextFloat() - 0.5f) * 30f
-                slot.rotationVel = 0f
-                slot.scale = 1f
-                slot.progress.snapTo(0f)
-                slot.second.snapTo(0f)
-                slot.progress.animateTo(1f, tween(slot.durationMs, easing = LinearEasing))
-                slot.second.animateTo(1f, tween(170, easing = LinearEasing))
-                release(slot)
+                try {
+                    slot.kind = ParticleKind.FALL
+                    slot.targetX = spec.cx; slot.targetY = spec.cy
+                    slot.startX = spec.cx + (rnd.nextFloat() - 0.5f) * 56f
+                    slot.startY = spawnYDp
+                    slot.durationMs = 420 + rnd.nextInt(150)
+                    slot.rotation0 = (rnd.nextFloat() - 0.5f) * 34f
+                    slot.rotationVel = (rnd.nextFloat() - 0.5f) * 0.9f
+                    slot.scale = 0.88f + rnd.nextFloat() * 0.24f
+                    slot.progress.snapTo(0f)
+                    slot.second.snapTo(0f)
+                    slot.progress.animateTo(1f, tween(slot.durationMs, easing = LinearEasing))
+                    slot.second.animateTo(1f, tween(150, easing = LinearEasing))
+                    if (onSettled != null) onSettled()
+                } finally {
+                    release(slot)
+                }
             }
         }
         jobs.joinAll()
@@ -253,27 +345,32 @@ class CoinFxController(private val poolSize: Int = 18) {
             jobs += launch {
                 delay(k * 46L + rnd.nextLong(40))
                 val slot = acquire() ?: return@launch
-                slot.kind = ParticleKind.BURST
-                slot.startX = spec.cx
-                slot.startY = spec.cy
-                slot.apex = 58f + 62f * intensity + rnd.nextFloat() * 26f
-                slot.burstAt = 0.5f + rnd.nextFloat() * 0.08f
-                slot.vx = (rnd.nextFloat() - 0.5f) * 110f
-                slot.durationMs = 520 + rnd.nextInt(170)
-                slot.rotation0 = (rnd.nextFloat() - 0.5f) * 40f
-                slot.rotationVel = (rnd.nextFloat() - 0.5f) * 1.6f
-                slot.scale = 1f
-                val fragCount = if (intensity > 0.55f) 4 else 3
-                slot.fragmentAngle = FloatArray(fragCount) { (rnd.nextFloat() - 0.5f) * 1.9f }
-                slot.fragmentDist = FloatArray(fragCount) { 24f + rnd.nextFloat() * 24f }
-                slot.fragmentSize = FloatArray(fragCount) { 2.6f + rnd.nextFloat() * 1.9f }
-                slot.progress.snapTo(0f)
-                slot.second.snapTo(0f)
-                val total = slot.durationMs
-                slot.progress.animateTo(slot.burstAt, tween((total * slot.burstAt).toInt(), easing = LinearEasing))
-                launch { slot.second.animateTo(1f, tween(300 + rnd.nextInt(90), easing = LinearEasing)) }
-                slot.progress.animateTo(1f, tween((total * (1f - slot.burstAt)).toInt(), easing = LinearEasing))
-                release(slot)
+                try {
+                    slot.kind = ParticleKind.BURST
+                    slot.startX = spec.cx
+                    slot.startY = spec.cy
+                    slot.apex = 52f + 72f * intensity + rnd.nextFloat() * 22f
+                    slot.burstAt = 0.46f + rnd.nextFloat() * 0.08f
+                    slot.vx = (rnd.nextFloat() - 0.5f) * (96f + 48f * intensity)
+                    slot.durationMs = 470 + rnd.nextInt(150)
+                    slot.rotation0 = (rnd.nextFloat() - 0.5f) * 46f
+                    slot.rotationVel = (rnd.nextFloat() - 0.5f) * 1.8f
+                    slot.scale = 0.90f + rnd.nextFloat() * 0.20f
+                    val fragCount = if (intensity > 0.55f) 4 else 3
+                    slot.fragmentAngle = FloatArray(fragCount) { (rnd.nextFloat() - 0.5f) * 1.9f }
+                    slot.fragmentDist = FloatArray(fragCount) { 18f + rnd.nextFloat() * 22f }
+                    slot.fragmentSize = FloatArray(fragCount) { 2.3f + rnd.nextFloat() * 1.6f }
+                    slot.progress.snapTo(0f)
+                    slot.second.snapTo(0f)
+                    val total = slot.durationMs
+                    slot.progress.animateTo(slot.burstAt, tween((total * slot.burstAt).toInt(), easing = LinearEasing))
+                    coroutineScope {
+                        launch { slot.second.animateTo(1f, tween(270 + rnd.nextInt(80), easing = LinearEasing)) }
+                        slot.progress.animateTo(1f, tween((total * (1f - slot.burstAt)).toInt(), easing = LinearEasing))
+                    }
+                } finally {
+                    release(slot)
+                }
             }
         }
         jobs.joinAll()
@@ -303,10 +400,11 @@ fun DrawScope.drawCoinParticles(
                 val e = t * t // 重力加速
                 val x = centerX + (slot.startX + (slot.targetX - slot.startX) * t) * px
                 val y = baselineY + (slot.startY + (slot.targetY - slot.startY) * e) * px
-                val squash = if (t > 0.86f) 0.24f * sin((t - 0.86f) / 0.14f * PI).toFloat() else 0f
-                val alpha = (t / 0.1f).coerceAtMost(1f) * (1f - slot.second.value)
+                val squash = if (t > 0.88f) 0.16f * sin((t - 0.88f) / 0.12f * PI).toFloat() else 0f
+                val alpha = (t / 0.08f).coerceAtMost(1f) * (1f - slot.second.value)
                 val r = coinRadiusDp * px * slot.scale
-                drawCoin(x, y, r, r * 0.86f, slot.rotation0 * (1f - t), palette, alpha = alpha, squash = squash)
+                val rotation = slot.rotation0 + slot.rotationVel * t * 90f
+                drawCoin(x, y, r, r * 0.86f, rotation, palette, alpha = alpha, squash = squash)
             }
             ParticleKind.BURST -> {
                 val g = CoinFxController.gravityOf(slot.apex, slot.burstAt)
@@ -371,4 +469,33 @@ fun pileSlotRange(fromFraction: Float, toFraction: Float): Pair<Int, Int> {
     val oldCount = floor(fromFraction).toInt()
     val newCount = ceil(toFraction).toInt()
     return oldCount to newCount
+}
+
+@Preview(showBackground = true, backgroundColor = 0xFFF7F4EE, widthDp = 360, heightDp = 420)
+@Composable
+private fun CoinVisualPreview() {
+    AccBookTheme {
+        val palette = coinPalette(MaterialTheme.accBook)
+        val layout = CoinPileLayout.build(320f)
+        Canvas(
+            Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
+                .padding(24.dp),
+        ) {
+            val px = density
+            val centerX = size.width * 0.5f
+            drawCoin(centerX, 72.dp.toPx(), 52.dp.toPx(), 52.dp.toPx(), 0f, palette)
+            drawCoin(centerX - 82.dp.toPx(), 180.dp.toPx(), 28.dp.toPx(), 28.dp.toPx(), -7f, palette)
+            drawCoin(centerX, 180.dp.toPx(), 31.dp.toPx(), 31.dp.toPx(), 4f, palette)
+            drawCoin(centerX + 82.dp.toPx(), 180.dp.toPx(), 25.dp.toPx(), 25.dp.toPx(), 9f, palette)
+            drawCoinPile(
+                layout = layout,
+                countFraction = minOf(26f, layout.size.toFloat()),
+                palette = palette,
+                baselineY = size.height - 34.dp.toPx(),
+                px = px,
+            )
+        }
+    }
 }

@@ -1,5 +1,6 @@
 package com.accbook.app.ui.home
 
+import android.content.Context
 import android.provider.Settings
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
@@ -31,6 +32,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -46,6 +48,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.accbook.app.data.LedgerViewModel
 import com.accbook.app.data.budget.Budget
@@ -90,8 +94,21 @@ fun HomeScreen(
     val animEnabled by vm.homeAnimationsEnabled.collectAsStateWithLifecycle()
     val reducedMotion = rememberReducedMotion()
     val animate = animEnabled && !reducedMotion
-    val today = remember { LocalDate.now() }
-    val currentMonth = remember { YearMonth.now() }
+    val todayState = remember { mutableStateOf(LocalDate.now()) }
+    val monthState = remember { mutableStateOf(YearMonth.now()) }
+    val today = todayState.value
+    val currentMonth = monthState.value
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                todayState.value = LocalDate.now()
+                monthState.value = YearMonth.now()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     val ab = MaterialTheme.accBook
     val palette = remember(ab) { coinPalette(ab) }
     var showBudgetDialog by remember { mutableStateOf(false) }
@@ -122,6 +139,8 @@ fun HomeScreen(
     var stage by remember { mutableStateOf(HomeStage.Idle) }
     var banner by remember { mutableStateOf<DeltaBanner?>(null) }
     var session by remember { mutableStateOf<HomeSettlement.HomeSession?>(null) }
+    var entranceKey by remember { mutableStateOf(1L) }
+    var settlementConsumed by remember { mutableStateOf(false) }
 
     val realRemaining = cash?.let { budgetCents + it.incomeCents - it.expenseCents } ?: 0L
     val realExpense = cash?.expenseCents ?: 0L
@@ -143,89 +162,91 @@ fun HomeScreen(
         var canvasHeightDp by remember { mutableStateOf(maxHeight.value) }
         val spawnY = -(canvasHeightDp - CoinPileSpecs.GROUND_PAD_DP) + 12f
 
+        val owner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+        DisposableEffect(owner) {
+            val observer = LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_RESUME) {
+                    entranceKey += 1L
+                }
+            }
+            owner.lifecycle.addObserver(observer)
+            onDispose { owner.lifecycle.removeObserver(observer) }
+        }
+
         fun pileCountFor(remainingCents: Long): Float =
-            (remainingCents.toFloat() / budgetCents).coerceIn(0f, 1f) * pileLayout.size
+            HomeSettlement.remainingToPileCount(remainingCents, budgetCents, pileLayout.size)
 
-        // 动画状态机：按数据跳过不存在的阶段；支出与收入不同时播放
-        LaunchedEffect(session, animate) {
+        // 每次 Home 进入/后台恢复先用真实金币从顶部重新形成当前资源堆。
+        LaunchedEffect(entranceKey, session, animate) {
             val s = session ?: return@LaunchedEffect
-            remainingAnim.snapTo(s.from.remainingCents().toFloat())
-            expenseAnim.snapTo(s.from.expenseCents.toFloat())
-            fx.pileCount.snapTo(pileCountFor(s.from.remainingCents()))
-
-            if (!animate) {
-                // Reduced Motion / 用户关闭：金币堆轻微 reveal，数字快速到位，±¥ 简短出现
-                fx.reveal(240)
-                stage = HomeStage.FinalSettled
-                if (s.hasDeltas) {
-                    banner = reducedBanner(s, ab)
-                    delay(1600)
+            val targetRemaining = if (!settlementConsumed && s.hasDeltas) {
+                s.from.remainingCents()
+            } else {
+                s.to.remainingCents()
+            }
+            val target = pileCountFor(targetRemaining).toInt()
+            try {
+                stage = HomeStage.PileEntrance
+                fx.formPile(pileLayout, target, spawnY)
+                if (!settlementConsumed && s.hasDeltas) {
+                    settlementConsumed = true
+                    remainingAnim.snapTo(s.from.remainingCents().toFloat())
+                    expenseAnim.snapTo(s.from.expenseCents.toFloat())
+                    if (!animate) {
+                        stage = HomeStage.FinalSettled
+                        banner = reducedBanner(s, ab)
+                        delay(1200)
+                        banner = null
+                        return@LaunchedEffect
+                    }
+                    if (s.expenseDelta > 0) {
+                        stage = HomeStage.ExpenseSettlement
+                        banner = DeltaBanner("− " + Money.formatYuanGrouped(s.expenseDelta), ab.critical)
+                        val fromRemaining = s.from.remainingCents()
+                        val newRemaining = fromRemaining - s.expenseDelta
+                        val oldF = pileCountFor(fromRemaining)
+                        val newF = pileCountFor(newRemaining)
+                        val intensity = (s.expenseDelta.toFloat() / budgetCents).coerceIn(0.15f, 1f)
+                        val origins = burstOrigins(pileLayout, oldF, newF, HomeSettlement.moneyToVisualCoinCount(s.expenseDelta))
+                        coroutineScope {
+                            launch { remainingAnim.animateTo(newRemaining.toFloat(), tween(560, easing = FastOutSlowInEasing)) }
+                            launch { expenseAnim.animateTo((s.from.expenseCents + s.expenseDelta).toFloat(), tween(560, easing = FastOutSlowInEasing)) }
+                            launch { fx.pileCount.animateTo(newF, tween(560, easing = FastOutSlowInEasing)) }
+                            launch { fx.burstFrom(origins, intensity) }
+                        }
+                    }
+                    if (s.incomeDelta > 0) {
+                        delay(140)
+                        stage = HomeStage.IncomeSettlement
+                        banner = DeltaBanner("+ " + Money.formatYuanGrouped(s.incomeDelta), ab.income)
+                        val afterExpense = s.from.remainingCents() - s.expenseDelta
+                        val newRemaining = afterExpense + s.incomeDelta
+                        val oldF = if (s.expenseDelta > 0) pileCountFor(afterExpense) else fx.pileCount.value
+                        val newF = pileCountFor(newRemaining)
+                        coroutineScope {
+                            launch { remainingAnim.animateTo(newRemaining.toFloat(), tween(540, easing = FastOutSlowInEasing)) }
+                            launch { fx.pileCount.animateTo(newF, tween(620, easing = FastOutSlowInEasing)) }
+                            launch {
+                                fx.fallOntoSlots(
+                                    layout = pileLayout,
+                                    slotIndices = incomeSlotIndices(
+                                        capacity = pileLayout.size,
+                                        oldF = oldF,
+                                        newF = newF,
+                                        n = HomeSettlement.moneyToVisualCoinCount(s.incomeDelta),
+                                    ),
+                                    spawnYDp = spawnY,
+                                    staggerMs = 42,
+                                )
+                            }
+                        }
+                    }
                     banner = null
                 }
-                return@LaunchedEffect
-            }
-
-            if (!s.hasDeltas) {
-                stage = HomeStage.PileEntrance
-                fx.reveal()
-                val target = pileCountFor(s.to.remainingCents()).toInt()
-                if (target > 0) {
-                    val n = minOf(14, maxOf(6, target / 3))
-                    val indices = ((target - 1) downTo (target - n).coerceAtLeast(0)).toList()
-                    fx.fallOntoSlots(pileLayout, indices, spawnY)
-                }
                 stage = HomeStage.FinalSettled
-                return@LaunchedEffect
+            } finally {
+                fx.clearParticles()
             }
-
-            stage = HomeStage.PileEntrance
-            fx.reveal(220)
-
-            if (s.expenseDelta > 0) {
-                stage = HomeStage.ExpenseSettlement
-                banner = DeltaBanner("− " + Money.formatYuanGrouped(s.expenseDelta), ab.critical)
-                val fromRemaining = s.from.remainingCents()
-                val newRemaining = fromRemaining - s.expenseDelta
-                val oldF = pileCountFor(fromRemaining)
-                val newF = pileCountFor(newRemaining)
-                val intensity = (s.expenseDelta.toFloat() / budgetCents).coerceIn(0.15f, 1f)
-                val origins = burstOrigins(pileLayout, oldF, newF, HomeSettlement.moneyToVisualCoinCount(s.expenseDelta))
-                coroutineScope {
-                    launch { remainingAnim.animateTo(newRemaining.toFloat(), tween(650, easing = FastOutSlowInEasing)) }
-                    launch { expenseAnim.animateTo((s.from.expenseCents + s.expenseDelta).toFloat(), tween(650, easing = FastOutSlowInEasing)) }
-                    launch { fx.pileCount.animateTo(newF, tween(650, easing = FastOutSlowInEasing)) }
-                    launch { fx.burstFrom(origins, intensity) }
-                }
-            }
-
-            if (s.incomeDelta > 0) {
-                delay(200) // 支出 → 极短停顿 → 收入
-                stage = HomeStage.IncomeSettlement
-                banner = DeltaBanner("+ " + Money.formatYuanGrouped(s.incomeDelta), ab.income)
-                val afterExpense = s.from.remainingCents() - s.expenseDelta
-                val newRemaining = afterExpense + s.incomeDelta
-                val oldF = if (s.expenseDelta > 0) pileCountFor(afterExpense) else fx.pileCount.value
-                val newF = pileCountFor(newRemaining)
-                coroutineScope {
-                    launch { remainingAnim.animateTo(newRemaining.toFloat(), tween(600, easing = FastOutSlowInEasing)) }
-                    launch { fx.pileCount.animateTo(newF, tween(750, easing = FastOutSlowInEasing)) }
-                    launch {
-                        fx.fallOntoSlots(
-                            layout = pileLayout,
-                            slotIndices = incomeSlotIndices(
-                                capacity = pileLayout.size,
-                                oldF = oldF,
-                                newF = newF,
-                                n = HomeSettlement.moneyToVisualCoinCount(s.incomeDelta),
-                            ),
-                            spawnYDp = spawnY,
-                        )
-                    }
-                }
-            }
-
-            banner = null
-            stage = HomeStage.FinalSettled
         }
 
         // 驻留期间数据变化（悬浮卡确认等）：settle 后堆平滑跟随真实值
@@ -242,10 +263,10 @@ fun HomeScreen(
         val shownToday = (shownRemaining / daysLeft).coerceAtLeast(0L)
 
         Column(Modifier.fillMaxSize()) {
-            Spacer(Modifier.height(12.dp))
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("${today.monthValue}月", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.height(8.dp))
+            Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("${today.monthValue}月", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.width(10.dp))
                 if (pendingCount > 0) {
                     PendingBadge(count = pendingCount, onClick = onOpenPending)
                 }
@@ -270,7 +291,7 @@ fun HomeScreen(
             }
 
             Column(
-                Modifier.fillMaxWidth().alpha(if (session != null) 1f else 0f),
+                Modifier.fillMaxWidth().height(158.dp).alpha(if (session != null) 1f else 0f),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text(
@@ -490,9 +511,20 @@ private fun reducedBanner(s: HomeSettlement.HomeSession, ab: AccBookColors): Del
 @Composable
 private fun rememberReducedMotion(): Boolean {
     val context = LocalContext.current
-    return remember {
-        runCatching {
-            Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
-        }.getOrDefault(false)
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    var reducedMotion by remember { mutableStateOf(readReducedMotion(context)) }
+    DisposableEffect(context, lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                reducedMotion = readReducedMotion(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
+    return reducedMotion
 }
+
+private fun readReducedMotion(context: Context): Boolean = runCatching {
+    Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
+}.getOrDefault(false)
