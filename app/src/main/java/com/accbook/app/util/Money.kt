@@ -52,4 +52,27 @@ object Money {
         val body = if (frac == 0L) grouped else "$grouped." + frac.toString().padStart(2, '0')
         return (if (negative) "-" else "") + "¥" + body
     }
+
+    /**
+     * 分 → 紧凑金额（首页圆环等窄空间用）：
+     * 整数部分 ≤ 4 位（< 1 万元）正常分组显示（如 ¥1,234.12）；
+     * 超过 4 位进位到 K（千）/ M（百万）/ B（十亿），保留两位小数并去除尾零
+     * （如 ¥32.31K、¥10K、¥1.23M）。
+     */
+    fun formatYuanCompact(cents: Long): String {
+        val negative = cents < 0
+        val abs = if (negative) -cents else cents
+        val yuan = abs / 100.0
+        val sign = if (negative) "-¥" else "¥"
+        return when {
+            yuan >= 1_000_000_000.0 -> sign + trimNumber(yuan / 1_000_000_000.0) + "B"
+            yuan >= 1_000_000.0 -> sign + trimNumber(yuan / 1_000_000.0) + "M"
+            yuan >= 10_000.0 -> sign + trimNumber(yuan / 1_000.0) + "K"
+            else -> formatYuanGrouped(cents)
+        }
+    }
+
+    /** 保留两位小数（四舍五入）并去除尾零：32.31232 → "32.31"，10.0 → "10" */
+    private fun trimNumber(value: Double): String =
+        BigDecimal.valueOf(value).setScale(2, java.math.RoundingMode.HALF_UP).stripTrailingZeros().toPlainString()
 }

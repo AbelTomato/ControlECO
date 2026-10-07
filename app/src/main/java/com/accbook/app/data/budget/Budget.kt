@@ -28,10 +28,10 @@ object Budget {
     enum class Tone { OK, MID, LOW }
 
     /** 剩余比例 ≥ 50% 充足（绿） */
-    const val TONE_OK_RATIO = 0.5
+    const val TONE_OK_RATIO = 0.5f
 
-    /** 剩余比例 20%–50% 中等（蓝），< 20% 紧张（红） */
-    const val TONE_LOW_RATIO = 0.2
+    /** 剩余比例 20%–50% 中等（黄），< 20% 紧张（红） */
+    const val TONE_LOW_RATIO = 0.2f
 
     fun remainingTone(remainingRatio: Float): Tone = when {
         remainingRatio >= TONE_OK_RATIO -> Tone.OK

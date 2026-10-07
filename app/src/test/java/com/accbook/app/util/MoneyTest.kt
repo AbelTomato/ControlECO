@@ -44,4 +44,25 @@ class MoneyTest {
         assertEquals("-¥3.20", Money.formatYuan(-320))
         assertEquals("¥0.05", Money.formatYuan(5))
     }
+
+    @Test
+    fun `compact keeps normal format up to 4 integer digits`() {
+        assertEquals("¥1,234.12", Money.formatYuanCompact(123412))
+        assertEquals("¥9,999.99", Money.formatYuanCompact(999999))
+        assertEquals("¥2,884", Money.formatYuanCompact(288400))
+        assertEquals("¥0.05", Money.formatYuanCompact(5))
+    }
+
+    @Test
+    fun `compact carries to K M B above 4 integer digits`() {
+        // 32,312.32 → 32.31K（用户示例）
+        assertEquals("¥32.31K", Money.formatYuanCompact(3_231_232))
+        // 10,000 整 → 去尾零
+        assertEquals("¥10K", Money.formatYuanCompact(1_000_000))
+        assertEquals("¥12.5K", Money.formatYuanCompact(1_250_000))
+        assertEquals("¥1.23M", Money.formatYuanCompact(123_456_789))
+        assertEquals("¥12.35B", Money.formatYuanCompact(1_234_567_890_100))
+        // 负数保留符号
+        assertEquals("-¥32.31K", Money.formatYuanCompact(-3_231_232))
+    }
 }
