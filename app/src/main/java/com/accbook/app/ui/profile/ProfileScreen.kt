@@ -84,8 +84,10 @@ fun ProfileScreen(
     val categoryBudgets by vm.categoryBudgets.collectAsStateWithLifecycle()
     val accounts by vm.accounts.collectAsStateWithLifecycle()
     val pendingCount by vm.pendingCount.collectAsStateWithLifecycle(initialValue = 0)
+    // 与首页同口径：数据未到位前不画（避免预算卡先显示 0 再跳数）
+    val spentReady = spent ?: return
     val today = LocalDate.now()
-    val snapshot = remember(budget, spent, today) { Budget.compute(budget, spent, today) }
+    val snapshot = remember(budget, spentReady, today) { Budget.compute(budget, spentReady, today) }
     var showBudgetDialog by remember { mutableStateOf(false) }
 
     val expenseCategories = categories.count { it.type == TxType.EXPENSE }
@@ -136,7 +138,7 @@ fun ProfileScreen(
         PaneCard {
             BudgetSummary(
                 budgetCents = budget,
-                spentCents = spent,
+                spentCents = spentReady,
                 snapshot = snapshot,
                 monthValue = today.monthValue,
                 onSetBudget = { showBudgetDialog = true },

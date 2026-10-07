@@ -127,6 +127,12 @@ fun HomeScreen(vm: LedgerViewModel, onOpenPending: () -> Unit) {
     val categories by vm.categories.collectAsStateWithLifecycle()
     val totalDepositCents by vm.totalDepositCents.collectAsStateWithLifecycle()
 
+    // 数据未到位前整页不画任何东西（避免"先空/先默认，再跳成真实数据"的闪动）
+    val spentReady = spentCents
+    val sumsReady = categorySums
+    val depositReady = totalDepositCents
+    if (spentReady == null || sumsReady == null || depositReady == null) return
+
     var showBudgetDialog by remember { mutableStateOf(false) }
     var todayState by remember { mutableStateOf(LocalDate.now()) }
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -138,8 +144,8 @@ fun HomeScreen(vm: LedgerViewModel, onOpenPending: () -> Unit) {
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
     val today = todayState
-    val snapshot = remember(budgetCents, spentCents, today) {
-        Budget.compute(budgetCents, spentCents, today)
+    val snapshot = remember(budgetCents, spentReady, today) {
+        Budget.compute(budgetCents, spentReady, today)
     }
 
     // budget > 0 时 compute 必返回非空
@@ -205,8 +211,8 @@ fun HomeScreen(vm: LedgerViewModel, onOpenPending: () -> Unit) {
 
     val latestOnDragEnd by rememberUpdatedState(onDragEnd)
 
-    val rings = remember(categoryBudgets, categorySums, categories, budgetCents, spentCents) {
-        buildCategoryRings(categoryBudgets, categorySums, categories, budgetCents, spentCents)
+    val rings = remember(categoryBudgets, sumsReady, categories, budgetCents, spentReady) {
+        buildCategoryRings(categoryBudgets, sumsReady, categories, budgetCents, spentReady)
     }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
@@ -279,7 +285,7 @@ fun HomeScreen(vm: LedgerViewModel, onOpenPending: () -> Unit) {
                 } else {
                     ModeNeedsBudget(mode = 2, onSetBudget = { showBudgetDialog = true })
                 }
-                else -> ModeSpentAndDeposit(snapshot = s, spentCents = spentCents, totalDepositCents = totalDepositCents)
+                else -> ModeSpentAndDeposit(snapshot = s, spentCents = spentReady, totalDepositCents = depositReady)
             }
         }
 

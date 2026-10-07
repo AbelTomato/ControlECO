@@ -128,10 +128,17 @@ fun TransactionListScreen(
     val refundTotal by vm.periodRefundTotal.collectAsStateWithLifecycle()
     val cardImageUri by vm.cardImageUri.collectAsStateWithLifecycle()
     val cardTransform by vm.cardTransform.collectAsStateWithLifecycle()
+    val cardImageColor by vm.cardImageColor.collectAsStateWithLifecycle()
+    val cardImageLuminance by vm.cardImageLuminance.collectAsStateWithLifecycle()
     val ab = MaterialTheme.accBook
 
-    val expense = totals.firstOrNull { it.type == TxType.EXPENSE }?.totalCents ?: 0L
-    val income = totals.firstOrNull { it.type == TxType.INCOME }?.totalCents ?: 0L
+    // 数据未到位前整页不画：不显示空列表、也不显示默认卡面
+    val rowsReady = rows ?: return
+    val totalsReady = totals ?: return
+    val refundReady = refundTotal ?: return
+
+    val expense = totalsReady.firstOrNull { it.type == TxType.EXPENSE }?.totalCents ?: 0L
+    val income = totalsReady.firstOrNull { it.type == TxType.INCOME }?.totalCents ?: 0L
 
     var filter by remember { mutableStateOf(TxFilter.ALL) }
     var showAllDays by remember { mutableStateOf(false) }
@@ -152,7 +159,8 @@ fun TransactionListScreen(
             scope.launch {
                 val saved = withContext(Dispatchers.IO) { importCardImage(context, uri) }
                 if (saved != null) {
-                    vm.setCardImage(saved)
+                    vm.setCardImage(saved.path)
+                    vm.setCardImageStats(saved.colorArgb, saved.luminance)
                     vm.setCardTransform(CardTransform.DEFAULT)
                     showImageEditor = true
                 } else {
@@ -212,11 +220,11 @@ fun TransactionListScreen(
         }
     }
 
-    val filtered = remember(rows, filter) {
+    val filtered = remember(rowsReady, filter) {
         when (filter) {
-            TxFilter.ALL -> rows
-            TxFilter.EXPENSE -> rows.filter { it.type == TxType.EXPENSE }
-            TxFilter.INCOME -> rows.filter { it.type == TxType.INCOME }
+            TxFilter.ALL -> rowsReady
+            TxFilter.EXPENSE -> rowsReady.filter { it.type == TxType.EXPENSE }
+            TxFilter.INCOME -> rowsReady.filter { it.type == TxType.INCOME }
         }
     }
     val grouped: Map<LocalDate, List<TransactionRow>> = remember(filtered) {
@@ -236,6 +244,8 @@ fun TransactionListScreen(
             expenseCents = expense,
             imagePath = cardImageUri,
             transform = cardTransform,
+            placeholderColor = cardImageColor,
+            placeholderLuminance = cardImageLuminance,
             onModeChange = { vm.setPeriodMode(it) },
             onOpenImageSettings = { showImageDialog = true },
             modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp),
@@ -291,7 +301,7 @@ fun TransactionListScreen(
             Spacer(Modifier.weight(1f))
             Text(
                 when {
-                    rows.isEmpty() -> "${periodScopeLabel(mode)}暂无记录"
+                    rowsReady.isEmpty() -> "${periodScopeLabel(mode)}暂无记录"
                     hiddenDays > 0 -> "最近 $RECENT_DAYS 天 $shownCount 笔"
                     else -> "${periodScopeLabel(mode)} $shownCount 笔"
                 },
@@ -310,7 +320,7 @@ fun TransactionListScreen(
                     style = MaterialTheme.typography.titleSmall,
                     modifier = Modifier.weight(1f),
                 )
-                TextButton(onClick = { selected = rows.map { it.id }.toSet() }) { Text("全选") }
+                TextButton(onClick = { selected = rowsReady.map { it.id }.toSet() }) { Text("全选") }
                 TextButton(
                     onClick = {
                         if (selected.isNotEmpty()) {
@@ -331,7 +341,7 @@ fun TransactionListScreen(
         }
 
         when {
-            rows.isEmpty() -> {
+            rowsReady.isEmpty() -> {
                 Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     Text(
                         "${periodScopeLabel(mode)}暂无记录\n点右下角「记账」记一笔，或在「个人」页导入账单",

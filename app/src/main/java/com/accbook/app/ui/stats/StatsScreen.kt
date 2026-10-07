@@ -64,8 +64,14 @@ fun StatsScreen(vm: LedgerViewModel, scrollToTopTick: Int = 0) {
     val showRefunds by vm.showRefunds.collectAsStateWithLifecycle()
     val refundTotal by vm.periodRefundTotal.collectAsStateWithLifecycle()
 
-    val expense = totals.firstOrNull { it.type == TxType.EXPENSE }?.totalCents ?: 0L
-    val income = totals.firstOrNull { it.type == TxType.INCOME }?.totalCents ?: 0L
+    // 数据未到位前整页不画（避免先显示 0 / 空图再跳数）
+    val rowsReady = rows ?: return
+    val totalsReady = totals ?: return
+    val byCategoryReady = byCategory ?: return
+    val refundReady = refundTotal ?: return
+
+    val expense = totalsReady.firstOrNull { it.type == TxType.EXPENSE }?.totalCents ?: 0L
+    val income = totalsReady.firstOrNull { it.type == TxType.INCOME }?.totalCents ?: 0L
 
     // 日均：当前周期用"截至今天"，历史周期用满周期天数
     val now = YearMonth.now()
@@ -77,7 +83,7 @@ fun StatsScreen(vm: LedgerViewModel, scrollToTopTick: Int = 0) {
         else -> if (YearMonth.of(month.year, 2).lengthOfMonth() == 29) 366 else 365
     }
     val dailyAverage = expense / daysElapsed.coerceAtLeast(1)
-    val top = byCategory.firstOrNull()
+    val top = byCategoryReady.firstOrNull()
     val topShare = if (top != null && expense > 0) (top.totalCents * 100 / expense) else 0L
 
     val pageScroll = rememberScrollState()
@@ -107,7 +113,7 @@ fun StatsScreen(vm: LedgerViewModel, scrollToTopTick: Int = 0) {
         SummaryRow(
             incomeCents = income,
             expenseCents = expense,
-            cancelledCents = if (showRefunds) refundTotal else null,
+            cancelledCents = if (showRefunds) refundReady else null,
         )
         HorizontalDivider(color = MaterialTheme.accBook.hairline)
 
@@ -136,7 +142,7 @@ fun StatsScreen(vm: LedgerViewModel, scrollToTopTick: Int = 0) {
         // 第二层级：每日支出趋势（自绘）
         SectionLabel(if (mode == PeriodMode.MONTH) "每日支出" else "月度支出")
         ExpenseChart(
-            rows = rows,
+            rows = rowsReady,
             month = month,
             mode = mode,
             modifier = Modifier.padding(horizontal = 16.dp),
@@ -144,7 +150,7 @@ fun StatsScreen(vm: LedgerViewModel, scrollToTopTick: Int = 0) {
 
         // 第三层级：分类细节
         SectionLabel("分类占比")
-        if (byCategory.isEmpty()) {
+        if (byCategoryReady.isEmpty()) {
             Text(
                 "暂无支出分类数据",
                 style = MaterialTheme.typography.bodyMedium,
@@ -153,7 +159,7 @@ fun StatsScreen(vm: LedgerViewModel, scrollToTopTick: Int = 0) {
             )
         } else {
             Column(Modifier.padding(horizontal = 16.dp)) {
-                byCategory.forEach { c ->
+                byCategoryReady.forEach { c ->
                     val fraction = if (expense > 0) c.totalCents.toFloat() / expense else 0f
                     val share = if (expense > 0) c.totalCents * 100 / expense else 0L
                     Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {

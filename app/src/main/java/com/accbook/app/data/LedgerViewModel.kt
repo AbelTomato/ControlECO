@@ -89,7 +89,35 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
     fun setCardImage(uri: String?) {
         prefs.edit().putString(KEY_CARD_IMAGE, uri).apply()
         _cardImageUri.value = uri
+        if (uri == null) {
+            prefs.edit().remove(KEY_CARD_COLOR).remove(KEY_CARD_LUMINANCE).apply()
+            _cardImageColor.value = null
+            _cardImageLuminance.value = null
+        }
         AppLog.i("settings", "cardImage=${uri ?: "default"}")
+    }
+
+    /**
+     * 背景图的"平均色 + 整体亮度"：随图一起持久化。
+     * 冷启动时位图还要解码，先拿这个颜色打底 → 不会先闪一帧默认几何背景。
+     */
+    private val _cardImageColor = MutableStateFlow(
+        prefs.getInt(KEY_CARD_COLOR, 0).takeIf { it != 0 },
+    )
+    val cardImageColor: StateFlow<Int?> = _cardImageColor
+
+    private val _cardImageLuminance = MutableStateFlow(
+        prefs.getFloat(KEY_CARD_LUMINANCE, -1f).takeIf { it >= 0f },
+    )
+    val cardImageLuminance: StateFlow<Float?> = _cardImageLuminance
+
+    fun setCardImageStats(argbColor: Int, luminance: Float) {
+        prefs.edit()
+            .putInt(KEY_CARD_COLOR, argbColor)
+            .putFloat(KEY_CARD_LUMINANCE, luminance)
+            .apply()
+        _cardImageColor.value = argbColor
+        _cardImageLuminance.value = luminance
     }
 
     /** 背景图的位移/缩放/旋转（选图后可在卡片上直接调） */
@@ -97,6 +125,14 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
         CardTransform.parse(prefs.getString(KEY_CARD_TRANSFORM, null)),
     )
     val cardTransform: StateFlow<CardTransform> = _cardTransform
+
+    init {
+        // 冷启动预热：立刻在 IO 线程碰一次数据库，让 SQLite 打开/建连的开销
+        // 与 UI 首帧并行，而不是等页面来查时才付（配合"未就绪先不画"减少空白时间）
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { txDao.countAll() }
+        }
+    }
 
     fun setCardTransform(transform: CardTransform) {
         val t = transform.normalized()
@@ -124,17 +160,17 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
      * 剩余/建议日花/状态由 UI 用 Budget.compute 纯函数计算。
      */
     @OptIn(ExperimentalCoroutinesApi::class)
-    val homeNetSpent: StateFlow<Long> = combine(
+    val homeNetSpent: StateFlow<Long?> = combine(
         txDao.observeTypeTotals(homeRange.first, homeRange.second, true),
         txDao.observeRefundIncomeTotal(homeRange.first, homeRange.second),
     ) { totals, refundIncome ->
         (totals.firstOrNull { it.type == TxType.EXPENSE }?.totalCents ?: 0L) - refundIncome
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     /** 首页"分类剩余预算"预览：当月各支出分类合计（口径与首页一致，退款始终计入） */
-    val homeCategorySums: StateFlow<List<CategorySumRow>> = txDao
+    val homeCategorySums: StateFlow<List<CategorySumRow>?> = txDao
         .observeCategorySums(homeRange.first, homeRange.second, TxType.EXPENSE, true)
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     // ---------- 月份 ----------
 
@@ -198,28 +234,28 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
     // 账单/统计共用的当月数据：stateIn 缓存上一次结果 —— 切标签页回来先显示缓存、
     // 后台再刷新，不再"每次进页面从空闪到满"；没有订阅者 5 秒后自动停掉 Room 观察。
     @OptIn(ExperimentalCoroutinesApi::class)
-    val periodRows: StateFlow<List<TransactionRow>> =
+    val periodRows: StateFlow<List<TransactionRow>?> =
         combine(periodRange, _showRefunds) { rng, show -> rng to show }.flatMapLatest { (rng, show) ->
             txDao.observeRows(rng.first, rng.second, show)
-        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    val periodTotals: StateFlow<List<TypeTotalRow>> =
+    val periodTotals: StateFlow<List<TypeTotalRow>?> =
         combine(periodRange, _showRefunds) { rng, show -> rng to show }.flatMapLatest { (rng, show) ->
             txDao.observeTypeTotals(rng.first, rng.second, show)
-        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    val periodCategorySums: StateFlow<List<CategorySumRow>> =
+    val periodCategorySums: StateFlow<List<CategorySumRow>?> =
         combine(periodRange, _showRefunds) { rng, show -> rng to show }.flatMapLatest { (rng, show) ->
             txDao.observeCategorySums(rng.first, rng.second, TxType.EXPENSE, show)
-        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     /** 退款到账金额合计（"已取消收支"），是否展示由 UI 根据开关决定 */
     @OptIn(ExperimentalCoroutinesApi::class)
-    val periodRefundTotal: StateFlow<Long> = periodRange.flatMapLatest { rng ->
+    val periodRefundTotal: StateFlow<Long?> = periodRange.flatMapLatest { rng ->
         txDao.observeRefundIncomeTotal(rng.first, rng.second)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     val accounts: StateFlow<List<AccountEntity>> =
         accountDao.observeAll().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -233,9 +269,9 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** 首页"总存款"预览：全部账户（初始金额 + 交易净额）合计 */
-    val totalDepositCents: StateFlow<Long> = accountBalances
+    val totalDepositCents: StateFlow<Long?> = accountBalances
         .map { rows -> rows.sumOf { it.initialBalanceCents + it.signedSumCents } }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     // ---------- 交易 ----------
 
@@ -733,6 +769,8 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
         const val KEY_SHOW_REFUNDS = "show_refunds"
         const val KEY_CARD_IMAGE = "card_image_uri"
         const val KEY_CARD_TRANSFORM = "card_image_transform"
+        const val KEY_CARD_COLOR = "card_image_color"
+        const val KEY_CARD_LUMINANCE = "card_image_luminance"
         const val KEY_MONTHLY_BUDGET = "monthly_budget_cents"
         const val KEY_CAT_BUDGET_PREFIX = "category_budget_"
     }

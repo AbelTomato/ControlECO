@@ -76,6 +76,9 @@ fun BalanceCard(
     expenseCents: Long,
     imagePath: String?,
     transform: CardTransform = CardTransform.DEFAULT,
+    /** 背景图平均色（持久化）：位图解码完成前用它打底，避免先闪默认几何背景 */
+    placeholderColor: Int? = null,
+    placeholderLuminance: Float? = null,
     onModeChange: (PeriodMode) -> Unit,
     onOpenImageSettings: () -> Unit,
     modifier: Modifier = Modifier,
@@ -89,8 +92,10 @@ fun BalanceCard(
 
     // 自动明暗判定只针对**自定义背景图**：默认卡面是自绘渐变，直接用主题配色更稳
     // （自绘卡面的深浅由明暗主题决定，不该再叠遮罩压暗）。
-    val hasImage = loaded?.bitmap != null
-    val imageLuminance = loaded?.luminance ?: 0f
+    val hasBitmap = loaded?.bitmap != null
+    val placeholder = if (!hasBitmap) placeholderColor?.let { Color(it) } else null
+    val hasImage = hasBitmap || placeholder != null
+    val imageLuminance = loaded?.luminance ?: placeholderLuminance ?: 0f
     val tones: CardTones = if (!hasImage) {
         val ink = MaterialTheme.colorScheme.onPrimaryContainer
         CardTones(
@@ -147,6 +152,9 @@ fun BalanceCard(
                         filterQuality = FilterQuality.Medium,
                     )
                 }
+            } else if (placeholder != null) {
+                // 图已选但还没解码完：先用平均色铺满（不是"默认卡面"，不会闪）
+                drawRect(placeholder)
             } else {
                 // 默认几何背景：浅蓝竖向渐变 + 右上同心圆 + 左下圆环 + 一道斜高光
                 drawRect(Brush.verticalGradient(listOf(base, deep)))
@@ -237,6 +245,9 @@ fun BalanceCard(
 /** 卡面图片 + 其整体亮度（0 黑 → 1 白） */
 private data class CardImage(val bitmap: ImageBitmap, val luminance: Float)
 
+/** 导入结果：内部文件路径 + 平均色（ARGB）+ 整体亮度 */
+data class ImportedCardImage(val path: String, val colorArgb: Int, val luminance: Float)
+
 /**
  * 只保留"最近一张"的卡面位图缓存：切标签页/进出页面时组件会重建，
  * 没有缓存就会先画默认几何背景、再等 IO 解码完才显示图片（闪一下）。
@@ -323,13 +334,46 @@ private fun meanLuminance(bmp: Bitmap): Float {
  * 相册选图 → **复制到应用内部存储**（`filesDir/card_bg.jpg`，长边压到 1600px 以内）：
  * 不依赖 URI 授权、重启后仍在，原图被删也不影响卡片。返回内部文件路径，失败返回 null。
  */
-fun importCardImage(context: Context, uri: Uri): String? = runCatching {
+fun importCardImage(context: Context, uri: Uri): ImportedCardImage? = runCatching {
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
     if (bounds.outWidth <= 0) return@runCatching null
     val opts = BitmapFactory.Options().apply { inSampleSize = sampleSize(bounds.outWidth, bounds.outHeight) }
     val bmp = context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
         ?: return@runCatching null
+
+    // 采样算平均色与平均亮度（一次遍历）
+    val stepX = max(1, bmp.width / 48)
+    val stepY = max(1, bmp.height / 48)
+    var sumR = 0.0
+    var sumG = 0.0
+    var sumB = 0.0
+    var sumLum = 0.0
+    var count = 0
+    var y = 0
+    while (y < bmp.height) {
+        var x = 0
+        while (x < bmp.width) {
+            val c = bmp.getPixel(x, y)
+            val r = android.graphics.Color.red(c)
+            val g = android.graphics.Color.green(c)
+            val b = android.graphics.Color.blue(c)
+            sumR += r
+            sumG += g
+            sumB += b
+            sumLum += relativeLuminance(r / 255f, g / 255f, b / 255f)
+            count++
+            x += stepX
+        }
+        y += stepY
+    }
+    val color = if (count == 0) android.graphics.Color.GRAY else android.graphics.Color.rgb(
+        (sumR / count).toInt().coerceIn(0, 255),
+        (sumG / count).toInt().coerceIn(0, 255),
+        (sumB / count).toInt().coerceIn(0, 255),
+    )
+    val luminance = if (count == 0) 1f else (sumLum / count).toFloat()
+
     // 文件名带时间戳：换图时路径必然变化，UI 才会重新解码
     // （之前固定叫 card_bg.jpg，第二次选图路径没变 → 卡片不刷新）
     val file = File(context.filesDir, "card_bg_${System.currentTimeMillis()}.jpg")
@@ -338,5 +382,5 @@ fun importCardImage(context: Context, uri: Uri): String? = runCatching {
     // 只保留最新一张，清掉旧文件
     context.filesDir.listFiles { f -> f.name.startsWith("card_bg") && f.name != file.name }
         ?.forEach { it.delete() }
-    file.absolutePath
+    ImportedCardImage(file.absolutePath, color, luminance)
 }.getOrNull()
