@@ -70,6 +70,7 @@ import com.accbook.app.data.budget.Budget
 import com.accbook.app.data.db.CategoryEntity
 import com.accbook.app.data.db.CategorySumRow
 import com.accbook.app.data.db.TxType
+import com.accbook.app.ui.common.AutoScaledText
 import com.accbook.app.ui.common.BudgetEditDialog
 import com.accbook.app.ui.common.rememberReducedMotion
 import com.accbook.app.ui.theme.accBook
@@ -640,41 +641,6 @@ private fun Modifier.warningHeartbeat(active: Boolean, severity: Float): Modifie
         val q = shake.value
         rotationZ = if (q < 0.18f) (shakeDeg * sin(q / 0.18f * PI * 3.0)).toFloat() else 0f
     }
-}
-
-/**
- * 单行金额文本：超出可用宽度时按比例缩小字号（下限 0.55 倍），
- * 保证长数字不与圆环重叠；配合 K/M/B 紧凑格式，通常无需缩放。
- */
-@Composable
-private fun AutoScaledText(
-    text: String,
-    style: TextStyle,
-    color: Color,
-    maxWidth: Dp,
-    modifier: Modifier = Modifier,
-) {
-    val measurer = rememberTextMeasurer()
-    val density = LocalDensity.current
-    val maxPx = with(density) { maxWidth.toPx() }
-    val fitted = remember(text, style, maxPx) {
-        val measured = measurer.measure(text, style, maxLines = 1, softWrap = false)
-        val width = measured.size.width.toFloat()
-        if (maxPx > 0f && width > maxPx) {
-            style.copy(fontSize = style.fontSize * (maxPx / width).coerceAtLeast(0.55f))
-        } else {
-            style
-        }
-    }
-    Text(
-        text = text,
-        style = fitted,
-        color = color,
-        maxLines = 1,
-        softWrap = false,
-        overflow = TextOverflow.Ellipsis,
-        modifier = modifier,
-    )
 }
 
 /** 月份胶囊：与账单页月份浏览解耦（首页固定当前自然月） */

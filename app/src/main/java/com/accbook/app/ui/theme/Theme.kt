@@ -41,6 +41,14 @@ data class AccBookColors(
     val hairline: Color,
     /** 圆环底轨：比 hairline 略深，保证在浅蓝页面底色上仍能看清未完成部分 */
     val ringTrack: Color,
+    /** 自定义背景图卡片：压暗遮罩（保证卡上文字可读） */
+    val cardScrim: Color,
+    /** 自定义背景图卡片上的主文字色（白） */
+    val onCardImage: Color,
+    /** 自定义背景图卡片上的收入色（浅绿，深底可读） */
+    val incomeOnCard: Color,
+    /** 自定义背景图卡片上的支出色（浅红，深底可读） */
+    val expenseOnCard: Color,
     /** 分类徽标调色板：按分类名稳定取色，避免 emoji/图标依赖 */
     val categoryPalette: List<Color>,
 )
@@ -53,6 +61,10 @@ private fun lightAccBookColors() = AccBookColors(
     primaryStrong = Color(0xFF3C6CA8),
     hairline = Color(0xFFE3EAF1),
     ringTrack = Color(0xFFD6E1ED),
+    cardScrim = Color(0x9E0B1524),
+    onCardImage = Color(0xFFFFFFFF),
+    incomeOnCard = Color(0xFF8FE3A6),
+    expenseOnCard = Color(0xFFFFA694),
     categoryPalette = listOf(
         Color(0xFF5E7C9E), // 蓝
         Color(0xFF6E8B84), // 青绿灰
@@ -73,6 +85,10 @@ private fun darkAccBookColors() = AccBookColors(
     primaryStrong = Color(0xFF5B93D4),
     hairline = Color(0xFF2A323B),
     ringTrack = Color(0xFF333C47),
+    cardScrim = Color(0xB3000000),
+    onCardImage = Color(0xFFFFFFFF),
+    incomeOnCard = Color(0xFF8FE3A6),
+    expenseOnCard = Color(0xFFFFA694),
     categoryPalette = listOf(
         Color(0xFF9FBAD8),
         Color(0xFF9CC0B6),

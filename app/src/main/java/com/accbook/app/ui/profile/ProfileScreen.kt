@@ -25,7 +25,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -98,16 +97,6 @@ fun ProfileScreen(
             .verticalScroll(rememberScrollState())
             .padding(bottom = 24.dp),
     ) {
-        // ---- 标题 ----
-        Row(
-            Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(Icons.Filled.Person, contentDescription = null, tint = MaterialTheme.accBook.primaryStrong, modifier = Modifier.size(20.dp))
-            Spacer(Modifier.width(8.dp))
-            Text("个人", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-        }
-
         // ---- 身份卡 ----
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp),

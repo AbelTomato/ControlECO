@@ -44,6 +44,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.time.LocalDate
 import java.time.YearMonth
 import java.time.ZoneId
 
@@ -79,6 +80,17 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ---------- 设置：月度预算（首页 HUD 的数据源） ----------
+
+    // ---------- 设置：账单页结余卡背景图（null = 默认几何背景） ----------
+
+    private val _cardImageUri = MutableStateFlow(prefs.getString(KEY_CARD_IMAGE, null))
+    val cardImageUri: StateFlow<String?> = _cardImageUri
+
+    fun setCardImage(uri: String?) {
+        prefs.edit().putString(KEY_CARD_IMAGE, uri).apply()
+        _cardImageUri.value = uri
+        AppLog.i("settings", "cardImage=${uri ?: "default"}")
+    }
 
     private val _monthlyBudget = MutableStateFlow(prefs.getLong(KEY_MONTHLY_BUDGET, 0L))
     val monthlyBudgetCents: StateFlow<Long> = _monthlyBudget
@@ -117,10 +129,36 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
     private val _month = MutableStateFlow(YearMonth.now(zone))
     val month: StateFlow<YearMonth> = _month
 
+    /** 统计周期：按月 / 按年（账单页与统计页共用） */
+    private val _periodMode = MutableStateFlow(PeriodMode.MONTH)
+    val periodMode: StateFlow<PeriodMode> = _periodMode
+
+    fun setPeriodMode(mode: PeriodMode) {
+        _periodMode.value = mode
+        AppLog.i("period", "mode=$mode")
+    }
+
     fun prevMonth() { _month.value = _month.value.minusMonths(1) }
     fun nextMonth() { _month.value = _month.value.plusMonths(1) }
 
-    /** 直接跳到指定月份（账单页月份胶囊的下拉选择） */
+    /** 步进：月模式走一个月，年模式走一年 */
+    fun prevPeriod() {
+        _month.value = if (_periodMode.value == PeriodMode.YEAR) {
+            _month.value.minusYears(1)
+        } else {
+            _month.value.minusMonths(1)
+        }
+    }
+
+    fun nextPeriod() {
+        _month.value = if (_periodMode.value == PeriodMode.YEAR) {
+            _month.value.plusYears(1)
+        } else {
+            _month.value.plusMonths(1)
+        }
+    }
+
+    /** 直接跳到指定月份（账单页月份胶囊的选择面板） */
     fun setMonth(m: YearMonth) { _month.value = m }
 
     private fun range(m: YearMonth): Pair<Long, Long> {
@@ -129,30 +167,46 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
         return start to end
     }
 
+    /** 年区间：1 月 1 日 00:00（含）→ 次年 1 月 1 日 00:00（不含） */
+    private fun yearRange(y: Int): Pair<Long, Long> {
+        val start = LocalDate.of(y, 1, 1).atStartOfDay(zone).toInstant().toEpochMilli()
+        val end = LocalDate.of(y + 1, 1, 1).atStartOfDay(zone).toInstant().toEpochMilli()
+        return start to end
+    }
+
+    /** 当前周期的毫秒区间（随月份/年份与周期模式变化） */
+    private val periodRange: StateFlow<Pair<Long, Long>> =
+        combine(_month, _periodMode) { m, mode ->
+            when (mode) {
+                PeriodMode.MONTH -> range(m)
+                PeriodMode.YEAR -> yearRange(m.year)
+            }
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), range(YearMonth.now(zone)))
+
     // 账单/统计共用的当月数据：stateIn 缓存上一次结果 —— 切标签页回来先显示缓存、
     // 后台再刷新，不再"每次进页面从空闪到满"；没有订阅者 5 秒后自动停掉 Room 观察。
     @OptIn(ExperimentalCoroutinesApi::class)
-    val monthRows: StateFlow<List<TransactionRow>> =
-        combine(_month, _showRefunds) { m, r -> m to r }.flatMapLatest { (m, r) ->
-            val (s, e) = range(m); txDao.observeRows(s, e, r)
+    val periodRows: StateFlow<List<TransactionRow>> =
+        combine(periodRange, _showRefunds) { rng, show -> rng to show }.flatMapLatest { (rng, show) ->
+            txDao.observeRows(rng.first, rng.second, show)
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    val monthTotals: StateFlow<List<TypeTotalRow>> =
-        combine(_month, _showRefunds) { m, r -> m to r }.flatMapLatest { (m, r) ->
-            val (s, e) = range(m); txDao.observeTypeTotals(s, e, r)
+    val periodTotals: StateFlow<List<TypeTotalRow>> =
+        combine(periodRange, _showRefunds) { rng, show -> rng to show }.flatMapLatest { (rng, show) ->
+            txDao.observeTypeTotals(rng.first, rng.second, show)
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    val expenseByCategory: StateFlow<List<CategorySumRow>> =
-        combine(_month, _showRefunds) { m, r -> m to r }.flatMapLatest { (m, r) ->
-            val (s, e) = range(m); txDao.observeCategorySums(s, e, TxType.EXPENSE, r)
+    val periodCategorySums: StateFlow<List<CategorySumRow>> =
+        combine(periodRange, _showRefunds) { rng, show -> rng to show }.flatMapLatest { (rng, show) ->
+            txDao.observeCategorySums(rng.first, rng.second, TxType.EXPENSE, show)
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /** 退款到账金额合计（"已取消收支"），是否展示由 UI 根据开关决定 */
     @OptIn(ExperimentalCoroutinesApi::class)
-    val refundIncomeTotal: StateFlow<Long> = _month.flatMapLatest { m ->
-        val (s, e) = range(m); txDao.observeRefundIncomeTotal(s, e)
+    val periodRefundTotal: StateFlow<Long> = periodRange.flatMapLatest { rng ->
+        txDao.observeRefundIncomeTotal(rng.first, rng.second)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
 
     val accounts: StateFlow<List<AccountEntity>> =
@@ -665,6 +719,7 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
     private companion object {
         const val PREFS_NAME = "settings"
         const val KEY_SHOW_REFUNDS = "show_refunds"
+        const val KEY_CARD_IMAGE = "card_image_uri"
         const val KEY_MONTHLY_BUDGET = "monthly_budget_cents"
         const val KEY_CAT_BUDGET_PREFIX = "category_budget_"
     }

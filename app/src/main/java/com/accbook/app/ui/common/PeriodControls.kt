@@ -1,0 +1,323 @@
+package com.accbook.app.ui.common
+
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import com.accbook.app.data.PeriodMode
+import com.accbook.app.ui.theme.accBook
+import java.time.YearMonth
+import kotlinx.coroutines.launch
+
+/** 选择面板覆盖的年份范围（月视图一年一页，年视图一页 12 年） */
+private const val PICKER_YEAR_MIN = 1970
+private const val PICKER_YEAR_MAX = 2099
+private const val YEARS_PER_PAGE = 12
+
+/** 周期文案：月模式 "2026年10月"，年模式 "2026年" */
+fun periodLabel(yearMonth: YearMonth, mode: PeriodMode): String = when (mode) {
+    PeriodMode.MONTH -> "${yearMonth.year}年${yearMonth.monthValue}月"
+    PeriodMode.YEAR -> "${yearMonth.year}年"
+}
+
+/** 结余文案前缀：本月结余 / 本年结余 */
+fun periodBalanceLabel(mode: PeriodMode): String = when (mode) {
+    PeriodMode.MONTH -> "本月结余"
+    PeriodMode.YEAR -> "本年结余"
+}
+
+/** 周期范围文案（用于空态与提示）：本月 / 本年 */
+fun periodScopeLabel(mode: PeriodMode): String = when (mode) {
+    PeriodMode.MONTH -> "本月"
+    PeriodMode.YEAR -> "本年"
+}
+
+/**
+ * 月 / 年 两段式切换：选中段主色实底，未选中透明。
+ * 账单页结余卡与统计页顶部共用，两处永远同步（同一份 ViewModel 状态）。
+ */
+@Composable
+fun PeriodSwitch(mode: PeriodMode, onChange: (PeriodMode) -> Unit, modifier: Modifier = Modifier) {
+    val shape = RoundedCornerShape(50)
+    Row(
+        modifier
+            .clip(shape)
+            .background(MaterialTheme.accBook.primaryStrong.copy(alpha = 0.16f))
+            .padding(3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        PeriodMode.entries.forEach { m ->
+            val selected = m == mode
+            Box(
+                Modifier
+                    .clip(shape)
+                    .then(if (selected) Modifier.background(MaterialTheme.accBook.primaryStrong) else Modifier)
+                    .clickable { onChange(m) }
+                    .padding(horizontal = 14.dp, vertical = 5.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    m.label,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 周期步进条：[‹] [2026年10月 ▾] [›]。
+ * 箭头是浅蓝圆钮（不再是裸露图标），中间胶囊白底描边、点开选择面板，整体圆角统一。
+ */
+@Composable
+fun PeriodStepper(
+    yearMonth: YearMonth,
+    mode: PeriodMode,
+    onPrev: () -> Unit,
+    onNext: () -> Unit,
+    onOpenPicker: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+        StepButton(Icons.Filled.KeyboardArrowLeft, "上一${mode.label}") { onPrev() }
+        Spacer(Modifier.width(8.dp))
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(1.dp, MaterialTheme.accBook.hairline),
+            shadowElevation = 1.dp,
+            modifier = Modifier.clickable { onOpenPicker() },
+        ) {
+            Row(
+                Modifier.padding(start = 14.dp, end = 9.dp, top = 7.dp, bottom = 7.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(periodLabel(yearMonth, mode), style = MaterialTheme.typography.titleSmall)
+                Spacer(Modifier.width(3.dp))
+                Icon(
+                    Icons.Filled.ArrowDropDown,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
+        Spacer(Modifier.width(8.dp))
+        StepButton(Icons.Filled.KeyboardArrowRight, "下一${mode.label}") { onNext() }
+    }
+}
+
+@Composable
+private fun StepButton(icon: ImageVector, desc: String, onClick: () -> Unit) {
+    Surface(
+        shape = CircleShape,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        modifier = Modifier.size(36.dp).clickable(onClick = onClick),
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(icon, contentDescription = desc, tint = MaterialTheme.accBook.primaryStrong, modifier = Modifier.size(20.dp))
+        }
+    }
+}
+
+/**
+ * 周期选择面板（账单/统计共用）：
+ * 月模式 = 一年一页的 4×3 月份格子，**左右滑动切换年份**；年模式 = 一页 12 年的年份格子。
+ * 选中项浅蓝实底，当前月/今年描边，「回到本月/今年」一键回到现在。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PeriodPickerSheet(
+    mode: PeriodMode,
+    current: YearMonth,
+    onSelectMonth: (YearMonth) -> Unit,
+    onSelectYear: (Int) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val scope = rememberCoroutineScope()
+    val now = YearMonth.now()
+
+    fun dismiss(after: () -> Unit = {}) {
+        scope.launch { sheetState.hide() }.invokeOnCompletion {
+            after()
+            onDismiss()
+        }
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .navigationBarsPadding()
+                .padding(bottom = 18.dp),
+        ) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    if (mode == PeriodMode.MONTH) "选择月份" else "选择年份",
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Spacer(Modifier.weight(1f))
+                TextButton(
+                    onClick = {
+                        dismiss {
+                            if (mode == PeriodMode.MONTH) onSelectMonth(now) else onSelectYear(now.year)
+                        }
+                    },
+                ) { Text(if (mode == PeriodMode.MONTH) "回到本月" else "回到今年") }
+            }
+
+            if (mode == PeriodMode.MONTH) {
+                val pageCount = PICKER_YEAR_MAX - PICKER_YEAR_MIN + 1
+                val pager = rememberPagerState(
+                    initialPage = (current.year - PICKER_YEAR_MIN).coerceIn(0, pageCount - 1),
+                ) { pageCount }
+                Text(
+                    "${PICKER_YEAR_MIN + pager.currentPage} 年",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 10.dp),
+                    textAlign = TextAlign.Center,
+                )
+                HorizontalPager(state = pager) { page ->
+                    val year = PICKER_YEAR_MIN + page
+                    Column(Modifier.fillMaxWidth()) {
+                        repeat(3) { row ->
+                            Row(
+                                Modifier.fillMaxWidth().padding(bottom = 10.dp),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                repeat(4) { col ->
+                                    val month = row * 4 + col + 1
+                                    PickerCell(
+                                        label = "$month 月",
+                                        selected = year == current.year && month == current.monthValue,
+                                        highlighted = year == now.year && month == now.monthValue,
+                                        onClick = { dismiss { onSelectMonth(YearMonth.of(year, month)) } },
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                val pageCount = (PICKER_YEAR_MAX - PICKER_YEAR_MIN + 1 + YEARS_PER_PAGE - 1) / YEARS_PER_PAGE
+                val pager = rememberPagerState(
+                    initialPage = ((current.year - PICKER_YEAR_MIN) / YEARS_PER_PAGE).coerceIn(0, pageCount - 1),
+                ) { pageCount }
+                val firstYear = PICKER_YEAR_MIN + pager.currentPage * YEARS_PER_PAGE
+                Text(
+                    "$firstYear – ${firstYear + YEARS_PER_PAGE - 1}",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 10.dp),
+                    textAlign = TextAlign.Center,
+                )
+                HorizontalPager(state = pager) { page ->
+                    Column(Modifier.fillMaxWidth()) {
+                        repeat(3) { row ->
+                            Row(
+                                Modifier.fillMaxWidth().padding(bottom = 10.dp),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                repeat(4) { col ->
+                                    val year = PICKER_YEAR_MIN + page * YEARS_PER_PAGE + row * 4 + col
+                                    if (year > PICKER_YEAR_MAX) {
+                                        Spacer(Modifier.weight(1f).height(46.dp))
+                                    } else {
+                                        PickerCell(
+                                            label = "$year",
+                                            selected = year == current.year,
+                                            highlighted = year == now.year,
+                                            onClick = { dismiss { onSelectYear(year) } },
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Text(
+                "← 左右滑动切换${if (mode == PeriodMode.MONTH) "年份" else "年份段"} →",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                textAlign = TextAlign.Center,
+            )
+        }
+    }
+}
+
+@Composable
+private fun RowScope.PickerCell(label: String, selected: Boolean, highlighted: Boolean, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .weight(1f)
+            .height(46.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(
+                if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer,
+            )
+            .then(
+                if (highlighted && !selected) {
+                    Modifier.border(1.dp, MaterialTheme.accBook.primaryStrong, RoundedCornerShape(12.dp))
+                } else {
+                    Modifier
+                },
+            )
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelLarge,
+            color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+        )
+    }
+}

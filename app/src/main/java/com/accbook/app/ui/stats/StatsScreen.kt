@@ -14,13 +14,17 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
@@ -31,12 +35,17 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.accbook.app.data.LedgerViewModel
 import com.accbook.app.data.db.TransactionRow
 import com.accbook.app.data.db.TxType
-import com.accbook.app.ui.common.MonthHeader
+import com.accbook.app.data.PeriodMode
+import com.accbook.app.ui.common.PeriodPickerSheet
+import com.accbook.app.ui.common.PeriodStepper
+import com.accbook.app.ui.common.PeriodSwitch
 import com.accbook.app.ui.common.SummaryRow
+import com.accbook.app.ui.common.periodScopeLabel
 import com.accbook.app.ui.theme.accBook
 import com.accbook.app.ui.theme.categoryColor
 import com.accbook.app.util.Money
 import java.time.Instant
+import java.time.LocalDate
 import java.time.YearMonth
 import java.time.ZoneId
 
@@ -47,18 +56,26 @@ import java.time.ZoneId
 @Composable
 fun StatsScreen(vm: LedgerViewModel, scrollToTopTick: Int = 0) {
     val month by vm.month.collectAsStateWithLifecycle()
-    val totals by vm.monthTotals.collectAsStateWithLifecycle()
-    val byCategory by vm.expenseByCategory.collectAsStateWithLifecycle()
-    val rows by vm.monthRows.collectAsStateWithLifecycle()
+    val mode by vm.periodMode.collectAsStateWithLifecycle()
+    var showPicker by remember { mutableStateOf(false) }
+    val totals by vm.periodTotals.collectAsStateWithLifecycle()
+    val byCategory by vm.periodCategorySums.collectAsStateWithLifecycle()
+    val rows by vm.periodRows.collectAsStateWithLifecycle()
     val showRefunds by vm.showRefunds.collectAsStateWithLifecycle()
-    val refundTotal by vm.refundIncomeTotal.collectAsStateWithLifecycle()
+    val refundTotal by vm.periodRefundTotal.collectAsStateWithLifecycle()
 
     val expense = totals.firstOrNull { it.type == TxType.EXPENSE }?.totalCents ?: 0L
     val income = totals.firstOrNull { it.type == TxType.INCOME }?.totalCents ?: 0L
 
-    // 日均：当月用"截至今天"，历史月份用整月天数
-    val isCurrentMonth = month == YearMonth.now()
-    val daysElapsed = if (isCurrentMonth) java.time.LocalDate.now().dayOfMonth else month.lengthOfMonth()
+    // 日均：当前周期用"截至今天"，历史周期用满周期天数
+    val now = YearMonth.now()
+    val isCurrentPeriod = if (mode == PeriodMode.MONTH) month == now else month.year == now.year
+    val daysElapsed = when {
+        mode == PeriodMode.MONTH && isCurrentPeriod -> LocalDate.now().dayOfMonth
+        mode == PeriodMode.MONTH -> month.lengthOfMonth()
+        isCurrentPeriod -> LocalDate.now().dayOfYear
+        else -> if (YearMonth.of(month.year, 2).lengthOfMonth() == 29) 366 else 365
+    }
     val dailyAverage = expense / daysElapsed.coerceAtLeast(1)
     val top = byCategory.firstOrNull()
     val topShare = if (top != null && expense > 0) (top.totalCents * 100 / expense) else 0L
@@ -73,7 +90,20 @@ fun StatsScreen(vm: LedgerViewModel, scrollToTopTick: Int = 0) {
             .fillMaxSize()
             .verticalScroll(pageScroll),
     ) {
-        MonthHeader(month = month, onPrev = vm::prevMonth, onNext = vm::nextMonth)
+        Row(
+            Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            PeriodStepper(
+                yearMonth = month,
+                mode = mode,
+                onPrev = { vm.prevPeriod() },
+                onNext = { vm.nextPeriod() },
+                onOpenPicker = { showPicker = true },
+            )
+            Spacer(Modifier.weight(1f))
+            PeriodSwitch(mode = mode, onChange = { vm.setPeriodMode(it) })
+        }
         SummaryRow(
             incomeCents = income,
             expenseCents = expense,
@@ -85,13 +115,13 @@ fun StatsScreen(vm: LedgerViewModel, scrollToTopTick: Int = 0) {
         Column(Modifier.fillMaxWidth().padding(16.dp)) {
             if (expense == 0L) {
                 Text(
-                    "本月暂无支出记录",
+                    "${periodScopeLabel(mode)}暂无支出记录",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             } else {
                 Text(
-                    "本月支出 ${Money.formatYuanGrouped(expense)} · 日均 ${Money.formatYuanGrouped(dailyAverage)}",
+                    "${periodScopeLabel(mode)}支出 ${Money.formatYuanGrouped(expense)} · 日均 ${Money.formatYuanGrouped(dailyAverage)}",
                     style = MaterialTheme.typography.titleMedium,
                 )
                 Spacer(Modifier.height(4.dp))
@@ -104,8 +134,13 @@ fun StatsScreen(vm: LedgerViewModel, scrollToTopTick: Int = 0) {
         }
 
         // 第二层级：每日支出趋势（自绘）
-        SectionLabel("每日支出")
-        DailyExpenseChart(rows = rows, month = month, modifier = Modifier.padding(horizontal = 16.dp))
+        SectionLabel(if (mode == PeriodMode.MONTH) "每日支出" else "月度支出")
+        ExpenseChart(
+            rows = rows,
+            month = month,
+            mode = mode,
+            modifier = Modifier.padding(horizontal = 16.dp),
+        )
 
         // 第三层级：分类细节
         SectionLabel("分类占比")
@@ -155,6 +190,16 @@ fun StatsScreen(vm: LedgerViewModel, scrollToTopTick: Int = 0) {
         }
         Spacer(Modifier.height(24.dp))
     }
+
+    if (showPicker) {
+        PeriodPickerSheet(
+            mode = mode,
+            current = month,
+            onSelectMonth = { vm.setMonth(it) },
+            onSelectYear = { vm.setMonth(YearMonth.of(it, month.monthValue)) },
+            onDismiss = { showPicker = false },
+        )
+    }
 }
 
 @Composable
@@ -167,17 +212,31 @@ private fun SectionLabel(text: String) {
     )
 }
 
-/** 每日支出柱状图：零花销日画发丝线刻度，保持节奏感；主色柱 = 有支出 */
+/** 支出柱状图：月模式按天、年模式按月；零花销的画发丝线刻度，保持节奏感 */
 @Composable
-private fun DailyExpenseChart(rows: List<TransactionRow>, month: YearMonth, modifier: Modifier = Modifier) {
+private fun ExpenseChart(
+    rows: List<TransactionRow>,
+    month: YearMonth,
+    mode: PeriodMode,
+    modifier: Modifier = Modifier,
+) {
     val ab = MaterialTheme.accBook
     val barColor = MaterialTheme.colorScheme.primary
-    val daily = remember(rows, month) {
-        FloatArray(month.lengthOfMonth()).also { arr ->
-            rows.filter { it.type == TxType.EXPENSE }.forEach { r ->
-                val d = Instant.ofEpochMilli(r.timestamp).atZone(ZoneId.systemDefault()).toLocalDate()
-                if (d.year == month.year && d.month == month.month) {
-                    arr[d.dayOfMonth - 1] += r.amountCents / 100f
+    val daily = remember(rows, month, mode) {
+        if (mode == PeriodMode.MONTH) {
+            FloatArray(month.lengthOfMonth()).also { arr ->
+                rows.filter { it.type == TxType.EXPENSE }.forEach { r ->
+                    val d = Instant.ofEpochMilli(r.timestamp).atZone(ZoneId.systemDefault()).toLocalDate()
+                    if (d.year == month.year && d.month == month.month) {
+                        arr[d.dayOfMonth - 1] += r.amountCents / 100f
+                    }
+                }
+            }
+        } else {
+            FloatArray(12).also { arr ->
+                rows.filter { it.type == TxType.EXPENSE }.forEach { r ->
+                    val d = Instant.ofEpochMilli(r.timestamp).atZone(ZoneId.systemDefault()).toLocalDate()
+                    if (d.year == month.year) arr[d.monthValue - 1] += r.amountCents / 100f
                 }
             }
         }

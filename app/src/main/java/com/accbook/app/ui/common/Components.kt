@@ -54,9 +54,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -71,23 +76,6 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
-
-/** 顶部月份切换条（流水/统计共用，切换同一状态）；trailing 为右上角附加操作入口 */
-@Composable
-fun MonthHeader(
-    month: java.time.YearMonth,
-    onPrev: () -> Unit,
-    onNext: () -> Unit,
-    trailing: (@Composable () -> Unit)? = null,
-) {
-    Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        IconButton(onClick = onPrev) { Icon(Icons.Filled.KeyboardArrowLeft, contentDescription = "上一月") }
-        Text("${month.year}年${month.monthValue}月", style = MaterialTheme.typography.titleMedium)
-        IconButton(onClick = onNext) { Icon(Icons.Filled.KeyboardArrowRight, contentDescription = "下一月") }
-        androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
-        trailing?.invoke()
-    }
-}
 
 /** 收入/支出/结余汇总行；cancelledCents 非空时额外显示"已取消收支"列（退款到账合计） */
 @Composable
@@ -329,4 +317,39 @@ fun QuickAddPill(onClick: () -> Unit, modifier: Modifier = Modifier) {
             color = MaterialTheme.colorScheme.onPrimary,
         )
     }
+}
+
+/**
+ * 单行金额文本：超出可用宽度时按比例缩小字号（下限 0.55 倍），
+ * 保证长数字不与圆环/卡片边界重叠；配合 K/M/B 紧凑格式，通常无需缩放。
+ */
+@Composable
+fun AutoScaledText(
+    text: String,
+    style: TextStyle,
+    color: Color,
+    maxWidth: Dp,
+    modifier: Modifier = Modifier,
+) {
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    val maxPx = with(density) { maxWidth.toPx() }
+    val fitted = remember(text, style, maxPx) {
+        val measured = measurer.measure(text, style, maxLines = 1, softWrap = false)
+        val width = measured.size.width.toFloat()
+        if (maxPx > 0f && width > maxPx) {
+            style.copy(fontSize = style.fontSize * (maxPx / width).coerceAtLeast(0.55f))
+        } else {
+            style
+        }
+    }
+    Text(
+        text = text,
+        style = fitted,
+        color = color,
+        maxLines = 1,
+        softWrap = false,
+        overflow = TextOverflow.Ellipsis,
+        modifier = modifier,
+    )
 }
