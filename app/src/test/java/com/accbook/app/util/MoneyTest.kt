@@ -54,15 +54,34 @@ class MoneyTest {
     }
 
     @Test
-    fun `compact carries to K M B above 4 integer digits`() {
+    fun `compact carries unit only when digits before decimal point exceed 4`() {
+        // 小数点前 4 位（含）不升档
+        assertEquals("¥1,234.12", Money.formatYuanCompact(123412))
+        assertEquals("¥9,999.99", Money.formatYuanCompact(999999))
+        assertEquals("¥2,884", Money.formatYuanCompact(288400))
+        assertEquals("¥0.05", Money.formatYuanCompact(5))
         // 32,312.32 → 32.31K（用户示例）
         assertEquals("¥32.31K", Money.formatYuanCompact(3_231_232))
         // 10,000 整 → 去尾零
         assertEquals("¥10K", Money.formatYuanCompact(1_000_000))
         assertEquals("¥12.5K", Money.formatYuanCompact(1_250_000))
-        assertEquals("¥1.23M", Money.formatYuanCompact(123_456_789))
+        // K 档显示值仍在 4 位以内（1000K / 1234.57K）时不进 M
+        assertEquals("¥1000K", Money.formatYuanCompact(100_000_000))
+        assertEquals("¥1234.57K", Money.formatYuanCompact(123_456_789))
+        // 进位到下一档：K 显示值超过 4 位才用 M
+        assertEquals("¥10M", Money.formatYuanCompact(1_000_000_000))
+        assertEquals("¥12.35M", Money.formatYuanCompact(1_234_567_890))
+        // M 显示值超过 4 位才用 B
         assertEquals("¥12.35B", Money.formatYuanCompact(1_234_567_890_100))
         // 负数保留符号
         assertEquals("-¥32.31K", Money.formatYuanCompact(-3_231_232))
+        assertEquals("-¥12.35M", Money.formatYuanCompact(-1_234_567_890))
+    }
+
+    @Test
+    fun `compact rounds up at unit boundary keeping 4 digits`() {
+        // 9,999,999.99 → K 档四舍五入后为 10000（5 位），再进一档
+        assertEquals("¥10M", Money.formatYuanCompact(999_999_999))
+        assertEquals("¥9999.99K", Money.formatYuanCompact(999_999_000))
     }
 }

@@ -53,6 +53,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -89,7 +90,8 @@ import kotlinx.coroutines.launch
  *      数量自适应网格缩放以容纳全部，不足一行的行内居中；
  *   3. 已花费与总存款 —— 无圆环，中央大字。
  *
- * 金额超过 4 位整数自动进位 K/M/B；环内金额按可用宽度自动缩放，不与环重叠。
+ * 金额小数点前超过 4 位时逐档进位 K/M/B；环内金额按可用宽度自动缩放，不与环重叠。
+ * 翻转跟手：滑动 30% 宽度转满 90°，也可快速甩动触发；翻转途中相机拉近 + 缩小 + 变暗营造立体感。
  * 超支/临界的红色数字带心跳与轻微摇晃警示，强度随剩余比例加深（设上限），
  * 系统"减少动画"时全部降级（含切换改为瞬时）。
  */
@@ -97,6 +99,12 @@ private const val MODE_COUNT = 3
 
 /** 滑动翻页阈值：跟手旋转超过该角度视为一次翻页，否则回弹 */
 private const val DRAG_FLIP_THRESHOLD_DEG = 45f
+
+/** 跟手灵敏度：横向划过卡片宽度的该比例即转满 90°（越小越跟手） */
+private const val DRAG_FULL_TURN_WIDTH_FRACTION = 0.3f
+
+/** 快速甩动阈值：速度达到每秒划过卡片宽度的该比例即翻页，不必达到角度阈值 */
+private const val FLICK_WIDTHS_PER_SECOND = 1.1f
 
 /** 分类环数据：分类预算 + 当月支出 → 剩余、额度档位；isOther = "其他"聚合环 */
 internal data class CategoryRingData(
@@ -167,21 +175,20 @@ fun HomeScreen(vm: LedgerViewModel, onOpenPending: () -> Unit) {
     val latestFlipTo by rememberUpdatedState(flipTo)
     val advance: () -> Unit = { latestFlipTo(mode + 1) }
 
-    // 滑动翻转：跟手旋转，越过阈值完成翻转换页，未越过回弹；方向与跟手方向一致
-    val onDragEnd: (Float) -> Unit = { rotation ->
+    // 滑动翻转：跟手旋转，越过角度阈值或快速甩动即翻页（快甩时角度可能还很小），
+    // 未触发则回弹；翻页方向始终跟随手指，与跟手旋转同向
+    val onDragEnd: (rotation: Float, velocityX: Float, widthPx: Float) -> Unit = { rotation, velocityX, widthPx ->
         if (dragging) {
             scope.launch {
                 flip.snapTo(rotation)
                 dragging = false
+                val flicked = abs(velocityX) >= widthPx * FLICK_WIDTHS_PER_SECOND
+                val turned = abs(rotation) >= DRAG_FLIP_THRESHOLD_DEG
+                val next = if (flicked && !turned) velocityX < 0f else rotation < 0f
                 if (reducedMotion) {
-                    if (abs(rotation) >= DRAG_FLIP_THRESHOLD_DEG) {
-                        mode = wrap(mode + if (rotation < 0f) 1 else -1)
-                    }
+                    if (flicked || turned) mode = wrap(mode + if (next) 1 else -1)
                     flip.snapTo(0f)
-                    return@launch
-                }
-                if (abs(rotation) >= DRAG_FLIP_THRESHOLD_DEG) {
-                    val next = rotation < 0f
+                } else if (flicked || turned) {
                     val sign = if (next) -1f else 1f
                     flip.animateTo(90f * sign, tween(130, easing = FastOutSlowInEasing))
                     mode = wrap(mode + if (next) 1 else -1)
@@ -216,21 +223,39 @@ fun HomeScreen(vm: LedgerViewModel, onOpenPending: () -> Unit) {
                 .fillMaxWidth()
                 .graphicsLayer {
                     // 旋转角度只在 draw 阶段读取，不触发重组
-                    rotationY = if (dragging) dragRotation else flip.value
-                    cameraDistance = 14f * density
+                    val rot = if (dragging) dragRotation else flip.value
+                    rotationY = rot
+                    // 立体感：越接近侧立，相机越近（透视越强）+ 轻微后退缩小 + 变暗，
+                    // 读起来像一张卡片翻过去，而不是平面瞬间换内容
+                    val p = (abs(rot) / 90f).coerceIn(0f, 1f)
+                    cameraDistance = (14f - 8f * p) * density
+                    val s = 1f - 0.06f * p
+                    scaleX = s
+                    scaleY = s
+                    alpha = 1f - 0.2f * p
                 }
                 .pointerInput(Unit) { detectTapGestures { advance() } }
                 .pointerInput(Unit) {
+                    val tracker = VelocityTracker()
                     detectHorizontalDragGestures(
-                        onDragStart = { if (!flip.isRunning) { dragging = true; dragRotation = 0f } },
+                        onDragStart = {
+                            if (!flip.isRunning) {
+                                dragging = true
+                                dragRotation = 0f
+                                tracker.resetTracking()
+                            }
+                        },
                         onHorizontalDrag = { change, dragAmount ->
                             if (dragging) {
                                 change.consume()
-                                val k = 90f / (size.width * 0.45f)
+                                tracker.addPosition(change.uptimeMillis, change.position)
+                                val k = 90f / (size.width * DRAG_FULL_TURN_WIDTH_FRACTION)
                                 dragRotation = (dragRotation + dragAmount * k).coerceIn(-90f, 90f)
                             }
                         },
-                        onDragEnd = { latestOnDragEnd(dragRotation) },
+                        onDragEnd = {
+                            latestOnDragEnd(dragRotation, tracker.calculateVelocity().x, size.width.toFloat())
+                        },
                         onDragCancel = {
                             if (dragging) {
                                 dragging = false
@@ -437,7 +462,6 @@ private fun CategoryRing(data: CategoryRingData, ringSize: Dp, stroke: Dp, track
     val severity = warningSeverity(data.ratio)
     val alarming = data.tone == Budget.Tone.LOW
     val color by animateColorAsState(toneColor(data.tone, severity), tween(420), label = "categoryRing")
-    val percent = (data.ratio * 100).roundToInt().coerceIn(0, 100)
     val textMaxWidth = ringSize - stroke * 2 - 14.dp
 
     Box(Modifier.size(ringSize), contentAlignment = Alignment.Center) {
@@ -477,7 +501,6 @@ private fun CategoryRing(data: CategoryRingData, ringSize: Dp, stroke: Dp, track
                     color = color,
                     maxWidth = textMaxWidth,
                 )
-                Text("$percent%", style = MaterialTheme.typography.labelSmall, color = color)
             }
         }
     }
