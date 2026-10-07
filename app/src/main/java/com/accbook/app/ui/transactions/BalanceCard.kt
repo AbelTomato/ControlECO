@@ -37,12 +37,14 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import com.accbook.app.data.CardTransform
 import com.accbook.app.data.PeriodMode
 import com.accbook.app.ui.common.AutoScaledText
 import com.accbook.app.ui.theme.CardTones
@@ -73,6 +75,7 @@ fun BalanceCard(
     incomeCents: Long,
     expenseCents: Long,
     imagePath: String?,
+    transform: CardTransform = CardTransform.DEFAULT,
     onModeChange: (PeriodMode) -> Unit,
     onOpenImageSettings: () -> Unit,
     modifier: Modifier = Modifier,
@@ -126,18 +129,24 @@ fun BalanceCard(
         Canvas(Modifier.fillMaxSize()) {
             val bmp = loaded?.bitmap
             if (bmp != null) {
-                // 居中裁剪铺满
-                val scale = max(size.width / bmp.width, size.height / bmp.height)
+                // 居中裁剪铺满 + 用户调整的位移/缩放/旋转
+                val t = transform.normalized()
+                val scale = max(size.width / bmp.width, size.height / bmp.height) * t.scale
                 val w = bmp.width * scale
                 val h = bmp.height * scale
-                drawImage(
-                    image = bmp,
-                    srcOffset = IntOffset.Zero,
-                    srcSize = IntSize(bmp.width, bmp.height),
-                    dstOffset = IntOffset(((size.width - w) / 2f).toInt(), ((size.height - h) / 2f).toInt()),
-                    dstSize = IntSize(w.toInt(), h.toInt()),
-                    filterQuality = FilterQuality.Medium,
-                )
+                withTransform({
+                    translate(t.offsetX * size.width, t.offsetY * size.height)
+                    rotate(t.rotation, pivot = center)
+                }) {
+                    drawImage(
+                        image = bmp,
+                        srcOffset = IntOffset.Zero,
+                        srcSize = IntSize(bmp.width, bmp.height),
+                        dstOffset = IntOffset(((size.width - w) / 2f).toInt(), ((size.height - h) / 2f).toInt()),
+                        dstSize = IntSize(w.toInt(), h.toInt()),
+                        filterQuality = FilterQuality.Medium,
+                    )
+                }
             } else {
                 // 默认几何背景：浅蓝竖向渐变 + 右上同心圆 + 左下圆环 + 一道斜高光
                 drawRect(Brush.verticalGradient(listOf(base, deep)))
@@ -301,8 +310,13 @@ fun importCardImage(context: Context, uri: Uri): String? = runCatching {
     val opts = BitmapFactory.Options().apply { inSampleSize = sampleSize(bounds.outWidth, bounds.outHeight) }
     val bmp = context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
         ?: return@runCatching null
-    val file = File(context.filesDir, "card_bg.jpg")
+    // 文件名带时间戳：换图时路径必然变化，UI 才会重新解码
+    // （之前固定叫 card_bg.jpg，第二次选图路径没变 → 卡片不刷新）
+    val file = File(context.filesDir, "card_bg_${System.currentTimeMillis()}.jpg")
     FileOutputStream(file).use { out -> bmp.compress(Bitmap.CompressFormat.JPEG, 88, out) }
     bmp.recycle()
+    // 只保留最新一张，清掉旧文件
+    context.filesDir.listFiles { f -> f.name.startsWith("card_bg") && f.name != file.name }
+        ?.forEach { it.delete() }
     file.absolutePath
 }.getOrNull()

@@ -107,18 +107,20 @@ private fun DrawScope.drawGlyph(glyph: Glyph, color: Color) {
             )
         }
         Glyph.RED_PACKET -> {
-            // 红包：上方倒三角 + 下方长方形（顶部扣去一个倒三角缺口）
+            // 红包：上方倒三角（最长边 = 长方形底边宽）+ 下方长方形（顶边向下凹成倒三角缺口），
+            // 三角与长方形之间只留很窄的缝
+            val halfWidth = 0.34f
             val flap = Path().apply {
-                moveTo(s * 0.10f, s * 0.04f)
-                lineTo(s * 0.90f, s * 0.04f)
+                moveTo(s * (0.50f - halfWidth), s * 0.10f)
+                lineTo(s * (0.50f + halfWidth), s * 0.10f)
                 lineTo(s * 0.50f, s * 0.44f)
                 close()
             }
             drawPath(flap, color)
             val body = Path().apply {
-                moveTo(s * 0.16f, s * 0.36f)
-                lineTo(s * 0.50f, s * 0.66f)
-                lineTo(s * 0.84f, s * 0.36f)
+                moveTo(s * 0.16f, s * 0.47f)
+                lineTo(s * 0.50f, s * 0.70f)
+                lineTo(s * 0.84f, s * 0.47f)
                 lineTo(s * 0.84f, s * 0.94f)
                 lineTo(s * 0.16f, s * 0.94f)
                 close()

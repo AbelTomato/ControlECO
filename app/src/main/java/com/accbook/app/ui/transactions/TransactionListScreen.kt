@@ -68,6 +68,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.accbook.app.data.CardTransform
 import com.accbook.app.data.LedgerViewModel
 import com.accbook.app.data.db.RefundMark
 import com.accbook.app.data.db.TransactionRow
@@ -126,6 +127,7 @@ fun TransactionListScreen(
     val showRefunds by vm.showRefunds.collectAsStateWithLifecycle()
     val refundTotal by vm.periodRefundTotal.collectAsStateWithLifecycle()
     val cardImageUri by vm.cardImageUri.collectAsStateWithLifecycle()
+    val cardTransform by vm.cardTransform.collectAsStateWithLifecycle()
     val ab = MaterialTheme.accBook
 
     val expense = totals.firstOrNull { it.type == TxType.EXPENSE }?.totalCents ?: 0L
@@ -135,6 +137,7 @@ fun TransactionListScreen(
     var showAllDays by remember { mutableStateOf(false) }
     var showPicker by remember { mutableStateOf(false) }
     var showImageDialog by remember { mutableStateOf(false) }
+    var showImageEditor by remember { mutableStateOf(false) }
     var selecting by remember { mutableStateOf(false) }
     var selected by remember { mutableStateOf(emptySet<Long>()) }
     var confirm by remember { mutableStateOf<DeleteConfirm?>(null) }
@@ -150,6 +153,8 @@ fun TransactionListScreen(
                 val saved = withContext(Dispatchers.IO) { importCardImage(context, uri) }
                 if (saved != null) {
                     vm.setCardImage(saved)
+                    vm.setCardTransform(CardTransform.DEFAULT)
+                    showImageEditor = true
                 } else {
                     Toast.makeText(context, "这张图片读取失败，换一张试试", Toast.LENGTH_SHORT).show()
                 }
@@ -230,6 +235,7 @@ fun TransactionListScreen(
             incomeCents = income,
             expenseCents = expense,
             imagePath = cardImageUri,
+            transform = cardTransform,
             onModeChange = { vm.setPeriodMode(it) },
             onOpenImageSettings = { showImageDialog = true },
             modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp),
@@ -429,6 +435,9 @@ fun TransactionListScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     if (hasImage) {
+                        TextButton(onClick = { showImageDialog = false; showImageEditor = true }) {
+                            Text("调整位置 / 缩放 / 旋转")
+                        }
                         TextButton(onClick = { vm.setCardImage(null); showImageDialog = false }) {
                             Text("恢复默认背景")
                         }
@@ -445,6 +454,29 @@ fun TransactionListScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showImageDialog = false }) { Text("取消") }
+            },
+        )
+    }
+
+    if (showImageEditor && !cardImageUri.isNullOrBlank()) {
+        CardImageEditorDialog(
+            initial = cardTransform,
+            onApply = {
+                vm.setCardTransform(it)
+                showImageEditor = false
+            },
+            onDismiss = { showImageEditor = false },
+            preview = { draft ->
+                BalanceCard(
+                    mode = mode,
+                    balanceCents = income - expense,
+                    incomeCents = income,
+                    expenseCents = expense,
+                    imagePath = cardImageUri,
+                    transform = draft,
+                    onModeChange = {},
+                    onOpenImageSettings = {},
+                )
             },
         )
     }

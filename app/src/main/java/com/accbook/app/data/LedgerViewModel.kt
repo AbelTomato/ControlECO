@@ -92,6 +92,18 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
         AppLog.i("settings", "cardImage=${uri ?: "default"}")
     }
 
+    /** 背景图的位移/缩放/旋转（选图后可在卡片上直接调） */
+    private val _cardTransform = MutableStateFlow(
+        CardTransform.parse(prefs.getString(KEY_CARD_TRANSFORM, null)),
+    )
+    val cardTransform: StateFlow<CardTransform> = _cardTransform
+
+    fun setCardTransform(transform: CardTransform) {
+        val t = transform.normalized()
+        prefs.edit().putString(KEY_CARD_TRANSFORM, t.serialize()).apply()
+        _cardTransform.value = t
+    }
+
     private val _monthlyBudget = MutableStateFlow(prefs.getLong(KEY_MONTHLY_BUDGET, 0L))
     val monthlyBudgetCents: StateFlow<Long> = _monthlyBudget
 
@@ -720,6 +732,7 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
         const val PREFS_NAME = "settings"
         const val KEY_SHOW_REFUNDS = "show_refunds"
         const val KEY_CARD_IMAGE = "card_image_uri"
+        const val KEY_CARD_TRANSFORM = "card_image_transform"
         const val KEY_MONTHLY_BUDGET = "monthly_budget_cents"
         const val KEY_CAT_BUDGET_PREFIX = "category_budget_"
     }
