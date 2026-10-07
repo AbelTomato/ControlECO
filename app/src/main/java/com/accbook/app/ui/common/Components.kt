@@ -303,7 +303,7 @@ fun QuickAddPill(onClick: () -> Unit, modifier: Modifier = Modifier) {
         Icon(Icons.Filled.Add, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary)
         androidx.compose.foundation.layout.Spacer(Modifier.width(6.dp))
         Text(
-            "记一笔",
+            "记账",
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onPrimary,
         )

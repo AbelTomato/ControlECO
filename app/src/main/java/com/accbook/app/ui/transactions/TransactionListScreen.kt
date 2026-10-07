@@ -203,7 +203,7 @@ fun TransactionListScreen(vm: LedgerViewModel, onEditTransaction: (Long) -> Unit
         if (rows.isEmpty()) {
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 Text(
-                    "本月暂无记录\n点右下角 + 记一笔，或在“设置”中导入账单",
+                    "本月暂无记录\n点右下角「记账」记一笔，或在“设置”中导入账单",
                     textAlign = TextAlign.Center,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
