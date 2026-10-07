@@ -237,15 +237,35 @@ fun BalanceCard(
 /** 卡面图片 + 其整体亮度（0 黑 → 1 白） */
 private data class CardImage(val bitmap: ImageBitmap, val luminance: Float)
 
+/**
+ * 只保留"最近一张"的卡面位图缓存：切标签页/进出页面时组件会重建，
+ * 没有缓存就会先画默认几何背景、再等 IO 解码完才显示图片（闪一下）。
+ * 有了它，重进页面第一帧就是图片；换图时路径变化 → 缓存失效 → 重新解码。
+ */
+private object CardImageCache {
+    private var path: String? = null
+    private var image: CardImage? = null
+
+    fun get(key: String?): CardImage? = if (key != null && key == path) image else null
+
+    fun put(key: String, value: CardImage?) {
+        path = key
+        image = value
+    }
+}
+
 @Composable
 private fun rememberCardImage(path: String?): State<CardImage?> {
     val context = LocalContext.current
-    return produceState<CardImage?>(initialValue = null, key1 = path) {
-        value = if (path.isNullOrBlank()) {
-            null
-        } else {
-            withContext(Dispatchers.IO) { loadCardImage(context, path) }
+    return produceState<CardImage?>(initialValue = CardImageCache.get(path), key1 = path) {
+        if (value == null) {
+            value = if (path.isNullOrBlank()) {
+                null
+            } else {
+                withContext(Dispatchers.IO) { loadCardImage(context, path) }
+            }
         }
+        if (!path.isNullOrBlank()) CardImageCache.put(path, value)
     }
 }
 
