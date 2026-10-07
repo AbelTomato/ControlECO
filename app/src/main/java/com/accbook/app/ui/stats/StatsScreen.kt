@@ -18,6 +18,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -44,13 +45,13 @@ import java.time.ZoneId
  * 不引入图表库：趋势为自绘 Canvas 柱状图，分类为条形占比。
  */
 @Composable
-fun StatsScreen(vm: LedgerViewModel) {
+fun StatsScreen(vm: LedgerViewModel, scrollToTopTick: Int = 0) {
     val month by vm.month.collectAsStateWithLifecycle()
-    val totals by vm.monthTotals.collectAsStateWithLifecycle(initialValue = emptyList())
-    val byCategory by vm.expenseByCategory.collectAsStateWithLifecycle(initialValue = emptyList())
-    val rows by vm.monthRows.collectAsStateWithLifecycle(initialValue = emptyList())
+    val totals by vm.monthTotals.collectAsStateWithLifecycle()
+    val byCategory by vm.expenseByCategory.collectAsStateWithLifecycle()
+    val rows by vm.monthRows.collectAsStateWithLifecycle()
     val showRefunds by vm.showRefunds.collectAsStateWithLifecycle()
-    val refundTotal by vm.refundIncomeTotal.collectAsStateWithLifecycle(initialValue = 0L)
+    val refundTotal by vm.refundIncomeTotal.collectAsStateWithLifecycle()
 
     val expense = totals.firstOrNull { it.type == TxType.EXPENSE }?.totalCents ?: 0L
     val income = totals.firstOrNull { it.type == TxType.INCOME }?.totalCents ?: 0L
@@ -62,10 +63,15 @@ fun StatsScreen(vm: LedgerViewModel) {
     val top = byCategory.firstOrNull()
     val topShare = if (top != null && expense > 0) (top.totalCents * 100 / expense) else 0L
 
+    val pageScroll = rememberScrollState()
+    // 再次点击底部「统计」标签：回到顶部
+    LaunchedEffect(scrollToTopTick) {
+        if (scrollToTopTick > 0) pageScroll.animateScrollTo(0)
+    }
     Column(
         Modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState()),
+            .verticalScroll(pageScroll),
     ) {
         MonthHeader(month = month, onPrev = vm::prevMonth, onNext = vm::nextMonth)
         SummaryRow(

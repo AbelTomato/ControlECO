@@ -139,6 +139,8 @@ private fun MainScaffold(
     onOpenKeepAlive: () -> Unit,
 ) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
+    // 再次点击当前标签 → 计数 +1，由页面自己"回到顶部"（列表/滚动页通用）
+    var reenterTick by rememberSaveable { mutableIntStateOf(0) }
     Scaffold(
         bottomBar = {
             // 白底导航 + 顶部发丝线（页面底色是浅蓝，白底栏与内容自然分层）
@@ -154,7 +156,9 @@ private fun MainScaffold(
                     tabs.forEach { (label, icon, index) ->
                         NavigationBarItem(
                             selected = tab == index,
-                            onClick = { tab = index },
+                            onClick = {
+                                if (tab == index) reenterTick++ else tab = index
+                            },
                             icon = { Icon(icon, contentDescription = label) },
                             label = { Text(label) },
                             colors = NavigationBarItemDefaults.colors(
@@ -179,8 +183,9 @@ private fun MainScaffold(
                     vm = vm,
                     onEditTransaction = onEditTransaction,
                     onOpenPending = onOpenPending,
+                    scrollToTopTick = reenterTick,
                 )
-                2 -> StatsScreen(vm = vm)
+                2 -> StatsScreen(vm = vm, scrollToTopTick = reenterTick)
                 3 -> ProfileScreen(
                     vm = vm,
                     onOpenAccounts = onOpenAccounts,

@@ -129,29 +129,31 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
         return start to end
     }
 
+    // 账单/统计共用的当月数据：stateIn 缓存上一次结果 —— 切标签页回来先显示缓存、
+    // 后台再刷新，不再"每次进页面从空闪到满"；没有订阅者 5 秒后自动停掉 Room 观察。
     @OptIn(ExperimentalCoroutinesApi::class)
-    val monthRows: Flow<List<TransactionRow>> =
+    val monthRows: StateFlow<List<TransactionRow>> =
         combine(_month, _showRefunds) { m, r -> m to r }.flatMapLatest { (m, r) ->
             val (s, e) = range(m); txDao.observeRows(s, e, r)
-        }
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    val monthTotals: Flow<List<TypeTotalRow>> =
+    val monthTotals: StateFlow<List<TypeTotalRow>> =
         combine(_month, _showRefunds) { m, r -> m to r }.flatMapLatest { (m, r) ->
             val (s, e) = range(m); txDao.observeTypeTotals(s, e, r)
-        }
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    val expenseByCategory: Flow<List<CategorySumRow>> =
+    val expenseByCategory: StateFlow<List<CategorySumRow>> =
         combine(_month, _showRefunds) { m, r -> m to r }.flatMapLatest { (m, r) ->
             val (s, e) = range(m); txDao.observeCategorySums(s, e, TxType.EXPENSE, r)
-        }
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /** 退款到账金额合计（"已取消收支"），是否展示由 UI 根据开关决定 */
     @OptIn(ExperimentalCoroutinesApi::class)
-    val refundIncomeTotal: Flow<Long> = _month.flatMapLatest { m ->
+    val refundIncomeTotal: StateFlow<Long> = _month.flatMapLatest { m ->
         val (s, e) = range(m); txDao.observeRefundIncomeTotal(s, e)
-    }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
 
     val accounts: StateFlow<List<AccountEntity>> =
         accountDao.observeAll().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
