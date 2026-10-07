@@ -39,13 +39,7 @@ data class AccBookColors(
     val hairline: Color,
     /** 分类徽标调色板：按分类名稳定取色，避免 emoji/图标依赖 */
     val categoryPalette: List<Color>,
-    /** 人民币面额色（纸币可视化）：索引对齐 Denomination.ordinal（1/5/10/20/50/100） */
-    val noteColors: List<NoteColor>,
 )
-
-/** 单一面额的纸币配色：base=票面底色，deep=描边/印章/面额文字，face=内面版面 */
-@Immutable
-data class NoteColor(val base: Color, val deep: Color, val face: Color)
 
 private fun lightAccBookColors() = AccBookColors(
     income = Color(0xFF3D7A50),
@@ -63,15 +57,6 @@ private fun lightAccBookColors() = AccBookColors(
         Color(0xFF99704F), // 驼色
         Color(0xFF7A6B8A), // 藕紫
         Color(0xFF5E7D8A), // 钢青
-    ),
-    // 人民币 2019 版面额色低饱和化：1 橄榄 / 5 紫 / 10 蓝 / 20 棕 / 50 绿 / 100 红
-    noteColors = listOf(
-        NoteColor(Color(0xFF918B54), Color(0xFF635F38), Color(0xFFB0AA78)),
-        NoteColor(Color(0xFF8A6E96), Color(0xFF5E4A6A), Color(0xFFA691B1)),
-        NoteColor(Color(0xFF5F7E9C), Color(0xFF3F5872), Color(0xFF849DB6)),
-        NoteColor(Color(0xFF9A7350), Color(0xFF6C4E35), Color(0xFFB5916F)),
-        NoteColor(Color(0xFF5E8A6E), Color(0xFF3F634C), Color(0xFF85AB90)),
-        NoteColor(Color(0xFFB5544C), Color(0xFF83362F), Color(0xFFC97E73)),
     ),
 )
 
@@ -91,15 +76,6 @@ private fun darkAccBookColors() = AccBookColors(
         Color(0xFFD4B08F),
         Color(0xFFC0B0D4),
         Color(0xFF9FC2D4),
-    ),
-    // 暗色下纸币整体压暗降饱和（票面仍为浅底深字，保持"实物"质感）
-    noteColors = listOf(
-        NoteColor(Color(0xFF7F7A4A), Color(0xFF514E2E), Color(0xFF948E5E)),
-        NoteColor(Color(0xFF746081), Color(0xFF4A3C55), Color(0xFF8A7699)),
-        NoteColor(Color(0xFF4F6B87), Color(0xFF33485C), Color(0xFF67819D)),
-        NoteColor(Color(0xFF826140), Color(0xFF57402A), Color(0xFF99795A)),
-        NoteColor(Color(0xFF4F735C), Color(0xFF34503E), Color(0xFF6B9076)),
-        NoteColor(Color(0xFF9A463F), Color(0xFF6B2C27), Color(0xFFB26058)),
     ),
 )
 
