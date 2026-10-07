@@ -20,7 +20,7 @@ import androidx.compose.ui.unit.sp
  * 阶段四设计 token 体系。
  *
  * 设计基调：现代、极简、成熟的移动金融产品——
- * 暖白背景、深墨文字、低饱和蓝主色；金额数字用等宽字形（tnum）保证纵向对齐。
+ * 白色背景 + 低饱和蓝主色（冷色调），深墨蓝灰文字；金额数字用等宽字形（tnum）保证纵向对齐。
  * 语义色（收入/警示/危险）经 [MaterialTheme.accBook] 下发，全项目禁止散落硬编码色。
  */
 
@@ -30,7 +30,10 @@ import androidx.compose.ui.unit.sp
 data class AccBookColors(
     val income: Color,
     val warning: Color,
+    /** 危险/超支红（饱和度高于常规提示色，用于超支状态） */
     val critical: Color,
+    /** 警报红：超支越严重越向此色过渡（心跳警示用，饱和度最高） */
+    val criticalAlert: Color,
     /** 发丝分隔线 */
     val hairline: Color,
     /** 分类徽标调色板：按分类名稳定取色，避免 emoji/图标依赖 */
@@ -40,34 +43,36 @@ data class AccBookColors(
 private fun lightAccBookColors() = AccBookColors(
     income = Color(0xFF3D7A50),
     warning = Color(0xFFB47B10),
-    critical = Color(0xFFA5402C),
-    hairline = Color(0xFFE7E1D3),
+    critical = Color(0xFFC1352B),
+    criticalAlert = Color(0xFFE01F1F),
+    hairline = Color(0xFFE3EAF1),
     categoryPalette = listOf(
-        Color(0xFF8A6D3B), // 金褐
-        Color(0xFF75855A), // 橄榄
-        Color(0xFF5E8578), // 灰青
-        Color(0xFF8A5F6D), // 绛红
-        Color(0xFF667899), // 岩蓝
-        Color(0xFF99704F), // 驼色
-        Color(0xFF7A6B8A), // 藕紫
-        Color(0xFF5E7D8A), // 钢青
+        Color(0xFF5E7C9E), // 蓝
+        Color(0xFF6E8B84), // 青绿灰
+        Color(0xFF7B7BA6), // 蓝紫
+        Color(0xFF9C7B8B), // 灰玫
+        Color(0xFF5F8CA6), // 钢青
+        Color(0xFF78909C), // 石板灰
+        Color(0xFF8A7FA8), // 藕紫
+        Color(0xFF6F9A96), // 灰青
     ),
 )
 
 private fun darkAccBookColors() = AccBookColors(
     income = Color(0xFF8FC79E),
     warning = Color(0xFFE0B35C),
-    critical = Color(0xFFE9886F),
-    hairline = Color(0xFF332E25),
+    critical = Color(0xFFF07C64),
+    criticalAlert = Color(0xFFFF5844),
+    hairline = Color(0xFF2A323B),
     categoryPalette = listOf(
-        Color(0xFFD8BC85),
-        Color(0xFFB4C491),
-        Color(0xFF93C6B8),
-        Color(0xFFD0A0AF),
-        Color(0xFFA9B6D4),
-        Color(0xFFD4B08F),
-        Color(0xFFC0B0D4),
-        Color(0xFF9FC2D4),
+        Color(0xFF9FBAD8),
+        Color(0xFF9CC0B6),
+        Color(0xFFB0AEDC),
+        Color(0xFFD0A8B8),
+        Color(0xFF9CC2D8),
+        Color(0xFFB0C0CC),
+        Color(0xFFC2B4DC),
+        Color(0xFFA8CFC9),
     ),
 )
 
@@ -84,71 +89,71 @@ fun categoryColor(palette: List<Color>, categoryName: String): Color {
     return palette[(h % palette.size).coerceAtLeast(0)]
 }
 
-// ---------- 明暗两套 Material 配色（暖白 / 暖墨，低饱和蓝主色） ----------
+// ---------- 明暗两套 Material 配色（白 + 浅蓝 / 冷墨蓝） ----------
 
 private fun lightScheme() = lightColorScheme(
-    background = Color(0xFFF7F4EE),
-    onBackground = Color(0xFF201C15),
-    surface = Color(0xFFFDFBF6),
-    onSurface = Color(0xFF201C15),
-    surfaceVariant = Color(0xFFEFE9DD),
-    onSurfaceVariant = Color(0xFF6D6656),
-    surfaceContainer = Color(0xFFF1ECE1),
-    surfaceContainerLow = Color(0xFFF6F2E9),
-    surfaceContainerHigh = Color(0xFFECE6DA),
+    background = Color(0xFFFFFFFF),
+    onBackground = Color(0xFF1B2430),
+    surface = Color(0xFFFFFFFF),
+    onSurface = Color(0xFF1B2430),
+    surfaceVariant = Color(0xFFEDF2F8),
+    onSurfaceVariant = Color(0xFF5B6B7C),
+    surfaceContainer = Color(0xFFF3F7FB),
+    surfaceContainerLow = Color(0xFFF8FAFD),
+    surfaceContainerHigh = Color(0xFFE9F0F7),
     primary = Color(0xFF4E6E8E),
     onPrimary = Color(0xFFFFFFFF),
-    primaryContainer = Color(0xFFD6E3F0),
+    primaryContainer = Color(0xFFDCE8F5),
     onPrimaryContainer = Color(0xFF0F2740),
-    secondary = Color(0xFF6B6455),
+    secondary = Color(0xFF5F6B77),
     onSecondary = Color(0xFFFFFFFF),
-    secondaryContainer = Color(0xFFE5DFD0),
-    onSecondaryContainer = Color(0xFF241F13),
-    tertiary = Color(0xFF4E6B57),
+    secondaryContainer = Color(0xFFE3E9F0),
+    onSecondaryContainer = Color(0xFF1E262E),
+    tertiary = Color(0xFF456B63),
     onTertiary = Color(0xFFFFFFFF),
-    tertiaryContainer = Color(0xFFD2E8D8),
-    onTertiaryContainer = Color(0xFF0D2117),
-    error = Color(0xFFA5402C),
+    tertiaryContainer = Color(0xFFD6E8E4),
+    onTertiaryContainer = Color(0xFF0E211D),
+    error = Color(0xFFC1352B),
     onError = Color(0xFFFFFFFF),
-    errorContainer = Color(0xFFFFDAD3),
+    errorContainer = Color(0xFFFFD9D2),
     onErrorContainer = Color(0xFF410001),
-    outline = Color(0xFF98907E),
-    outlineVariant = Color(0xFFE3DCCC),
-    inverseSurface = Color(0xFF35302A),
-    inverseOnSurface = Color(0xFFF6F1E7),
+    outline = Color(0xFF8B97A3),
+    outlineVariant = Color(0xFFE1E8EF),
+    inverseSurface = Color(0xFF2A3139),
+    inverseOnSurface = Color(0xFFF0F4F8),
     inversePrimary = Color(0xFFA5C6E8),
 )
 
 private fun darkScheme() = darkColorScheme(
-    background = Color(0xFF1A1712),
-    onBackground = Color(0xFFEBE5D8),
-    surface = Color(0xFF211D16),
-    onSurface = Color(0xFFEBE5D8),
-    surfaceVariant = Color(0xFF2E2920),
-    onSurfaceVariant = Color(0xFFB0A793),
-    surfaceContainer = Color(0xFF25211A),
-    surfaceContainerLow = Color(0xFF211D16),
-    surfaceContainerHigh = Color(0xFF2F2A21),
+    background = Color(0xFF12161C),
+    onBackground = Color(0xFFE4EAF1),
+    surface = Color(0xFF171C23),
+    onSurface = Color(0xFFE4EAF1),
+    surfaceVariant = Color(0xFF232A33),
+    onSurfaceVariant = Color(0xFFA3AFBC),
+    surfaceContainer = Color(0xFF1C222A),
+    surfaceContainerLow = Color(0xFF171C23),
+    surfaceContainerHigh = Color(0xFF252C36),
     primary = Color(0xFFA5C6E8),
     onPrimary = Color(0xFF12283E),
     primaryContainer = Color(0xFF2C4A69),
     onPrimaryContainer = Color(0xFFD3E5F6),
-    secondary = Color(0xFFB5AC98),
-    onSecondary = Color(0xFF211D14),
-    secondaryContainer = Color(0xFF383225),
-    onSecondaryContainer = Color(0xFFD2C9B5),
-    tertiary = Color(0xFFAFCDB7),
-    onTertiary = Color(0xFF1B3524),
-    tertiaryContainer = Color(0xFF354D3D),
-    onTertiaryContainer = Color(0xFFCCE9D3),
-    error = Color(0xFFE9886F),
+    secondary = Color(0xFFAAB6C2),
+    onSecondary = Color(0xFF1A2029),
+    secondaryContainer = Color(0xFF2A323C),
+    onSecondaryContainer = Color(0xFFD5DEE7),
+    tertiary = Color(0xFFA9CFC7),
+    onTertiary = Color(0xFF14302B),
+    tertiaryContainer = Color(0xFF27453F),
+    onTertiaryContainer = Color(0xFFCDE9E3),
+    error = Color(0xFFF07C64),
     onError = Color(0xFF4A1002),
     errorContainer = Color(0xFF6A2A18),
     onErrorContainer = Color(0xFFFFDAD2),
-    outline = Color(0xFF8B8270),
-    outlineVariant = Color(0xFF3A352B),
-    inverseSurface = Color(0xFFEBE5D8),
-    inverseOnSurface = Color(0xFF35302A),
+    outline = Color(0xFF828E9B),
+    outlineVariant = Color(0xFF333B45),
+    inverseSurface = Color(0xFFE4EAF1),
+    inverseOnSurface = Color(0xFF2A3139),
     inversePrimary = Color(0xFF4E6E8E),
 )
 
