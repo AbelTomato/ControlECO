@@ -46,10 +46,8 @@ object Money {
     fun formatYuanGrouped(cents: Long): String {
         val negative = cents < 0
         val abs = if (negative) -cents else cents
-        val whole = abs / 100
         val frac = abs % 100
-        val grouped = java.text.DecimalFormat("#,##0").format(whole)
-        val body = if (frac == 0L) grouped else "$grouped." + frac.toString().padStart(2, '0')
+        val body = if (frac == 0L) grouped(abs) else grouped(abs) + "." + frac.toString().padStart(2, '0')
         return (if (negative) "-" else "") + "¥" + body
     }
 
@@ -78,6 +76,30 @@ object Money {
 
     /** 紧凑金额单位档位，逐级进位 */
     private val COMPACT_UNITS = listOf("K", "M", "B")
+
+    /**
+     * 分 → "¥3,480.00"（千分位分组 + 固定两位小数；账单页汇总大字/日期小计用）。
+     * 与 [formatYuanGrouped] 的区别：整数金额也保留 ".00"，更像正式账单的读数。
+     */
+    fun formatYuanGroupedFixed(cents: Long): String {
+        val negative = cents < 0
+        val abs = if (negative) -cents else cents
+        val body = grouped(abs) + "." + (abs % 100).toString().padStart(2, '0')
+        return (if (negative) "-" else "") + "¥" + body
+    }
+
+    /**
+     * 分 → "+12,000.00" / "-32.00"（显式正负号 + 千分位 + 固定两位小数，**不带**货币符号）。
+     * 账单列表金额列用：页头已声明单位「人民币 · 元」，行内只留数字更清爽。
+     */
+    fun formatSignedPlain(cents: Long): String {
+        val sign = if (cents < 0) "-" else "+"
+        val abs = if (cents < 0) -cents else cents
+        return sign + grouped(abs) + "." + (abs % 100).toString().padStart(2, '0')
+    }
+
+    /** 整数元部分的千分位分组 */
+    private fun grouped(absCents: Long): String = java.text.DecimalFormat("#,##0").format(absCents / 100)
 
     /** 保留两位小数（四舍五入）并去除尾零：32.31232 → "32.31"，10.0 → "10" */
     private fun trimNumber(value: Double): String =

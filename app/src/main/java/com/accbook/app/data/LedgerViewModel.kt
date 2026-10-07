@@ -120,6 +120,9 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
     fun prevMonth() { _month.value = _month.value.minusMonths(1) }
     fun nextMonth() { _month.value = _month.value.plusMonths(1) }
 
+    /** 直接跳到指定月份（账单页月份胶囊的下拉选择） */
+    fun setMonth(m: YearMonth) { _month.value = m }
+
     private fun range(m: YearMonth): Pair<Long, Long> {
         val start = m.atDay(1).atStartOfDay(zone).toInstant().toEpochMilli()
         val end = m.plusMonths(1).atDay(1).atStartOfDay(zone).toInstant().toEpochMilli()

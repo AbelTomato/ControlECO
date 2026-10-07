@@ -88,4 +88,19 @@ class BudgetTest {
         assertEquals(-0.2f, over.remainingRatio, 0.0001f)
         assertEquals(Budget.Tone.LOW, over.tone)
     }
+
+    // ---------- 档位短标签（个人页预算卡/图例） ----------
+
+    @Test
+    fun `档位标签与用色边界一致`() {
+        assertEquals("充裕", Budget.toneLabel(1.0f))
+        assertEquals("充裕", Budget.toneLabel(0.5f))
+        assertEquals("留意", Budget.toneLabel(0.49f))
+        assertEquals("留意", Budget.toneLabel(0.2f))
+        assertEquals("偏紧", Budget.toneLabel(0.19f))
+        assertEquals("偏紧", Budget.toneLabel(0f))
+        // 超支单独成词，但颜色仍落到 LOW（红）
+        assertEquals("已超支", Budget.toneLabel(-0.01f))
+        assertEquals(Budget.Tone.LOW, Budget.remainingTone(-0.01f))
+    }
 }

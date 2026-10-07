@@ -2,14 +2,17 @@ package com.accbook.app.ui
 
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.List
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -37,9 +40,10 @@ import com.accbook.app.ui.home.HomeScreen
 import com.accbook.app.ui.imports.ImportScreen
 import com.accbook.app.ui.keepalive.KeepAliveScreen
 import com.accbook.app.ui.pending.PendingScreen
+import com.accbook.app.ui.profile.ProfileScreen
 import com.accbook.app.ui.refund.RefundLinkScreen
-import com.accbook.app.ui.settings.SettingsScreen
 import com.accbook.app.ui.stats.StatsScreen
+import com.accbook.app.ui.theme.accBook
 import com.accbook.app.ui.transactions.EditTransactionScreen
 import com.accbook.app.ui.transactions.QuickAddScreen
 import com.accbook.app.ui.transactions.TransactionListScreen
@@ -137,28 +141,32 @@ private fun MainScaffold(
     var tab by rememberSaveable { mutableIntStateOf(0) }
     Scaffold(
         bottomBar = {
-            NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainer) {
-                val tabs = listOf(
-                    Triple("首页", Icons.Filled.Home, 0),
-                    Triple("账单", Icons.Filled.List, 1),
-                    Triple("统计", Icons.Filled.DateRange, 2),
-                    Triple("设置", Icons.Filled.Settings, 3),
-                )
-                tabs.forEach { (label, icon, index) ->
-                    NavigationBarItem(
-                        selected = tab == index,
-                        onClick = { tab = index },
-                        icon = { Icon(icon, contentDescription = label) },
-                        label = { Text(label) },
-                        colors = NavigationBarItemDefaults.colors(
-                            indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-                        ),
+            // 白底导航 + 顶部发丝线（页面底色是浅蓝，白底栏与内容自然分层）
+            Column(Modifier.background(MaterialTheme.colorScheme.surface)) {
+                HorizontalDivider(color = MaterialTheme.accBook.hairline)
+                NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+                    val tabs = listOf(
+                        Triple("首页", Icons.Filled.Home, 0),
+                        Triple("账单", Icons.Filled.List, 1),
+                        Triple("统计", Icons.Filled.DateRange, 2),
+                        Triple("个人", Icons.Filled.Person, 3),
                     )
+                    tabs.forEach { (label, icon, index) ->
+                        NavigationBarItem(
+                            selected = tab == index,
+                            onClick = { tab = index },
+                            icon = { Icon(icon, contentDescription = label) },
+                            label = { Text(label) },
+                            colors = NavigationBarItemDefaults.colors(
+                                indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                            ),
+                        )
+                    }
                 }
             }
         },
         floatingActionButton = {
-            // 首页/账单页共用悬浮"记一笔"胶囊（填充主色 + 悬浮动效），随手补录都能一眼看到
+            // 首页/账单页共用悬浮"记账"胶囊（填充主色 + 悬浮动效），随手补录都能一眼看到
             if (tab == 0 || tab == 1) {
                 QuickAddPill(onClick = onQuickAdd)
             }
@@ -173,7 +181,7 @@ private fun MainScaffold(
                     onOpenPending = onOpenPending,
                 )
                 2 -> StatsScreen(vm = vm)
-                3 -> SettingsScreen(
+                3 -> ProfileScreen(
                     vm = vm,
                     onOpenAccounts = onOpenAccounts,
                     onOpenCategories = onOpenCategories,

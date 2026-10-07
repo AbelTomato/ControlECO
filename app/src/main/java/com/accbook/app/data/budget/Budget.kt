@@ -39,6 +39,17 @@ object Budget {
         else -> Tone.LOW
     }
 
+    /**
+     * 剩余额度档位的中文短标签（个人页预算卡与图例用）。与 [remainingTone] 同边界，
+     * 保证"说法"与"颜色"永远一致；剩余为负时单独显示「已超支」（同属偏紧状态）。
+     */
+    fun toneLabel(remainingRatio: Float): String = when {
+        remainingRatio < 0f -> "已超支"
+        remainingRatio >= TONE_OK_RATIO -> "充裕"
+        remainingRatio >= TONE_LOW_RATIO -> "留意"
+        else -> "偏紧"
+    }
+
     data class Snapshot(
         val budgetCents: Long,
         val spentCents: Long,

@@ -308,7 +308,8 @@ private fun ModeRemaining(s: Budget.Snapshot, today: LocalDate) {
     val ratio = s.remainingRatio.coerceIn(0f, 1f)
     val percent = (s.remainingRatio * 100).roundToInt().coerceIn(0, 100)
     val timeRatio = (today.dayOfMonth.toFloat() / today.lengthOfMonth()).coerceIn(0f, 1f)
-    val trackColor = ab.hairline
+    // 底轨用比发丝线略深的 ringTrack：页面底色是浅蓝，hairline 会糊在背景里
+    val trackColor = ab.ringTrack
     // 月份环（本月已过时间）：饱和蓝，与预算主环明显区分（此前灰调不起眼）
     val timeTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.22f)
     val timeColor = ab.primaryStrong
@@ -407,7 +408,7 @@ private fun ModeRemaining(s: Budget.Snapshot, today: LocalDate) {
 @Composable
 private fun ModeCategories(items: List<CategoryRingData>) {
     if (items.isEmpty()) return
-    val trackColor = MaterialTheme.accBook.hairline
+    val trackColor = MaterialTheme.accBook.ringTrack
     val showHint = items.all { it.isOther }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -751,7 +752,7 @@ private fun ModeNeedsBudget(mode: Int, onSetBudget: () -> Unit) {
 /** 未设预算时的中性占位环（与正式圆环同构，不表达比例） */
 @Composable
 private fun BudgetRingPlaceholder(modifier: Modifier = Modifier) {
-    val trackColor = MaterialTheme.colorScheme.surfaceVariant
+    val trackColor = MaterialTheme.accBook.ringTrack
     Canvas(modifier.size(132.dp)) {
         drawCircle(
             color = trackColor,

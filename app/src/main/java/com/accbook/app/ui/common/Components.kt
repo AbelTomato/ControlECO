@@ -131,8 +131,29 @@ fun CategoryBadge(categoryName: String, size: Dp = 36.dp) {
     }
 }
 
-/** 通用下拉选择（非实验性 API 实现） */
+/**
+ * 分类方牌（账单列表行首）：与 [CategoryBadge] 同一套"分类名 → 稳定取色"，
+ * 但用圆角方块，贴近账单类应用的图标位观感。
+ */
 @Composable
+fun CategoryTile(categoryName: String, size: Dp = 40.dp) {
+    val color = categoryColor(MaterialTheme.accBook.categoryPalette, categoryName)
+    Box(
+        Modifier
+            .size(size)
+            .clip(RoundedCornerShape(size * 0.3f))
+            .background(color.copy(alpha = 0.16f)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            categoryName.firstOrNull()?.toString() ?: "·",
+            style = MaterialTheme.typography.titleSmall,
+            color = color,
+        )
+    }
+}
+
+/** 通用下拉选择（非实验性 API 实现） */@Composable
 fun DropdownSelector(label: String, options: List<Pair<Long, String>>, selectedId: Long?, onSelect: (Long) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     val selectedText = options.firstOrNull { it.first == selectedId }?.second ?: "请选择"

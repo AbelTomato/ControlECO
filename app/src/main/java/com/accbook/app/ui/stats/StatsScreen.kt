@@ -131,7 +131,7 @@ fun StatsScreen(vm: LedgerViewModel) {
                                 .fillMaxWidth()
                                 .height(6.dp)
                                 .clip(RoundedCornerShape(3.dp))
-                                .background(MaterialTheme.accBook.hairline),
+                                .background(MaterialTheme.accBook.ringTrack),
                         ) {
                             Box(
                                 Modifier

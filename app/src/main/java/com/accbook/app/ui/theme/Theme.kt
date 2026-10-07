@@ -15,6 +15,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.accbook.app.data.budget.Budget
 
 /**
  * 阶段四设计 token 体系。
@@ -38,6 +39,8 @@ data class AccBookColors(
     val primaryStrong: Color,
     /** 发丝分隔线 */
     val hairline: Color,
+    /** 圆环底轨：比 hairline 略深，保证在浅蓝页面底色上仍能看清未完成部分 */
+    val ringTrack: Color,
     /** 分类徽标调色板：按分类名稳定取色，避免 emoji/图标依赖 */
     val categoryPalette: List<Color>,
 )
@@ -49,6 +52,7 @@ private fun lightAccBookColors() = AccBookColors(
     criticalAlert = Color(0xFFE01F1F),
     primaryStrong = Color(0xFF3C6CA8),
     hairline = Color(0xFFE3EAF1),
+    ringTrack = Color(0xFFD6E1ED),
     categoryPalette = listOf(
         Color(0xFF5E7C9E), // 蓝
         Color(0xFF6E8B84), // 青绿灰
@@ -68,6 +72,7 @@ private fun darkAccBookColors() = AccBookColors(
     criticalAlert = Color(0xFFFF5844),
     primaryStrong = Color(0xFF5B93D4),
     hairline = Color(0xFF2A323B),
+    ringTrack = Color(0xFF333C47),
     categoryPalette = listOf(
         Color(0xFF9FBAD8),
         Color(0xFF9CC0B6),
@@ -93,18 +98,35 @@ fun categoryColor(palette: List<Color>, categoryName: String): Color {
     return palette[(h % palette.size).coerceAtLeast(0)]
 }
 
+/**
+ * 剩余额度档位 → 语义色（绿 / 黄 / 红）。首页（含超支渐强）与个人页预算卡共用这套映射，
+ * 避免同一档位在两处出现不同颜色。
+ */
+fun toneColor(tone: Budget.Tone, colors: AccBookColors): Color = when (tone) {
+    Budget.Tone.OK -> colors.income
+    Budget.Tone.MID -> colors.warning
+    Budget.Tone.LOW -> colors.critical
+}
+
 // ---------- 明暗两套 Material 配色（白 + 浅蓝 / 冷墨蓝） ----------
 
 private fun lightScheme() = lightColorScheme(
-    background = Color(0xFFFFFFFF),
+    // 页面底色用带蓝的白（卡片为纯白）——全 App 冷色调，不再有暖黄感
+    background = Color(0xFFF1F5FB),
     onBackground = Color(0xFF1B2430),
     surface = Color(0xFFFFFFFF),
     onSurface = Color(0xFF1B2430),
-    surfaceVariant = Color(0xFFEDF2F8),
+    surfaceVariant = Color(0xFFE9EFF7),
     onSurfaceVariant = Color(0xFF5B6B7C),
-    surfaceContainer = Color(0xFFF3F7FB),
-    surfaceContainerLow = Color(0xFFF8FAFD),
-    surfaceContainerHigh = Color(0xFFE9F0F7),
+    surfaceDim = Color(0xFFE3EAF3),
+    surfaceBright = Color(0xFFFCFDFF),
+    surfaceContainerLowest = Color(0xFFFFFFFF),
+    surfaceContainerLow = Color(0xFFF7FAFD),
+    surfaceContainer = Color(0xFFF4F8FC),
+    surfaceContainerHigh = Color(0xFFEAF0F8),
+    surfaceContainerHighest = Color(0xFFE2EAF4),
+    // 海拔叠加色跟随主色（默认是 M3 基线的暖紫，会在浅底上透出暖调）
+    surfaceTint = Color(0xFF4E6E8E),
     primary = Color(0xFF4E6E8E),
     onPrimary = Color(0xFFFFFFFF),
     primaryContainer = Color(0xFFDCE8F5),
@@ -129,15 +151,20 @@ private fun lightScheme() = lightColorScheme(
 )
 
 private fun darkScheme() = darkColorScheme(
-    background = Color(0xFF12161C),
+    background = Color(0xFF101419),
     onBackground = Color(0xFFE4EAF1),
     surface = Color(0xFF171C23),
     onSurface = Color(0xFFE4EAF1),
-    surfaceVariant = Color(0xFF232A33),
+    surfaceVariant = Color(0xFF212832),
     onSurfaceVariant = Color(0xFFA3AFBC),
-    surfaceContainer = Color(0xFF1C222A),
-    surfaceContainerLow = Color(0xFF171C23),
-    surfaceContainerHigh = Color(0xFF252C36),
+    surfaceDim = Color(0xFF101419),
+    surfaceBright = Color(0xFF333C47),
+    surfaceContainerLowest = Color(0xFF0C1015),
+    surfaceContainerLow = Color(0xFF151A21),
+    surfaceContainer = Color(0xFF191F27),
+    surfaceContainerHigh = Color(0xFF232A34),
+    surfaceContainerHighest = Color(0xFF2D353F),
+    surfaceTint = Color(0xFFA5C6E8),
     primary = Color(0xFFA5C6E8),
     onPrimary = Color(0xFF12283E),
     primaryContainer = Color(0xFF2C4A69),

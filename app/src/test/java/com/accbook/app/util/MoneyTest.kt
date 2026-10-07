@@ -84,4 +84,20 @@ class MoneyTest {
         assertEquals("¥10M", Money.formatYuanCompact(999_999_999))
         assertEquals("¥9999.99K", Money.formatYuanCompact(999_999_000))
     }
+
+    @Test
+    fun `grouped fixed keeps two decimals`() {
+        assertEquals("¥3,480.00", Money.formatYuanGroupedFixed(348_000))
+        assertEquals("¥8,520.00", Money.formatYuanGroupedFixed(852_000))
+        assertEquals("¥0.05", Money.formatYuanGroupedFixed(5))
+        assertEquals("-¥32.00", Money.formatYuanGroupedFixed(-3_200))
+        assertEquals("¥1,234,567.89", Money.formatYuanGroupedFixed(123_456_789))
+    }
+
+    @Test
+    fun `signed plain has no currency symbol`() {
+        assertEquals("-32.00", Money.formatSignedPlain(-3_200))
+        assertEquals("+12,000.00", Money.formatSignedPlain(1_200_000))
+        assertEquals("+0.50", Money.formatSignedPlain(50))
+    }
 }
