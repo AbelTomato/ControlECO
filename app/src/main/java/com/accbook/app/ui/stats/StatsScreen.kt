@@ -161,10 +161,11 @@ private fun SectionLabel(text: String) {
     )
 }
 
-/** 每日支出柱状图：零花销日画发丝线刻度，保持节奏感；金色柱 = 有支出 */
+/** 每日支出柱状图：零花销日画发丝线刻度，保持节奏感；主色柱 = 有支出 */
 @Composable
 private fun DailyExpenseChart(rows: List<TransactionRow>, month: YearMonth, modifier: Modifier = Modifier) {
     val ab = MaterialTheme.accBook
+    val barColor = MaterialTheme.colorScheme.primary
     val daily = remember(rows, month) {
         FloatArray(month.lengthOfMonth()).also { arr ->
             rows.filter { it.type == TxType.EXPENSE }.forEach { r ->
@@ -185,7 +186,7 @@ private fun DailyExpenseChart(rows: List<TransactionRow>, month: YearMonth, modi
             if (v > 0f) {
                 val h = (v / max) * (size.height - 4.dp.toPx())
                 drawRoundRect(
-                    color = ab.gold,
+                    color = barColor,
                     topLeft = Offset(x, size.height - h),
                     size = Size(barWidth, h.coerceAtLeast(2.dp.toPx())),
                     cornerRadius = CornerRadius(2.dp.toPx()),

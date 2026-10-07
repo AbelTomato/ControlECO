@@ -19,22 +19,18 @@ import androidx.compose.ui.unit.sp
 /**
  * 阶段四设计 token 体系。
  *
- * 设计基调：现代、极简、成熟的移动金融产品（Financial App × Subtle Game Economy）——
- * 暖白背景、深墨文字、低饱和暖金强调；金额数字用等宽字形（tnum）保证纵向对齐。
+ * 设计基调：现代、极简、成熟的移动金融产品——
+ * 暖白背景、深墨文字、低饱和蓝主色；金额数字用等宽字形（tnum）保证纵向对齐。
  * 语义色（收入/警示/危险）经 [MaterialTheme.accBook] 下发，全项目禁止散落硬编码色。
  */
 
-// ---------- 语义扩展色（收入 / 警示 / 危险 / 金币 / 发丝线 / 分类调色板） ----------
+// ---------- 语义扩展色（收入 / 警示 / 危险 / 发丝线 / 分类调色板） ----------
 
 @Immutable
 data class AccBookColors(
     val income: Color,
     val warning: Color,
     val critical: Color,
-    /** 金币/Token 主视觉色（低饱和暖金） */
-    val gold: Color,
-    /** 金币描边、金色系深色文字 */
-    val goldDeep: Color,
     /** 发丝分隔线 */
     val hairline: Color,
     /** 分类徽标调色板：按分类名稳定取色，避免 emoji/图标依赖 */
@@ -45,8 +41,6 @@ private fun lightAccBookColors() = AccBookColors(
     income = Color(0xFF3D7A50),
     warning = Color(0xFFB47B10),
     critical = Color(0xFFA5402C),
-    gold = Color(0xFFC79A3D),
-    goldDeep = Color(0xFF8C6A1D),
     hairline = Color(0xFFE7E1D3),
     categoryPalette = listOf(
         Color(0xFF8A6D3B), // 金褐
@@ -64,8 +58,6 @@ private fun darkAccBookColors() = AccBookColors(
     income = Color(0xFF8FC79E),
     warning = Color(0xFFE0B35C),
     critical = Color(0xFFE9886F),
-    gold = Color(0xFFD8B76A),
-    goldDeep = Color(0xFFB6913F),
     hairline = Color(0xFF332E25),
     categoryPalette = listOf(
         Color(0xFFD8BC85),
@@ -92,7 +84,7 @@ fun categoryColor(palette: List<Color>, categoryName: String): Color {
     return palette[(h % palette.size).coerceAtLeast(0)]
 }
 
-// ---------- 明暗两套 Material 配色（暖白 / 暖墨） ----------
+// ---------- 明暗两套 Material 配色（暖白 / 暖墨，低饱和蓝主色） ----------
 
 private fun lightScheme() = lightColorScheme(
     background = Color(0xFFF7F4EE),
@@ -104,10 +96,10 @@ private fun lightScheme() = lightColorScheme(
     surfaceContainer = Color(0xFFF1ECE1),
     surfaceContainerLow = Color(0xFFF6F2E9),
     surfaceContainerHigh = Color(0xFFECE6DA),
-    primary = Color(0xFF8C6A1D),
+    primary = Color(0xFF4E6E8E),
     onPrimary = Color(0xFFFFFFFF),
-    primaryContainer = Color(0xFFF1E1BC),
-    onPrimaryContainer = Color(0xFF3A2C05),
+    primaryContainer = Color(0xFFD6E3F0),
+    onPrimaryContainer = Color(0xFF0F2740),
     secondary = Color(0xFF6B6455),
     onSecondary = Color(0xFFFFFFFF),
     secondaryContainer = Color(0xFFE5DFD0),
@@ -124,7 +116,7 @@ private fun lightScheme() = lightColorScheme(
     outlineVariant = Color(0xFFE3DCCC),
     inverseSurface = Color(0xFF35302A),
     inverseOnSurface = Color(0xFFF6F1E7),
-    inversePrimary = Color(0xFFD8B76A),
+    inversePrimary = Color(0xFFA5C6E8),
 )
 
 private fun darkScheme() = darkColorScheme(
@@ -137,10 +129,10 @@ private fun darkScheme() = darkColorScheme(
     surfaceContainer = Color(0xFF25211A),
     surfaceContainerLow = Color(0xFF211D16),
     surfaceContainerHigh = Color(0xFF2F2A21),
-    primary = Color(0xFFD8B76A),
-    onPrimary = Color(0xFF241B04),
-    primaryContainer = Color(0xFF5E4A12),
-    onPrimaryContainer = Color(0xFFF5E1B0),
+    primary = Color(0xFFA5C6E8),
+    onPrimary = Color(0xFF12283E),
+    primaryContainer = Color(0xFF2C4A69),
+    onPrimaryContainer = Color(0xFFD3E5F6),
     secondary = Color(0xFFB5AC98),
     onSecondary = Color(0xFF211D14),
     secondaryContainer = Color(0xFF383225),
@@ -157,7 +149,7 @@ private fun darkScheme() = darkColorScheme(
     outlineVariant = Color(0xFF3A352B),
     inverseSurface = Color(0xFFEBE5D8),
     inverseOnSurface = Color(0xFF35302A),
-    inversePrimary = Color(0xFF8C6A1D),
+    inversePrimary = Color(0xFF4E6E8E),
 )
 
 // ---------- 字体：金额用等宽数字（tnum），层级靠字号与留白 ----------
