@@ -118,6 +118,27 @@ interface TransactionDao {
     @Query("SELECT COUNT(*) FROM transactions WHERE accountId = :accountId")
     suspend fun countByAccount(accountId: Long): Int
 
+    // ---------- 批量删除（账单页） ----------
+
+    /** 范围内记录数（含退款标记记录，批量删除不区分显示开关） */
+    @Query(
+        """SELECT COUNT(*) FROM transactions
+           WHERE timestamp >= :startMillis AND timestamp < :endMillis"""
+    )
+    suspend fun countByRange(startMillis: Long, endMillis: Long): Int
+
+    @Query("SELECT COUNT(*) FROM transactions")
+    suspend fun countAll(): Int
+
+    @Query("DELETE FROM transactions WHERE id IN (:ids)")
+    suspend fun deleteByIds(ids: List<Long>)
+
+    @Query("DELETE FROM transactions WHERE timestamp >= :startMillis AND timestamp < :endMillis")
+    suspend fun deleteByRange(startMillis: Long, endMillis: Long)
+
+    @Query("DELETE FROM transactions")
+    suspend fun deleteAll()
+
     @Insert
     suspend fun insert(tx: TransactionEntity): Long
 

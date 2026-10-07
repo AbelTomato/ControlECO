@@ -199,6 +199,53 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // ---------- 批量删除（账单页：多选 / 按月 / 按年 / 全部） ----------
+
+    suspend fun countTransactionsInRange(startMillis: Long, endMillis: Long): Int =
+        withContext(Dispatchers.IO) { txDao.countByRange(startMillis, endMillis) }
+
+    suspend fun countAllTransactions(): Int =
+        withContext(Dispatchers.IO) { txDao.countAll() }
+
+    fun deleteTransactionsByIds(ids: Collection<Long>, onResult: (String?) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                txDao.deleteByIds(ids.toList())
+                AppLog.i("tx", "batch deleted ${ids.size} by ids")
+                withContext(Dispatchers.Main) { onResult(null) }
+            } catch (e: Exception) {
+                AppLog.e("tx", "batch delete failed", e)
+                withContext(Dispatchers.Main) { onResult("删除失败") }
+            }
+        }
+    }
+
+    fun deleteTransactionsInRange(startMillis: Long, endMillis: Long, onResult: (String?) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                txDao.deleteByRange(startMillis, endMillis)
+                AppLog.i("tx", "batch deleted in range [$startMillis, $endMillis)")
+                withContext(Dispatchers.Main) { onResult(null) }
+            } catch (e: Exception) {
+                AppLog.e("tx", "range delete failed", e)
+                withContext(Dispatchers.Main) { onResult("删除失败") }
+            }
+        }
+    }
+
+    fun deleteAllTransactions(onResult: (String?) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                txDao.deleteAll()
+                AppLog.i("tx", "all transactions deleted")
+                withContext(Dispatchers.Main) { onResult(null) }
+            } catch (e: Exception) {
+                AppLog.e("tx", "delete all failed", e)
+                withContext(Dispatchers.Main) { onResult("删除失败") }
+            }
+        }
+    }
+
     suspend fun transactionById(id: Long): TransactionEntity? =
         withContext(Dispatchers.IO) { txDao.getById(id) }
 
