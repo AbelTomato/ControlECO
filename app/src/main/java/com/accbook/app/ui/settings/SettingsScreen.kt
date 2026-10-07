@@ -523,7 +523,7 @@ private fun BudgetSetting(vm: LedgerViewModel) {
     SettingRow(
         title = "每月预算",
         subtitle = if (budget > 0) {
-            "当前 ${Money.formatYuanGrouped(budget)} · 首页显示剩余可用"
+            "当前 ${Money.formatYuanGrouped(budget)} · 分类预算在「分类管理」中按分类设置"
         } else {
             "未设置 · 设置后首页显示剩余可用与今天建议花销"
         },

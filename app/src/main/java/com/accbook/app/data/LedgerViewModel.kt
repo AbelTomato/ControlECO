@@ -40,6 +40,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -106,6 +107,11 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
         (totals.firstOrNull { it.type == TxType.EXPENSE }?.totalCents ?: 0L) - refundIncome
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
 
+    /** 首页"分类剩余预算"预览：当月各支出分类合计（口径与首页一致，退款始终计入） */
+    val homeCategorySums: StateFlow<List<CategorySumRow>> = txDao
+        .observeCategorySums(homeRange.first, homeRange.second, TxType.EXPENSE, true)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
     // ---------- 月份 ----------
 
     private val _month = MutableStateFlow(YearMonth.now(zone))
@@ -154,6 +160,11 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
     val accountBalances: Flow<List<AccountBalanceRow>> = _showRefunds.flatMapLatest { r ->
         txDao.observeBalances(r)
     }
+
+    /** 首页"总存款"预览：全部账户（初始金额 + 交易净额）合计 */
+    val totalDepositCents: StateFlow<Long> = accountBalances
+        .map { rows -> rows.sumOf { it.initialBalanceCents + it.signedSumCents } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
 
     // ---------- 交易 ----------
 
@@ -283,20 +294,22 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------- 分类 ----------
 
-    fun saveCategory(id: Long, name: String, type: TxType, onResult: (String?) -> Unit) {
+    /** 保存分类；回调携带保存后的 id（新建时用于紧接着写入分类预算） */
+    fun saveCategory(id: Long, name: String, type: TxType, onResult: (savedId: Long, error: String?) -> Unit) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                if (id > 0) {
+                val savedId = if (id > 0) {
                     categoryDao.getAll().firstOrNull { it.id == id }?.let { old ->
                         categoryDao.update(old.copy(name = name, type = type))
                     }
+                    id
                 } else {
                     categoryDao.insert(CategoryEntity(name = name, type = type))
                 }
-                withContext(Dispatchers.Main) { onResult(null) }
+                withContext(Dispatchers.Main) { onResult(savedId, null) }
             } catch (e: Exception) {
                 AppLog.e("category", "save failed", e)
-                withContext(Dispatchers.Main) { onResult("保存失败") }
+                withContext(Dispatchers.Main) { onResult(0L, "保存失败") }
             }
         }
     }
@@ -308,9 +321,37 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
                 withContext(Dispatchers.Main) { onResult("该分类下有 $used 笔交易，无法删除") }
             } else {
                 categoryDao.deleteById(id)
+                setCategoryBudget(id, 0L) // 分类删除时同步清理其分类预算
                 withContext(Dispatchers.Main) { onResult(null) }
             }
         }
+    }
+
+    // ---------- 设置：分类月预算（首页"分类剩余预算"预览的数据源） ----------
+
+    private val _categoryBudgets = MutableStateFlow(loadCategoryBudgets())
+    val categoryBudgets: StateFlow<Map<Long, Long>> = _categoryBudgets
+
+    private fun loadCategoryBudgets(): Map<Long, Long> = prefs.all.entries
+        .mapNotNull { (key, value) ->
+            if (!key.startsWith(KEY_CAT_BUDGET_PREFIX)) return@mapNotNull null
+            val id = key.removePrefix(KEY_CAT_BUDGET_PREFIX).toLongOrNull() ?: return@mapNotNull null
+            val cents = (value as? Long) ?: return@mapNotNull null
+            if (cents > 0) id to cents else null
+        }
+        .toMap()
+
+    /** cents ≤ 0 表示清除该分类预算 */
+    fun setCategoryBudget(categoryId: Long, cents: Long) {
+        val editor = prefs.edit()
+        if (cents > 0) {
+            editor.putLong(KEY_CAT_BUDGET_PREFIX + categoryId, cents)
+        } else {
+            editor.remove(KEY_CAT_BUDGET_PREFIX + categoryId)
+        }
+        editor.apply()
+        _categoryBudgets.value = loadCategoryBudgets()
+        AppLog.i("settings", "categoryBudget[$categoryId]=${Money.formatYuan(cents)}")
     }
 
     // ---------- 账单导入 ----------
@@ -620,5 +661,6 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
         const val PREFS_NAME = "settings"
         const val KEY_SHOW_REFUNDS = "show_refunds"
         const val KEY_MONTHLY_BUDGET = "monthly_budget_cents"
+        const val KEY_CAT_BUDGET_PREFIX = "category_budget_"
     }
 }
