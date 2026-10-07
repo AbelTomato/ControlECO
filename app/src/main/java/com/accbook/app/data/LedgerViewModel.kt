@@ -33,6 +33,7 @@ import com.accbook.app.data.model.ParsedBill
 import com.accbook.app.util.AppLog
 import com.accbook.app.util.Money
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -94,7 +95,45 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
             _cardImageColor.value = null
             _cardImageLuminance.value = null
         }
+        loadCardImage(uri)
         AppLog.i("settings", "cardImage=${uri ?: "default"}")
+    }
+
+    /**
+     * 卡面图片：进程启动（或换图）时就异步解码，账单页第一次组合时通常已经就绪，
+     * 不会出现"先默认背景再闪回图片"。先出缩略图（几毫秒）再出全尺寸。
+     */
+    private val _cardImage = MutableStateFlow<CardImage?>(null)
+    val cardImage: StateFlow<CardImage?> = _cardImage
+
+    private var cardImageJob: Job? = null
+
+    private fun loadCardImage(path: String?) {
+        cardImageJob?.cancel()
+        if (path.isNullOrBlank()) {
+            _cardImage.value = null
+            return
+        }
+        cardImageJob = viewModelScope.launch(Dispatchers.IO) {
+            // 1) 超小缩略图：拿到真实（模糊）图 + 平均色，立刻可用
+            val preview = CardImageLoader.decode(getApplication(), path, CardImageLoader.PREVIEW_SIZE)
+            val persistedColor = prefs.getInt(KEY_CARD_COLOR, 0).takeIf { it != 0 }
+            val persistedLum = prefs.getFloat(KEY_CARD_LUMINANCE, -1f).takeIf { it >= 0f }
+            val color = preview?.let { CardImageLoader.averageColor(it) } ?: persistedColor
+            val luminance = preview?.let { CardImageLoader.meanLuminance(it) } ?: persistedLum
+            if (color != null && luminance != null) {
+                // 老数据（图片在"平均色"功能之前导入）在这里回填一次，下次冷启动直接用
+                if (persistedColor == null || persistedLum == null) setCardImageStats(color, luminance)
+                _cardImage.value = CardImage(full = null, preview = preview, colorArgb = color, luminance = luminance)
+            }
+            // 2) 正常尺寸
+            val full = CardImageLoader.decode(getApplication(), path, 1600)
+            if (full != null) {
+                val finalColor = color ?: CardImageLoader.averageColor(full)
+                val finalLum = luminance ?: CardImageLoader.meanLuminance(full)
+                _cardImage.value = CardImage(full, preview, finalColor, finalLum)
+            }
+        }
     }
 
     /**
@@ -132,6 +171,8 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(Dispatchers.IO) {
             runCatching { txDao.countAll() }
         }
+        // 卡面图片同样在启动时就开始解码（先缩略图再全尺寸）
+        loadCardImage(_cardImageUri.value)
     }
 
     fun setCardTransform(transform: CardTransform) {

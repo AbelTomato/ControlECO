@@ -69,6 +69,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.accbook.app.data.CardTransform
+import com.accbook.app.data.importCardImage
 import com.accbook.app.data.LedgerViewModel
 import com.accbook.app.data.db.RefundMark
 import com.accbook.app.data.db.TransactionRow
@@ -128,6 +129,7 @@ fun TransactionListScreen(
     val refundTotal by vm.periodRefundTotal.collectAsStateWithLifecycle()
     val cardImageUri by vm.cardImageUri.collectAsStateWithLifecycle()
     val cardTransform by vm.cardTransform.collectAsStateWithLifecycle()
+    val cardImage by vm.cardImage.collectAsStateWithLifecycle()
     val cardImageColor by vm.cardImageColor.collectAsStateWithLifecycle()
     val cardImageLuminance by vm.cardImageLuminance.collectAsStateWithLifecycle()
     val ab = MaterialTheme.accBook
@@ -243,6 +245,7 @@ fun TransactionListScreen(
             incomeCents = income,
             expenseCents = expense,
             imagePath = cardImageUri,
+            image = cardImage,
             transform = cardTransform,
             placeholderColor = cardImageColor,
             placeholderLuminance = cardImageLuminance,
@@ -483,6 +486,7 @@ fun TransactionListScreen(
                     incomeCents = income,
                     expenseCents = expense,
                     imagePath = cardImageUri,
+                    image = cardImage,
                     transform = draft,
                     onModeChange = {},
                     onOpenImageSettings = {},
