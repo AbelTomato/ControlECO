@@ -1,8 +1,8 @@
 package com.accbook.app.ui.transactions
 
-import android.content.Intent
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
@@ -85,7 +85,9 @@ import java.time.YearMonth
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import kotlin.math.roundToInt
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** 范围/多选删除的二次确认（标题 + 说明 + 执行动作） */
 private data class DeleteConfirm(val title: String, val body: String, val onConfirm: () -> Unit)
@@ -141,12 +143,17 @@ fun TransactionListScreen(
     val listState = rememberLazyListState()
 
     // 相册选图 → 持久化读取权限，重启后仍能显示
-    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+    // 系统照片选择器（相册 UI，不是文件管理）：选完立刻拷进应用内部存储
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) {
-            runCatching {
-                context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            scope.launch {
+                val saved = withContext(Dispatchers.IO) { importCardImage(context, uri) }
+                if (saved != null) {
+                    vm.setCardImage(saved)
+                } else {
+                    Toast.makeText(context, "这张图片读取失败，换一张试试", Toast.LENGTH_SHORT).show()
+                }
             }
-            vm.setCardImage(uri.toString())
         }
     }
 
@@ -222,7 +229,7 @@ fun TransactionListScreen(
             balanceCents = income - expense,
             incomeCents = income,
             expenseCents = expense,
-            imageUri = cardImageUri,
+            imagePath = cardImageUri,
             onModeChange = { vm.setPeriodMode(it) },
             onOpenImageSettings = { showImageDialog = true },
             modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp),
@@ -431,7 +438,9 @@ fun TransactionListScreen(
             confirmButton = {
                 TextButton(onClick = {
                     showImageDialog = false
-                    imagePicker.launch(arrayOf("image/*"))
+                    imagePicker.launch(
+                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                    )
                 }) { Text("从相册选择") }
             },
             dismissButton = {

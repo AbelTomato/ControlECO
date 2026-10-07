@@ -44,6 +44,7 @@ import com.accbook.app.ui.common.DropdownSelector
 import com.accbook.app.ui.theme.accBook
 import com.accbook.app.util.Money
 import java.time.LocalDate
+import java.time.LocalTime
 import java.time.ZoneId
 
 /**
@@ -203,7 +204,13 @@ fun QuickAddScreen(vm: LedgerViewModel, onBack: () -> Unit) {
                         categoryId == null -> error = "请选择分类"
                         accountId == null -> error = "请选择账户"
                         else -> {
-                            val ts = date.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                            // 手动记账：默认记的是"现在"（含时分），选了别的日期则沿用当前时刻
+                            val zone = ZoneId.systemDefault()
+                            val ts = if (date == LocalDate.now()) {
+                                System.currentTimeMillis()
+                            } else {
+                                date.atTime(LocalTime.now()).atZone(zone).toInstant().toEpochMilli()
+                            }
                             vm.saveTransaction(-1L, type, amount, categoryId!!, accountId!!, ts, note.trim())
                             onBack()
                         }

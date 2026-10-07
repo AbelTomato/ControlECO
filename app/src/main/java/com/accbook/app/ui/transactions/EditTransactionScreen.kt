@@ -70,6 +70,8 @@ fun EditTransactionScreen(vm: LedgerViewModel, txId: Long, onBack: () -> Unit) {
     var categoryId by remember { mutableStateOf<Long?>(null) }
     var accountId by remember { mutableStateOf<Long?>(null) }
     var date by remember { mutableStateOf(LocalDate.now()) }
+    // 编辑时保留原记录的时分（改日期不该把时间抹成 00:00）
+    var timeOfDay by remember { mutableStateOf(java.time.LocalTime.now()) }
     var note by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
@@ -81,7 +83,9 @@ fun EditTransactionScreen(vm: LedgerViewModel, txId: Long, onBack: () -> Unit) {
             amountText = Money.formatCents(t.amountCents)
             categoryId = t.categoryId
             accountId = t.accountId
-            date = Instant.ofEpochMilli(t.timestamp).atZone(ZoneId.systemDefault()).toLocalDate()
+            val local = Instant.ofEpochMilli(t.timestamp).atZone(ZoneId.systemDefault())
+            date = local.toLocalDate()
+            timeOfDay = local.toLocalTime()
             note = t.note
         }
     }
@@ -192,7 +196,8 @@ fun EditTransactionScreen(vm: LedgerViewModel, txId: Long, onBack: () -> Unit) {
                         categoryId == null -> error = "请选择分类"
                         accountId == null -> error = "请选择账户"
                         else -> {
-                            val ts = date.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                            val ts = java.time.LocalDateTime.of(date, timeOfDay)
+                                .atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
                             vm.saveTransaction(txId, type, cents, categoryId!!, accountId!!, ts, note.trim())
                             onBack()
                         }

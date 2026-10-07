@@ -41,14 +41,12 @@ data class AccBookColors(
     val hairline: Color,
     /** 圆环底轨：比 hairline 略深，保证在浅蓝页面底色上仍能看清未完成部分 */
     val ringTrack: Color,
-    /** 自定义背景图卡片：压暗遮罩（保证卡上文字可读） */
-    val cardScrim: Color,
-    /** 自定义背景图卡片上的主文字色（白） */
-    val onCardImage: Color,
-    /** 自定义背景图卡片上的收入色（浅绿，深底可读） */
-    val incomeOnCard: Color,
-    /** 自定义背景图卡片上的支出色（浅红，深底可读） */
-    val expenseOnCard: Color,
+    /** 红包等喜庆色（分类 logo 专用，明亮红） */
+    val festiveRed: Color,
+    /** 结余卡浅底配色（浅色背景图/默认浅蓝卡面用） */
+    val cardOnLight: CardTones,
+    /** 结余卡深底配色（深色背景图/深色主题卡面用） */
+    val cardOnDark: CardTones,
     /** 分类徽标调色板：按分类名稳定取色，避免 emoji/图标依赖 */
     val categoryPalette: List<Color>,
 )
@@ -61,10 +59,27 @@ private fun lightAccBookColors() = AccBookColors(
     primaryStrong = Color(0xFF3C6CA8),
     hairline = Color(0xFFE3EAF1),
     ringTrack = Color(0xFFD6E1ED),
-    cardScrim = Color(0x9E0B1524),
-    onCardImage = Color(0xFFFFFFFF),
-    incomeOnCard = Color(0xFF8FE3A6),
-    expenseOnCard = Color(0xFFFFA694),
+    festiveRed = Color(0xFFE8342A),
+    cardOnLight = CardTones(
+        ink = Color(0xFF14212E),
+        sub = Color(0xFF4E6175),
+        income = Color(0xFF2F6B45),
+        expense = Color(0xFFC1352B),
+        scrim = Color(0xFFFFFFFF),
+        pillContainer = Color(0x263C6CA8),
+        pillSelected = Color(0xFF3C6CA8),
+        pillSelectedContent = Color(0xFFFFFFFF),
+    ),
+    cardOnDark = CardTones(
+        ink = Color(0xFFFFFFFF),
+        sub = Color(0xCCFFFFFF),
+        income = Color(0xFF8FE3A6),
+        expense = Color(0xFFFFA694),
+        scrim = Color(0xFF000000),
+        pillContainer = Color(0x33FFFFFF),
+        pillSelected = Color(0xFFFFFFFF),
+        pillSelectedContent = Color(0xFF16202B),
+    ),
     categoryPalette = listOf(
         Color(0xFF5E7C9E), // 蓝
         Color(0xFF6E8B84), // 青绿灰
@@ -85,10 +100,27 @@ private fun darkAccBookColors() = AccBookColors(
     primaryStrong = Color(0xFF5B93D4),
     hairline = Color(0xFF2A323B),
     ringTrack = Color(0xFF333C47),
-    cardScrim = Color(0xB3000000),
-    onCardImage = Color(0xFFFFFFFF),
-    incomeOnCard = Color(0xFF8FE3A6),
-    expenseOnCard = Color(0xFFFFA694),
+    festiveRed = Color(0xFFFF6A55),
+    cardOnLight = CardTones(
+        ink = Color(0xFF14212E),
+        sub = Color(0xFF4E6175),
+        income = Color(0xFF2F6B45),
+        expense = Color(0xFFC1352B),
+        scrim = Color(0xFFFFFFFF),
+        pillContainer = Color(0x263C6CA8),
+        pillSelected = Color(0xFF3C6CA8),
+        pillSelectedContent = Color(0xFFFFFFFF),
+    ),
+    cardOnDark = CardTones(
+        ink = Color(0xFFFFFFFF),
+        sub = Color(0xCCFFFFFF),
+        income = Color(0xFF8FE3A6),
+        expense = Color(0xFFFFA694),
+        scrim = Color(0xFF000000),
+        pillContainer = Color(0x33FFFFFF),
+        pillSelected = Color(0xFFFFFFFF),
+        pillSelectedContent = Color(0xFF16202B),
+    ),
     categoryPalette = listOf(
         Color(0xFF9FBAD8),
         Color(0xFF9CC0B6),
@@ -105,6 +137,22 @@ val LocalAccBookColors = staticCompositionLocalOf { lightAccBookColors() }
 
 val MaterialTheme.accBook: AccBookColors
     @Composable get() = LocalAccBookColors.current
+
+/**
+ * 结余卡的用色方案：浅底/深底各一套，由背景亮度自动选择，
+ * 对比度不足时再叠一层 [scrim]（透明度按 WCAG 对比度 ≥ 3 反算）。
+ */
+@Immutable
+data class CardTones(
+    val ink: Color,
+    val sub: Color,
+    val income: Color,
+    val expense: Color,
+    val scrim: Color,
+    val pillContainer: Color,
+    val pillSelected: Color,
+    val pillSelectedContent: Color,
+)
 
 /** 分类名 → 调色板稳定取色（同一分类全 App 同色，跨会话不变） */
 fun categoryColor(palette: List<Color>, categoryName: String): Color {

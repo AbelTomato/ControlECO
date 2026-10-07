@@ -37,6 +37,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -74,12 +75,20 @@ fun periodScopeLabel(mode: PeriodMode): String = when (mode) {
  * 账单页结余卡与统计页顶部共用，两处永远同步（同一份 ViewModel 状态）。
  */
 @Composable
-fun PeriodSwitch(mode: PeriodMode, onChange: (PeriodMode) -> Unit, modifier: Modifier = Modifier) {
+fun PeriodSwitch(
+    mode: PeriodMode,
+    onChange: (PeriodMode) -> Unit,
+    modifier: Modifier = Modifier,
+    containerColor: Color = MaterialTheme.accBook.primaryStrong.copy(alpha = 0.16f),
+    selectedColor: Color = MaterialTheme.accBook.primaryStrong,
+    selectedContentColor: Color = MaterialTheme.colorScheme.onPrimary,
+    contentColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+) {
     val shape = RoundedCornerShape(50)
     Row(
         modifier
             .clip(shape)
-            .background(MaterialTheme.accBook.primaryStrong.copy(alpha = 0.16f))
+            .background(containerColor)
             .padding(3.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -88,7 +97,7 @@ fun PeriodSwitch(mode: PeriodMode, onChange: (PeriodMode) -> Unit, modifier: Mod
             Box(
                 Modifier
                     .clip(shape)
-                    .then(if (selected) Modifier.background(MaterialTheme.accBook.primaryStrong) else Modifier)
+                    .then(if (selected) Modifier.background(selectedColor) else Modifier)
                     .clickable { onChange(m) }
                     .padding(horizontal = 14.dp, vertical = 5.dp),
                 contentAlignment = Alignment.Center,
@@ -96,7 +105,7 @@ fun PeriodSwitch(mode: PeriodMode, onChange: (PeriodMode) -> Unit, modifier: Mod
                 Text(
                     m.label,
                     style = MaterialTheme.typography.labelLarge,
-                    color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (selected) selectedContentColor else contentColor,
                     fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
                 )
             }
@@ -216,12 +225,12 @@ fun PeriodPickerSheet(
                 val pager = rememberPagerState(
                     initialPage = (current.year - PICKER_YEAR_MIN).coerceIn(0, pageCount - 1),
                 ) { pageCount }
-                Text(
-                    "${PICKER_YEAR_MIN + pager.currentPage} 年",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 10.dp),
-                    textAlign = TextAlign.Center,
+                PickerStepper(
+                    label = "${PICKER_YEAR_MIN + pager.currentPage} 年",
+                    onPrev = { scope.launch { pager.animateScrollToPage((pager.currentPage - 1).coerceAtLeast(0)) } },
+                    onNext = {
+                        scope.launch { pager.animateScrollToPage((pager.currentPage + 1).coerceAtMost(pageCount - 1)) }
+                    },
                 )
                 HorizontalPager(state = pager) { page ->
                     val year = PICKER_YEAR_MIN + page
@@ -250,11 +259,12 @@ fun PeriodPickerSheet(
                     initialPage = ((current.year - PICKER_YEAR_MIN) / YEARS_PER_PAGE).coerceIn(0, pageCount - 1),
                 ) { pageCount }
                 val firstYear = PICKER_YEAR_MIN + pager.currentPage * YEARS_PER_PAGE
-                Text(
-                    "$firstYear – ${firstYear + YEARS_PER_PAGE - 1}",
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 10.dp),
-                    textAlign = TextAlign.Center,
+                PickerStepper(
+                    label = "$firstYear – ${firstYear + YEARS_PER_PAGE - 1}",
+                    onPrev = { scope.launch { pager.animateScrollToPage((pager.currentPage - 1).coerceAtLeast(0)) } },
+                    onNext = {
+                        scope.launch { pager.animateScrollToPage((pager.currentPage + 1).coerceAtMost(pageCount - 1)) }
+                    },
                 )
                 HorizontalPager(state = pager) { page ->
                     Column(Modifier.fillMaxWidth()) {
@@ -281,15 +291,26 @@ fun PeriodPickerSheet(
                     }
                 }
             }
-
-            Text(
-                "← 左右滑动切换${if (mode == PeriodMode.MONTH) "年份" else "年份段"} →",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                textAlign = TextAlign.Center,
-            )
         }
+    }
+}
+
+/** 选择面板里的年份步进：‹ 2026 年 ›，点箭头翻页（与左右滑动同步） */
+@Composable
+private fun PickerStepper(label: String, onPrev: () -> Unit, onNext: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        StepButton(Icons.Filled.KeyboardArrowLeft, "上一个", onPrev)
+        Text(
+            label,
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.padding(horizontal = 14.dp),
+        )
+        StepButton(Icons.Filled.KeyboardArrowRight, "下一个", onNext)
     }
 }
 
