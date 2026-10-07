@@ -113,24 +113,36 @@ class HomeSettlementTest {
         assertTrue(HomeSettlement.remainingToPileCount(Long.MAX_VALUE, 1, 100) <= 100f)
     }
 
+    // ---------- settlementNotePlan（纸币面额计划） ----------
+
     @Test
-    fun `零与负数无视觉金币`() {
-        assertEquals(0, HomeSettlement.moneyToVisualCoinCount(0))
-        assertEquals(0, HomeSettlement.moneyToVisualCoinCount(-100))
+    fun `零与负数无纸币`() {
+        assertEquals(0, HomeSettlement.settlementNotePlan(0).first)
+        assertEquals(0, HomeSettlement.settlementNotePlan(-100).first)
     }
 
     @Test
-    fun `小额下限两枚_大额封顶十六枚`() {
-        assertEquals(2, HomeSettlement.moneyToVisualCoinCount(1_00))
-        assertEquals(16, HomeSettlement.moneyToVisualCoinCount(500_000_00))
-        assertEquals(16, HomeSettlement.moneyToVisualCoinCount(Long.MAX_VALUE / 2))
+    fun `百元及以上统一用一百面值堆叠表示`() {
+        assertEquals(Denomination.HUNDRED, HomeSettlement.settlementNotePlan(100_00).second)
+        assertEquals(Denomination.HUNDRED, HomeSettlement.settlementNotePlan(438_00).second)
+        assertEquals(Denomination.HUNDRED, HomeSettlement.settlementNotePlan(88_000_00).second)
     }
 
     @Test
-    fun `金额越大金币越多_单调不减`() {
-        val amounts = longArrayOf(3_00, 20_00, 50_00, 100_00, 200_00, 500_00, 1_000_00, 2_000_00, 8_000_00)
-        val counts = amounts.map { HomeSettlement.moneyToVisualCoinCount(it) }
-        assertEquals(listOf(2, 4, 5, 6, 8, 9, 11, 13, 16), counts)
-        assertTrue(counts.zipWithNext().all { (a, b) -> a <= b })
+    fun `金额越大张数越多但封顶八张`() {
+        val amounts = longArrayOf(100_00, 300_00, 500_00, 1_000_00, 2_000_00, 8_000_00)
+        val counts = amounts.map { HomeSettlement.settlementNotePlan(it).first }
+        assertEquals(listOf(3, 4, 5, 6, 7, 8), counts)
+        assertTrue(HomeSettlement.settlementNotePlan(Long.MAX_VALUE / 2).first <= 8)
+    }
+
+    @Test
+    fun `小额使用对应面值`() {
+        assertEquals(1 to Denomination.ONE, HomeSettlement.settlementNotePlan(3_00))
+        assertEquals(1 to Denomination.FIVE, HomeSettlement.settlementNotePlan(5_00))
+        assertEquals(1 to Denomination.TEN, HomeSettlement.settlementNotePlan(10_00))
+        assertEquals(1 to Denomination.TWENTY, HomeSettlement.settlementNotePlan(20_00))
+        assertEquals(2 to Denomination.TWENTY, HomeSettlement.settlementNotePlan(40_00))
+        assertEquals(3 to Denomination.TWENTY, HomeSettlement.settlementNotePlan(99_00))
     }
 }

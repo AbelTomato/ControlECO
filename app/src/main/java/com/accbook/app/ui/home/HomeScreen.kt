@@ -44,39 +44,40 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.accbook.app.data.LedgerViewModel
 import com.accbook.app.data.budget.Budget
+import com.accbook.app.data.budget.Denomination
 import com.accbook.app.data.budget.HomeSettlement
 import com.accbook.app.data.budget.MonthCashFlow
 import com.accbook.app.ui.common.BudgetEditDialog
 import com.accbook.app.ui.theme.AccBookColors
+import com.accbook.app.ui.theme.NoteColor
 import com.accbook.app.ui.theme.accBook
 import com.accbook.app.util.Money
 import java.time.LocalDate
 import java.time.YearMonth
 import kotlin.math.ceil
-import kotlin.math.floor
 import kotlin.math.roundToLong
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * 首页：金币堆资源 HUD。
+ * 首页：纸币堆资源 HUD。
  *
- * 金币堆 = 剩余预算（比例映射到有限金币数，绝不与金额 1:1）；堆正下方为第一视觉信息
- * "剩余预算"，其下是权重更低的"本月已花"；右上角为游戏资源条式的"今日可用"。
+ * 纸币堆 = 剩余预算（比例映射到有限张数，绝不与金额 1:1；大额用堆叠的 ¥100 表示）；
+ * 堆正下方为第一视觉信息"剩余预算"，其下是权重更低的"本月已花"；
+ * 右上角为资源条式的"今日可用"纸票。
  *
  * 动画状态机（支出/收入严格独立、先支出后收入）：
  *   Idle → PileEntrance → [ExpenseSettlement → IncomeSettlement] → FinalSettled
- * 不存在的阶段自动跳过；settle 后强制显示数据库真实值，动画永不作为数据真源。
+ * 支出 = 从堆顶抽出纸币后消散；收入 = 纸币在堆中直接出现；settle 后强制显示数据库真实值，
+ * 动画永不作为数据真源。
  */
 private enum class HomeStage { Idle, PileEntrance, ExpenseSettlement, IncomeSettlement, FinalSettled }
 
@@ -110,7 +111,7 @@ fun HomeScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
     val ab = MaterialTheme.accBook
-    val palette = remember(ab) { coinPalette(ab) }
+    val noteColors = ab.noteColors
     var showBudgetDialog by remember { mutableStateOf(false) }
 
     if (budgetCents <= 0L) {
@@ -118,7 +119,7 @@ fun HomeScreen(
             cash = cash,
             today = today,
             pendingCount = pendingCount,
-            palette = palette,
+            noteColors = noteColors,
             onSetBudget = { showBudgetDialog = true },
             onQuickAdd = onQuickAdd,
             onOpenPending = onOpenPending,
@@ -133,7 +134,7 @@ fun HomeScreen(
         return
     }
 
-    val fx = remember { CoinFxController() }
+    val fx = remember { CashFxController() }
     val remainingAnim = remember { Animatable(0f) }
     val expenseAnim = remember { Animatable(0f) }
     var stage by remember { mutableStateOf(HomeStage.Idle) }
@@ -156,12 +157,9 @@ fun HomeScreen(
     }
 
     BoxWithConstraints(Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
-        val pileLayout = remember(maxWidth) { CoinPileLayout.build(maxWidth.value, CoinPileSpecs.COIN_RADIUS_DP) }
-        // 粒子出生高度 = 画布顶部附近（实测画布尺寸，避免估算偏差）；cy 坐标系原点在堆底基线
-        val density = LocalDensity.current
-        var canvasHeightDp by remember { mutableStateOf(maxHeight.value) }
-        val spawnY = -(canvasHeightDp - CoinPileSpecs.GROUND_PAD_DP) + 12f
+        val pileLayout = remember(maxWidth) { CashStackLayout.build(maxWidth.value) }
 
+        // 后台恢复时重建入口动画（entranceKey 由 ON_RESUME 递增）
         val owner = androidx.lifecycle.compose.LocalLifecycleOwner.current
         DisposableEffect(owner) {
             val observer = LifecycleEventObserver { _, event ->
@@ -174,9 +172,9 @@ fun HomeScreen(
         }
 
         fun pileCountFor(remainingCents: Long): Float =
-            HomeSettlement.remainingToPileCount(remainingCents, budgetCents, pileLayout.size)
+            HomeSettlement.remainingToPileCount(remainingCents, budgetCents, CashPileSpecs.CAPACITY)
 
-        // 每次 Home 进入/后台恢复先用真实金币从顶部重新形成当前资源堆。
+        // 每次 Home 进入/后台恢复先用真实纸币原地弹出重新形成当前资源堆。
         LaunchedEffect(entranceKey, session, animate) {
             val s = session ?: return@LaunchedEffect
             val targetRemaining = if (!settlementConsumed && s.hasDeltas) {
@@ -187,7 +185,7 @@ fun HomeScreen(
             val target = pileCountFor(targetRemaining).toInt()
             try {
                 stage = HomeStage.PileEntrance
-                fx.formPile(pileLayout, target, spawnY)
+                fx.formPile(pileLayout, target)
                 if (!settlementConsumed && s.hasDeltas) {
                     settlementConsumed = true
                     remainingAnim.snapTo(s.from.remainingCents().toFloat())
@@ -207,12 +205,12 @@ fun HomeScreen(
                         val oldF = pileCountFor(fromRemaining)
                         val newF = pileCountFor(newRemaining)
                         val intensity = (s.expenseDelta.toFloat() / budgetCents).coerceIn(0.15f, 1f)
-                        val origins = burstOrigins(pileLayout, oldF, newF, HomeSettlement.moneyToVisualCoinCount(s.expenseDelta))
+                        val (count, denom) = HomeSettlement.settlementNotePlan(s.expenseDelta)
                         coroutineScope {
                             launch { remainingAnim.animateTo(newRemaining.toFloat(), tween(560, easing = FastOutSlowInEasing)) }
                             launch { expenseAnim.animateTo((s.from.expenseCents + s.expenseDelta).toFloat(), tween(560, easing = FastOutSlowInEasing)) }
-                            launch { fx.pileCount.animateTo(newF, tween(560, easing = FastOutSlowInEasing)) }
-                            launch { fx.burstFrom(origins, intensity) }
+                            launch { fx.stackCount.animateTo(newF, tween(560, easing = FastOutSlowInEasing)) }
+                            launch { fx.pullOutNotes(pileLayout, removedFillIndices(oldF, newF, count), denom, intensity) }
                         }
                     }
                     if (s.incomeDelta > 0) {
@@ -221,22 +219,18 @@ fun HomeScreen(
                         banner = DeltaBanner("+ " + Money.formatYuanGrouped(s.incomeDelta), ab.income)
                         val afterExpense = s.from.remainingCents() - s.expenseDelta
                         val newRemaining = afterExpense + s.incomeDelta
-                        val oldF = if (s.expenseDelta > 0) pileCountFor(afterExpense) else fx.pileCount.value
+                        val oldF = if (s.expenseDelta > 0) pileCountFor(afterExpense) else fx.stackCount.value
                         val newF = pileCountFor(newRemaining)
+                        val (count, denom) = HomeSettlement.settlementNotePlan(s.incomeDelta)
                         coroutineScope {
                             launch { remainingAnim.animateTo(newRemaining.toFloat(), tween(540, easing = FastOutSlowInEasing)) }
-                            launch { fx.pileCount.animateTo(newF, tween(620, easing = FastOutSlowInEasing)) }
+                            launch { fx.stackCount.animateTo(newF, tween(620, easing = FastOutSlowInEasing)) }
                             launch {
-                                fx.fallOntoSlots(
+                                fx.popInNotes(
                                     layout = pileLayout,
-                                    slotIndices = incomeSlotIndices(
-                                        capacity = pileLayout.size,
-                                        oldF = oldF,
-                                        newF = newF,
-                                        n = HomeSettlement.moneyToVisualCoinCount(s.incomeDelta),
-                                    ),
-                                    spawnYDp = spawnY,
-                                    staggerMs = 42,
+                                    fillIndices = addedFillIndices(oldF, newF, count),
+                                    denom = denom,
+                                    holdMs = 460L, // 堆数量动画追平后再淡出粒子，避免闪断
                                 )
                             }
                         }
@@ -252,7 +246,7 @@ fun HomeScreen(
         // 驻留期间数据变化（悬浮卡确认等）：settle 后堆平滑跟随真实值
         LaunchedEffect(realRemaining, stage) {
             if (stage == HomeStage.FinalSettled && session != null) {
-                fx.pileCount.animateTo(pileCountFor(realRemaining), tween(400, easing = FastOutSlowInEasing))
+                fx.stackCount.animateTo(pileCountFor(realRemaining), tween(400, easing = FastOutSlowInEasing))
             }
         }
 
@@ -271,19 +265,14 @@ fun HomeScreen(
                     PendingBadge(count = pendingCount, onClick = onOpenPending)
                 }
                 Spacer(Modifier.weight(1f))
-                TodayHud(cents = shownToday, color = hudColor(status, ab), palette = palette)
+                TodayHud(cents = shownToday, color = hudColor(status, ab), noteColors = noteColors)
             }
 
-            Box(
-                Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .onSizeChanged { canvasHeightDp = it.height / density.density },
-            ) {
-                CoinPileView(
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                CashPileView(
                     fx = fx,
                     layout = pileLayout,
-                    palette = palette,
+                    noteColors = noteColors,
                     modifier = Modifier.fillMaxSize(),
                     visible = session != null,
                 )
@@ -347,12 +336,9 @@ fun HomeScreen(
 // ---------------- 子组件 ----------------
 
 @Composable
-private fun TodayHud(cents: Long, color: Color, palette: CoinPalette) {
+private fun TodayHud(cents: Long, color: Color, noteColors: List<NoteColor>) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Canvas(Modifier.size(18.dp)) {
-            val r = 8.dp.toPx()
-            drawCoin(size.width / 2f, size.height / 2f, r, r, 0f, palette)
-        }
+        BanknoteMark(noteColors = noteColors, width = 24.dp)
         Spacer(Modifier.width(7.dp))
         Column(horizontalAlignment = Alignment.End) {
             Text(Money.formatYuanGrouped(cents), style = MaterialTheme.typography.titleSmall, color = color)
@@ -400,13 +386,13 @@ private fun PendingBadge(count: Int, onClick: () -> Unit) {
     }
 }
 
-/** 未设预算：金币 + 本月已花 + 引导（金币堆无比例意义，不展示） */
+/** 未设预算：纸币 + 本月已花 + 引导（资源堆无比例意义，不展示） */
 @Composable
 private fun NoBudgetContent(
     cash: MonthCashFlow?,
     today: LocalDate,
     pendingCount: Int,
-    palette: CoinPalette,
+    noteColors: List<NoteColor>,
     onSetBudget: () -> Unit,
     onQuickAdd: () -> Unit,
     onOpenPending: () -> Unit,
@@ -422,10 +408,12 @@ private fun NoBudgetContent(
             }
         }
         Spacer(Modifier.weight(1f))
-        Canvas(Modifier.size(110.dp).align(Alignment.CenterHorizontally)) {
-            val r = 44.dp.toPx()
-            drawCoin(size.width / 2f, size.height / 2f, r, r, 0f, palette)
-        }
+        BanknoteMark(
+            noteColors = noteColors,
+            width = 150.dp,
+            withLabel = true,
+            modifier = Modifier.align(Alignment.CenterHorizontally),
+        )
         Spacer(Modifier.height(28.dp))
         Text(
             Money.formatYuanGrouped(spent),
@@ -468,30 +456,32 @@ private fun hudColor(status: Budget.Snapshot?, ab: AccBookColors): Color = when 
     else -> ab.goldDeep
 }
 
-/** 支出弹出金币的出发槽位：从堆顶被移除的 coins 中自顶向下取 */
-private fun burstOrigins(layout: List<PileCoinSpec>, oldF: Float, newF: Float, n: Int): List<PileCoinSpec> {
-    if (layout.isEmpty() || n <= 0) return emptyList()
-    val hi = (floor(oldF).toInt() - 1).coerceAtLeast(0)
-    val lo = ceil(newF).toInt().coerceIn(0, layout.size - 1)
+/**
+ * 支出抽出的填充序号：堆顶（最高填充序号 = 各叠顶层）向下取 n 张。
+ * 数量变化不足一张时也抽一张，保证反馈。
+ */
+private fun removedFillIndices(oldF: Float, newF: Float, n: Int): List<Int> {
+    if (n <= 0) return emptyList()
+    val hi = ceil(oldF).toInt() - 1
+    val lo = ceil(newF).toInt()
     val indices = ArrayList<Int>(n)
     var i = hi
-    while (i >= lo && indices.size < n) {
+    while (i >= lo && i >= 0 && indices.size < n) {
         indices += i
         i--
     }
-    if (indices.isEmpty()) indices += hi // 变化不足一枚时也从顶部弹一枚，保证反馈
-    return indices.map { layout[it % layout.size] }
+    if (indices.isEmpty()) indices += hi.coerceAtLeast(0)
+    return indices
 }
 
-/** 收入落币的目标槽位：堆新增的槽位；堆已满（比例封顶）时落到顶部装饰位 */
-private fun incomeSlotIndices(capacity: Int, oldF: Float, newF: Float, n: Int): List<Int> {
-    if (n <= 0 || capacity <= 0) return emptyList()
-    val from = floor(oldF).toInt()
-    val to = ceil(newF).toInt()
-    val added = (from until minOf(to, capacity)).toList()
+/** 收入出现的填充序号：新增槽位自低向高；堆已满（比例封顶）时顶部示意性弹出后淡出 */
+private fun addedFillIndices(oldF: Float, newF: Float, n: Int): List<Int> {
+    if (n <= 0) return emptyList()
+    val lo = ceil(oldF).toInt()
+    val hi = minOf(ceil(newF).toInt(), CashPileSpecs.CAPACITY)
+    val added = (lo until hi).toList()
     if (added.isNotEmpty()) return added.take(n)
-    val top = ((capacity - 1) downTo (capacity - 3).coerceAtLeast(0)).toList()
-    return top.take(n.coerceAtMost(3))
+    return ((CashPileSpecs.CAPACITY - 1) downTo (CashPileSpecs.CAPACITY - 3).coerceAtLeast(0)).toList().take(minOf(n, 3))
 }
 
 private fun reducedBanner(s: HomeSettlement.HomeSession, ab: AccBookColors): DeltaBanner {

@@ -71,23 +71,39 @@ object HomeSettlement {
     }
 
     /**
-     * 金额 → 视觉金币数映射：金额越大弹出的金币略多、力度略强，但封顶 16 枚，
-     * 避免大额消费产生大量绘制对象。0 返回 0（无动画）。
+     * 结算纸币计划：金额 → (张数, 面额)。
+     * 百元及以上统一用 ¥100 堆叠表示——"堆叠的 100 面值表示 1k/1w"，张数封顶 8 控制绘制压力；
+     * 小额收支才使用对应面值（不同颜色与大小的纸币只在小额时出现）。
+     * 0/负数返回 0 张（无动画）。
      */
-    fun moneyToVisualCoinCount(cents: Long): Int {
-        if (cents <= 0) return 0
+    fun settlementNotePlan(cents: Long): Pair<Int, Denomination> {
+        if (cents <= 0) return 0 to Denomination.HUNDRED
         val yuan = cents / 100
         return when {
-            yuan >= 5_000 -> 16
-            yuan >= 2_000 -> 13
-            yuan >= 1_000 -> 11
-            yuan >= 500 -> 9
-            yuan >= 200 -> 8
-            yuan >= 100 -> 6
-            yuan >= 50 -> 5
-            yuan >= 20 -> 4
-            yuan >= 5 -> 3
-            else -> 2
+            yuan >= 100 -> hundredNoteCount(yuan) to Denomination.HUNDRED
+            yuan >= 20 -> (yuan / 20).coerceIn(1, 3).toInt() to Denomination.TWENTY
+            yuan >= 10 -> 1 to Denomination.TEN
+            yuan >= 5 -> 1 to Denomination.FIVE
+            else -> 1 to Denomination.ONE
         }
     }
+
+    private fun hundredNoteCount(yuan: Long): Int = when {
+        yuan >= 5_000 -> 8
+        yuan >= 2_000 -> 7
+        yuan >= 1_000 -> 6
+        yuan >= 500 -> 5
+        yuan >= 300 -> 4
+        else -> 3
+    }
+}
+
+/** 人民币面额（几何与颜色由 UI 按 ordinal 从主题 noteColors 取，保持数据层纯函数） */
+enum class Denomination(val yuan: Long, val label: String) {
+    ONE(1, "1"),
+    FIVE(5, "5"),
+    TEN(10, "10"),
+    TWENTY(20, "20"),
+    FIFTY(50, "50"),
+    HUNDRED(100, "100"),
 }
