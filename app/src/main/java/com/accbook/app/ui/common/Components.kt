@@ -295,7 +295,7 @@ fun QuickAddPill(onClick: () -> Unit, modifier: Modifier = Modifier) {
             }
             .shadow(elevation = 8.dp, shape = shape)
             .clip(shape)
-            .background(MaterialTheme.colorScheme.primary)
+            .background(MaterialTheme.accBook.primaryStrong)
             .clickable(interactionSource = interaction, indication = LocalIndication.current, onClick = onClick)
             .padding(horizontal = 22.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,

@@ -34,6 +34,8 @@ data class AccBookColors(
     val critical: Color,
     /** 警报红：超支越严重越向此色过渡（心跳警示用，饱和度最高） */
     val criticalAlert: Color,
+    /** 悬浮"记账"按钮底色：比 primary 略高饱和，用于需要一眼看到的主操作 */
+    val primaryStrong: Color,
     /** 发丝分隔线 */
     val hairline: Color,
     /** 分类徽标调色板：按分类名稳定取色，避免 emoji/图标依赖 */
@@ -45,6 +47,7 @@ private fun lightAccBookColors() = AccBookColors(
     warning = Color(0xFFB47B10),
     critical = Color(0xFFC1352B),
     criticalAlert = Color(0xFFE01F1F),
+    primaryStrong = Color(0xFF3C6CA8),
     hairline = Color(0xFFE3EAF1),
     categoryPalette = listOf(
         Color(0xFF5E7C9E), // 蓝
@@ -63,6 +66,7 @@ private fun darkAccBookColors() = AccBookColors(
     warning = Color(0xFFE0B35C),
     critical = Color(0xFFF07C64),
     criticalAlert = Color(0xFFFF5844),
+    primaryStrong = Color(0xFF5B93D4),
     hairline = Color(0xFF2A323B),
     categoryPalette = listOf(
         Color(0xFF9FBAD8),

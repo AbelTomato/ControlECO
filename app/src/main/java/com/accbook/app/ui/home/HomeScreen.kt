@@ -4,12 +4,10 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -28,8 +26,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
@@ -39,6 +35,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -82,16 +79,16 @@ import kotlin.math.sin
 import kotlinx.coroutines.launch
 
 /**
- * 首页：三个预览模式，左右滑动或点击中心切换（无自动播放，一切动画由交互触发）。
- *   1. 总剩余预算 —— 中心大环（弧长 = 剩余比例，绿/黄/红随额度变化），环内再套一条细环表示
- *      本月已过时间（与预算进度对照）；环内"本月还可以花"，环下方大字"本日剩余"；
+ * 首页：三个预览模式，点击中心或圆点在 1→2→3→1 间**翻转切换**（绕 Y 轴翻转，不滑动）。
+ *   1. 总剩余预算 —— 中心大环（弧长 = 剩余比例，绿/黄/红随额度变化），环内再套一条淡蓝细环
+ *      表示本月已过时间（与预算进度对照）；环内"本月还可以花"，环下方大字"本日剩余"；
  *   2. 分类剩余预算 —— 每个设了预算的分类一个环 + "其他"聚合环（未设预算分类的剩余与支出），
- *      数量自适应网格缩放以容纳全部；
+ *      数量自适应网格缩放以容纳全部，不足一行的行内居中；
  *   3. 已花费与总存款 —— 无圆环，中央大字。
  *
  * 金额超过 4 位整数自动进位 K/M/B；环内金额按可用宽度自动缩放，不与环重叠。
  * 超支/临界的红色数字带心跳与轻微摇晃警示，强度随剩余比例加深（设上限），
- * 系统"减少动画"时全部降级。
+ * 系统"减少动画"时全部降级（含切换改为瞬时）。
  */
 private const val MODE_COUNT = 3
 
@@ -152,35 +149,28 @@ fun HomeScreen(vm: LedgerViewModel, onOpenPending: () -> Unit) {
 
     val reducedMotion = rememberReducedMotion()
     val scope = rememberCoroutineScope()
-    val pagerState = rememberPagerState { MODE_COUNT }
-    val pop = remember { Animatable(1f) }
+    var mode by remember { mutableIntStateOf(0) }
+    val flip = remember { Animatable(0f) }
+    val density = LocalDensity.current.density
 
-    // 点击中心：切到下一模式——先收缩再回弹（"弹动"），页面同时横移到位
-    val advance: () -> Unit = {
-        if (!pagerState.isScrollInProgress) {
-            val next = (pagerState.currentPage + 1) % MODE_COUNT
+    // 切换 = 翻转（绕 Y 轴转到 90° 侧立 → 换内容 → 从 −90° 转回），可循环 1→2→3→1
+    val flipTo: (Int) -> Unit = { target ->
+        val t = ((target % MODE_COUNT) + MODE_COUNT) % MODE_COUNT
+        if (!flip.isRunning && t != mode) {
             scope.launch {
                 if (reducedMotion) {
-                    pagerState.scrollToPage(next)
+                    mode = t
                 } else {
-                    launch {
-                        pagerState.animateScrollToPage(
-                            next,
-                            animationSpec = tween(340, easing = FastOutSlowInEasing),
-                        )
-                    }
-                    launch {
-                        pop.animateTo(0.93f, tween(90))
-                        pop.animateTo(
-                            1f,
-                            spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
-                        )
-                    }
+                    flip.animateTo(90f, tween(150, easing = FastOutSlowInEasing))
+                    mode = t
+                    flip.snapTo(-90f)
+                    flip.animateTo(0f, tween(150, easing = FastOutSlowInEasing))
                 }
             }
         }
     }
-    val latestAdvance by rememberUpdatedState(advance)
+    val latestFlipTo by rememberUpdatedState(flipTo)
+    val advance: () -> Unit = { latestFlipTo(mode + 1) }
 
     val rings = remember(categoryBudgets, categorySums, categories, budgetCents, spentCents) {
         buildCategoryRings(categoryBudgets, categorySums, categories, budgetCents, spentCents)
@@ -196,34 +186,28 @@ fun HomeScreen(vm: LedgerViewModel, onOpenPending: () -> Unit) {
             }
         }
 
-        HorizontalPager(
-            state = pagerState,
-            modifier = Modifier
+        Box(
+            Modifier
                 .weight(1f)
                 .fillMaxWidth()
                 .graphicsLayer {
-                    // 点击弹动的缩放只在 draw 阶段读取，不触发重组
-                    scaleX = pop.value
-                    scaleY = pop.value
-                },
-        ) { page ->
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .pointerInput(Unit) { detectTapGestures { latestAdvance() } },
-                contentAlignment = Alignment.Center,
-            ) {
-                when (page) {
-                    0 -> ModeRemaining(s, today)
-                    1 -> ModeCategories(rings)
-                    else -> ModeSpentAndDeposit(s, totalDepositCents)
+                    // 翻转角度只在 draw 阶段读取，不触发重组
+                    rotationY = flip.value
+                    cameraDistance = 14f * density
                 }
+                .pointerInput(Unit) { detectTapGestures { advance() } },
+            contentAlignment = Alignment.Center,
+        ) {
+            when (mode) {
+                0 -> ModeRemaining(s, today)
+                1 -> ModeCategories(rings)
+                else -> ModeSpentAndDeposit(s, totalDepositCents)
             }
         }
 
         ModeIndicator(
-            current = pagerState.currentPage,
-            onSelect = { index -> scope.launch { pagerState.animateScrollToPage(index) } },
+            current = mode,
+            onSelect = { index -> flipTo(index) },
         )
     }
 }
@@ -241,8 +225,9 @@ private fun ModeRemaining(s: Budget.Snapshot, today: LocalDate) {
     val percent = (s.remainingRatio * 100).roundToInt().coerceIn(0, 100)
     val timeRatio = (today.dayOfMonth.toFloat() / today.lengthOfMonth()).coerceIn(0f, 1f)
     val trackColor = ab.hairline
-    val timeTrackColor = MaterialTheme.colorScheme.outlineVariant
-    val timeColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
+    // 月份环（本月已过时间）：淡蓝，与预算主环区分
+    val timeTrackColor = MaterialTheme.colorScheme.primaryContainer
+    val timeColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
     val ink = MaterialTheme.colorScheme.onBackground
     val overColor = toneColor(Budget.Tone.LOW, severity)
 
@@ -363,13 +348,13 @@ private fun ModeCategories(items: List<CategoryRingData>) {
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 items.chunked(cols).forEach { rowItems ->
+                    // 不足一行的行内居中（fillMaxWidth + CenterHorizontally），不靠左/右对齐
                     Row(
-                        horizontalArrangement = Arrangement.spacedBy(gap),
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(gap, Alignment.CenterHorizontally),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        if (rowItems.size < cols) Spacer(Modifier.size(ringSize))
                         rowItems.forEach { CategoryRing(it, ringSize, stroke, trackColor) }
-                        if (rowItems.size < cols) Spacer(Modifier.size(ringSize))
                     }
                     Spacer(Modifier.height(gap))
                 }
