@@ -85,7 +85,8 @@ import kotlinx.coroutines.launch
 /**
  * 首页：三个预览模式，点击中心或圆点在 1→2→3→1 间**翻转切换**（绕 Y 轴翻转，不滑动）。
  *   1. 总剩余预算 —— 中心大环（弧长 = 剩余比例，绿/黄/红随额度变化），环内再套一条淡蓝细环
- *      表示本月已过时间（与预算进度对照）；环内"本月还可以花"，环下方大字"本日剩余"；
+ *      表示本月**剩余**时间：与主环同口径（饱和度高的弧 = 还剩多少），两环直接比长短即可
+ *      （蓝弧比绿弧短 = 花钱比时间快）；环内"本月还可以花"+ 剩余天数，环下方大字"本日剩余"；
  *   2. 分类剩余预算 —— 每个设了预算的分类一个环 + "其他"聚合环（未设预算分类的剩余与支出），
  *      数量自适应网格缩放以容纳全部，不足一行的行内居中；
  *   3. 已花费与总存款 —— 无圆环，中央大字。
@@ -308,9 +309,13 @@ private fun ModeRemaining(s: Budget.Snapshot, today: LocalDate) {
     val ratio = s.remainingRatio.coerceIn(0f, 1f)
     val percent = (s.remainingRatio * 100).roundToInt().coerceIn(0, 100)
     val timeRatio = (today.dayOfMonth.toFloat() / today.lengthOfMonth()).coerceIn(0f, 1f)
+    // 月份细环与主环同口径：饱和度高的弧 = 还剩多少，所以画"本月剩余"而非"已过"。
+    // 此前画"已过"（8 号 = 1/4）会被读成"只剩 1/4"，且与主环方向相反、无法直接对比。
+    val monthLeftRatio = (1f - timeRatio).coerceIn(0f, 1f)
+    val daysLeftInMonth = (today.lengthOfMonth() - today.dayOfMonth).coerceAtLeast(0)
     // 底轨用比发丝线略深的 ringTrack：页面底色是浅蓝，hairline 会糊在背景里
     val trackColor = ab.ringTrack
-    // 月份环（本月已过时间）：饱和蓝，与预算主环明显区分（此前灰调不起眼）
+    // 月份环（本月剩余时间）：饱和蓝，与预算主环明显区分（此前灰调不起眼）
     val timeTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.22f)
     val timeColor = ab.primaryStrong
     val ink = MaterialTheme.colorScheme.onBackground
@@ -343,18 +348,20 @@ private fun ModeRemaining(s: Budget.Snapshot, today: LocalDate) {
                             style = Stroke(strokePx),
                         )
                     }
-                    // 时间细环：本月已过比例（与预算进度对照，不表达金额）
+                    // 时间细环：本月剩余比例（与预算主环同口径，直接比长短；不表达金额）
                     val timeR = mainR - strokePx / 2f - 10.dp.toPx() - timeStroke.toPx() / 2f
                     drawCircle(color = timeTrackColor, radius = timeR, style = Stroke(timeStroke.toPx()))
-                    drawArc(
-                        color = timeColor,
-                        startAngle = -90f,
-                        sweepAngle = 360f * timeRatio,
-                        useCenter = false,
-                        topLeft = Offset(center.x - timeR, center.y - timeR),
-                        size = Size(timeR * 2f, timeR * 2f),
-                        style = Stroke(timeStroke.toPx()),
-                    )
+                    if (monthLeftRatio > 0f) {
+                        drawArc(
+                            color = timeColor,
+                            startAngle = -90f,
+                            sweepAngle = 360f * monthLeftRatio,
+                            useCenter = false,
+                            topLeft = Offset(center.x - timeR, center.y - timeR),
+                            size = Size(timeR * 2f, timeR * 2f),
+                            style = Stroke(timeStroke.toPx()),
+                        )
+                    }
                 }
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
@@ -374,6 +381,12 @@ private fun ModeRemaining(s: Budget.Snapshot, today: LocalDate) {
                         )
                         Text("$percent%", style = MaterialTheme.typography.titleSmall, color = mainColor)
                     }
+                    // 细环口径说明：避免"这条蓝环还剩多少"再被读反
+                    Text(
+                        "本月剩余 $daysLeftInMonth 天",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
             Spacer(Modifier.height(36.dp))
