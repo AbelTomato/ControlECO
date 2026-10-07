@@ -1,27 +1,19 @@
 package com.accbook.app.ui.home
 
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.Button
@@ -31,6 +23,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -46,9 +39,12 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
-import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.accbook.app.data.LedgerViewModel
 import com.accbook.app.data.budget.Budget
@@ -56,12 +52,14 @@ import com.accbook.app.ui.common.BudgetEditDialog
 import com.accbook.app.ui.theme.accBook
 import com.accbook.app.util.Money
 import java.time.LocalDate
-import kotlin.math.roundToLong
+import kotlin.math.roundToInt
 
 /**
- * 首页：游戏 HUD 式预算视图（克制版）。
- * 第一层级：剩余可用金额（金币 + 大字）；第二层级：本月已花 + 预算消耗进度；
- * 第三层级：今天建议最多花。三态 Normal/Warning/Critical 只靠颜色与简短文案表达。
+ * 首页：极简预算视图（无动画——动画方案实测卡顿已整体回退）。
+ *
+ * 中心 = 当月剩余预算饼图（环形进度，随剩余额度变色：充足绿 / 中等蓝 / 紧张红）；
+ * 饼图正下方为第一视觉信息"剩余预算"，其下是权重更低的"本月已花"；
+ * 右上角为"今日可用"资源条。所有数值直接读数据库真实值，不经过任何展示层插值。
  */
 @Composable
 fun HomeScreen(
@@ -73,34 +71,87 @@ fun HomeScreen(
     val spentCents by vm.homeNetSpent.collectAsStateWithLifecycle()
     val pendingCount by vm.pendingCount.collectAsStateWithLifecycle()
     var showBudgetDialog by remember { mutableStateOf(false) }
-    val today = remember { LocalDate.now() }
+    var todayState by remember { mutableStateOf(LocalDate.now()) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) todayState = LocalDate.now()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    val today = todayState
     val snapshot = remember(budgetCents, spentCents, today) {
         Budget.compute(budgetCents, spentCents, today)
     }
+    val ab = MaterialTheme.accBook
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 24.dp),
-    ) {
-        Spacer(Modifier.height(12.dp))
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("${today.monthValue}月", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.weight(1f))
+    if (budgetCents <= 0L) {
+        NoBudgetContent(
+            spentCents = spentCents,
+            today = today,
+            pendingCount = pendingCount,
+            onSetBudget = { showBudgetDialog = true },
+            onQuickAdd = onQuickAdd,
+            onOpenPending = onOpenPending,
+        )
+        if (showBudgetDialog) {
+            BudgetEditDialog(
+                currentCents = 0L,
+                onSave = { vm.setMonthlyBudget(it); showBudgetDialog = false },
+                onDismiss = { showBudgetDialog = false },
+            )
+        }
+        return
+    }
+
+    // budget > 0 时 compute 必返回非空，此分支仅为编译器收窄
+    val s = snapshot ?: return
+
+    Column(Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
+        Spacer(Modifier.height(8.dp))
+        Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "${today.monthValue}月",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.width(10.dp))
             if (pendingCount > 0) {
                 PendingBadge(count = pendingCount, onClick = onOpenPending)
             }
-        }
-        Spacer(Modifier.height(44.dp))
-
-        if (snapshot != null) {
-            BudgetHero(snapshot)
-        } else {
-            NoBudgetHero(spentCents, onSetBudget = { showBudgetDialog = true })
+            Spacer(Modifier.weight(1f))
+            TodayHud(cents = s.suggestedDailyCents, color = toneColor(s.tone))
         }
 
-        Spacer(Modifier.height(44.dp))
+        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+            BudgetPie(snapshot = s)
+        }
+
+        Column(
+            Modifier.fillMaxWidth().height(158.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                Money.formatYuanGrouped(s.remainingCents),
+                style = MaterialTheme.typography.displayMedium,
+                textAlign = TextAlign.Center,
+                color = if (s.state == Budget.State.CRITICAL) ab.critical else MaterialTheme.colorScheme.onBackground,
+            )
+            Text(
+                "剩余预算",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(10.dp))
+            Text(
+                "本月已花 ${Money.formatYuanGrouped(s.spentCents)}",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(28.dp))
+        }
+
         Button(
             onClick = onQuickAdd,
             modifier = Modifier.fillMaxWidth().height(56.dp),
@@ -126,126 +177,80 @@ fun HomeScreen(
     }
 }
 
-/** 消费状态 → 强调色（Normal 金 / Warning 琥珀 / Critical 克制的红） */
+// ---------------- 子组件 ----------------
+
+/** 剩余额度档位 → 用色：充足绿（收入绿同源）/ 中等蓝（主色）/ 紧张红 */
 @Composable
-fun budgetStateColor(state: Budget.State): Color = when (state) {
-    Budget.State.NORMAL -> MaterialTheme.accBook.goldDeep
-    Budget.State.WARNING -> MaterialTheme.accBook.warning
-    Budget.State.CRITICAL -> MaterialTheme.accBook.critical
+private fun toneColor(tone: Budget.Tone): Color = when (tone) {
+    Budget.Tone.OK -> MaterialTheme.accBook.income
+    Budget.Tone.MID -> MaterialTheme.colorScheme.primary
+    Budget.Tone.LOW -> MaterialTheme.accBook.critical
 }
 
 @Composable
-private fun BudgetHero(s: Budget.Snapshot) {
-    val ab = MaterialTheme.accBook
-    Column(Modifier.fillMaxWidth()) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            CoinMark(coinSize = 84.dp, progress = s.spentRatio, state = s.state)
-            Spacer(Modifier.width(24.dp))
-            Column {
-                RemainingText(s.remainingCents, s.state)
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    "可用余额",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-        Spacer(Modifier.height(36.dp))
-        BudgetProgress(s)
-        Spacer(Modifier.height(24.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(8.dp).clip(CircleShape).background(budgetStateColor(s.state)))
-            Spacer(Modifier.width(8.dp))
+private fun TodayHud(cents: Long, color: Color) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(8.dp).clip(CircleShape).background(color))
+        Spacer(Modifier.width(7.dp))
+        Column(horizontalAlignment = Alignment.End) {
+            Text(Money.formatYuanGrouped(cents), style = MaterialTheme.typography.titleSmall, color = color)
             Text(
-                if (s.remainingCents > 0) {
-                    "今天建议最多花 ${Money.formatYuanGrouped(s.suggestedDailyCents)} · 还剩 ${s.daysLeft} 天"
-                } else {
-                    "本月预算已用完，超支 ${Money.formatYuanGrouped(-s.remainingCents)}"
-                },
-                style = MaterialTheme.typography.bodyMedium,
+                "今日可用",
+                style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
 }
 
-/** 第二层级：预算消耗进度条 + 已花/预算数字 */
+/**
+ * 剩余预算饼图：环形进度（饼图的环形式读法），弧长 = 剩余比例，
+ * 颜色随剩余额度三档变化；环心为剩余百分比。静态绘制，无任何动画。
+ * 剩余 ≤ 0（超支）时整环转红。
+ */
 @Composable
-private fun BudgetProgress(s: Budget.Snapshot) {
+private fun BudgetPie(snapshot: Budget.Snapshot, modifier: Modifier = Modifier) {
     val ab = MaterialTheme.accBook
-    val fraction by animateFloatAsState(
-        targetValue = s.spentRatio.coerceIn(0f, 1f),
-        animationSpec = tween(700, easing = FastOutSlowInEasing),
-        label = "budgetProgress",
-    )
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .height(6.dp)
-            .clip(RoundedCornerShape(3.dp))
-            .background(ab.hairline),
-    ) {
-        if (s.spentRatio > 0f) {
-            Box(
-                Modifier
-                    .fillMaxWidth(fraction.coerceAtLeast(0.01f))
-                    .fillMaxHeight()
-                    .clip(RoundedCornerShape(3.dp))
-                    .background(budgetStateColor(s.state)),
+    val color = toneColor(snapshot.tone)
+    val ratio = snapshot.remainingRatio.coerceIn(0f, 1f)
+    val percent = (snapshot.remainingRatio * 100).roundToInt().coerceIn(0, 100)
+    val measurer = rememberTextMeasurer()
+    val labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val percentLayout = remember(percent, color) {
+        measurer.measure(
+            "$percent%",
+            TextStyle(
+                fontSize = 34.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = color,
+                fontFeatureSettings = "tnum",
+            ),
+        )
+    }
+    val labelLayout = remember(labelColor) {
+        measurer.measure("剩余", TextStyle(fontSize = 12.sp, color = labelColor))
+    }
+    Canvas(modifier.size(200.dp)) {
+        val stroke = 24.dp.toPx()
+        val radius = (size.minDimension - stroke) / 2f
+        // 轨道 = 已消耗部分
+        drawCircle(color = ab.hairline, radius = radius, style = Stroke(stroke))
+        when {
+            snapshot.remainingCents <= 0L -> drawCircle(color = color, radius = radius, style = Stroke(stroke))
+            ratio > 0f -> drawArc(
+                color = color,
+                startAngle = -90f,
+                sweepAngle = 360f * ratio,
+                useCenter = false,
+                style = Stroke(width = stroke, cap = StrokeCap.Round),
             )
         }
-    }
-    Spacer(Modifier.height(10.dp))
-    Row(
-        Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text("本月已花 ${Money.formatYuanGrouped(s.spentCents)}", style = MaterialTheme.typography.titleSmall)
-        Text(
-            "预算 ${Money.formatYuanGrouped(s.budgetCents)}",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-}
-
-/** 剩余金额：变化时轻微计数动画（余额被消耗的直观反馈），Critical 转红 */
-@Composable
-private fun RemainingText(cents: Long, state: Budget.State) {
-    val animated by animateFloatAsState(
-        targetValue = cents.toFloat(),
-        animationSpec = tween(700, easing = FastOutSlowInEasing),
-        label = "remaining",
-    )
-    val shown = animated.roundToLong()
-    Text(
-        Money.formatYuanGrouped(shown),
-        style = MaterialTheme.typography.displayMedium,
-        color = if (state == Budget.State.CRITICAL) {
-            MaterialTheme.accBook.critical
-        } else {
-            MaterialTheme.colorScheme.onBackground
-        },
-    )
-}
-
-/** 未设预算：本月已花为主 + 引导设置 */
-@Composable
-private fun NoBudgetHero(spentCents: Long, onSetBudget: () -> Unit) {
-    Column(Modifier.fillMaxWidth()) {
-        CoinMark(coinSize = 84.dp, progress = 0f, state = Budget.State.NORMAL)
-        Spacer(Modifier.height(24.dp))
-        Text(Money.formatYuanGrouped(spentCents), style = MaterialTheme.typography.displayMedium)
-        Spacer(Modifier.height(4.dp))
-        Text(
-            "本月已花 · 设置预算后这里显示还能花多少",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.height(16.dp))
-        TextButton(onClick = onSetBudget) { Text("设置本月预算") }
+        val gap = 6.dp.toPx()
+        val blockHeight = percentLayout.size.height + gap + labelLayout.size.height
+        var y = center.y - blockHeight / 2f
+        drawText(percentLayout, topLeft = Offset(center.x - percentLayout.size.width / 2f, y))
+        y += percentLayout.size.height + gap
+        drawText(labelLayout, topLeft = Offset(center.x - labelLayout.size.width / 2f, y))
     }
 }
 
@@ -263,43 +268,75 @@ private fun PendingBadge(count: Int, onClick: () -> Unit) {
     }
 }
 
-/**
- * 金币/Token 视觉：低饱和暖金圆币 + 外圈预算消耗环形进度。
- * 扁平两色 + 细描边细节，无渐变；消耗越多环越满，颜色随状态转琥珀/红。
- */
+/** 未设预算：中性占位环 + 本月已花 + 引导设置（无预算时饼图无比例意义） */
 @Composable
-private fun CoinMark(coinSize: Dp, progress: Float, state: Budget.State, modifier: Modifier = Modifier) {
-    val ab = MaterialTheme.accBook
-    val ringColor = budgetStateColor(state)
-    val swept by animateFloatAsState(
-        targetValue = progress.coerceIn(0f, 1f),
-        animationSpec = tween(700, easing = FastOutSlowInEasing),
-        label = "coinRing",
-    )
-    val measurer = rememberTextMeasurer()
-    Canvas(modifier.size(coinSize)) {
-        val stroke = 4.dp.toPx()
-        val ringRadius = (this.size.minDimension - stroke) / 2f
-        drawCircle(color = ab.hairline, radius = ringRadius, style = Stroke(stroke))
-        drawArc(
-            color = ringColor,
-            startAngle = -90f,
-            sweepAngle = 360f * swept,
-            useCenter = false,
-            style = Stroke(width = stroke, cap = StrokeCap.Round),
+private fun NoBudgetContent(
+    spentCents: Long,
+    today: LocalDate,
+    pendingCount: Int,
+    onSetBudget: () -> Unit,
+    onQuickAdd: () -> Unit,
+    onOpenPending: () -> Unit,
+) {
+    Column(Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
+        Spacer(Modifier.height(12.dp))
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("${today.monthValue}月", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.width(8.dp))
+            if (pendingCount > 0) {
+                PendingBadge(count = pendingCount, onClick = onOpenPending)
+            }
+        }
+        Spacer(Modifier.weight(1f))
+        BudgetRingPlaceholder(modifier = Modifier.align(Alignment.CenterHorizontally))
+        Spacer(Modifier.height(28.dp))
+        Text(
+            Money.formatYuanGrouped(spentCents),
+            style = MaterialTheme.typography.displayMedium,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth(),
         )
-        val coinRadius = ringRadius - stroke - 3.dp.toPx()
-        drawCircle(color = ab.gold, radius = coinRadius)
-        drawCircle(color = ab.goldDeep.copy(alpha = 0.30f), radius = coinRadius, style = Stroke(1.5.dp.toPx()))
-        drawCircle(color = ab.goldDeep.copy(alpha = 0.20f), radius = coinRadius * 0.70f, style = Stroke(1.dp.toPx()))
-        val glyph = measurer.measure(
-            "¥",
-            TextStyle(
-                fontSize = (coinRadius * 0.85f).toDp().toSp(),
-                fontWeight = FontWeight.Bold,
-                color = ab.goldDeep,
-                fontFeatureSettings = "tnum",
+        Text(
+            "本月已花 · 设置预算后这里显示还能花多少",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(16.dp))
+        TextButton(onClick = onSetBudget, modifier = Modifier.fillMaxWidth()) { Text("设置本月预算") }
+        Spacer(Modifier.weight(1f))
+        Button(
+            onClick = onQuickAdd,
+            modifier = Modifier.fillMaxWidth().height(56.dp),
+            shape = MaterialTheme.shapes.medium,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
             ),
+        ) {
+            Icon(Icons.Filled.Add, contentDescription = null)
+            Spacer(Modifier.width(6.dp))
+            Text("记一笔", style = MaterialTheme.typography.titleMedium)
+        }
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+/** 未设预算时的中性占位环（与正式饼图同构，但不表达比例） */
+@Composable
+private fun BudgetRingPlaceholder(modifier: Modifier = Modifier) {
+    val measurer = rememberTextMeasurer()
+    val glyphColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val trackColor = MaterialTheme.colorScheme.surfaceVariant
+    val glyph = remember(glyphColor) {
+        measurer.measure("¥", TextStyle(fontSize = 30.sp, fontWeight = FontWeight.Bold, color = glyphColor))
+    }
+    Canvas(modifier.size(120.dp)) {
+        drawCircle(
+            color = trackColor,
+            radius = (size.minDimension - 12.dp.toPx()) / 2f,
+            style = Stroke(12.dp.toPx()),
         )
         drawText(
             glyph,

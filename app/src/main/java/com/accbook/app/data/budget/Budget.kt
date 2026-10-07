@@ -20,11 +20,34 @@ object Budget {
     /** Warning 阈值：已消耗预算比例达到 75% 时进入警示 */
     const val WARNING_RATIO = 0.75
 
+    /**
+     * 剩余额度三档（绿-蓝-红）：中心饼图与"今日可用"统一用色。
+     * 与 State（按消耗比例判定）不同，Tone 直接按剩余比例分档，
+     * 让"还剩多少可以花"在视觉上始终有三段清晰的读数。
+     */
+    enum class Tone { OK, MID, LOW }
+
+    /** 剩余比例 ≥ 50% 充足（绿） */
+    const val TONE_OK_RATIO = 0.5
+
+    /** 剩余比例 20%–50% 中等（蓝），< 20% 紧张（红） */
+    const val TONE_LOW_RATIO = 0.2
+
+    fun remainingTone(remainingRatio: Float): Tone = when {
+        remainingRatio >= TONE_OK_RATIO -> Tone.OK
+        remainingRatio >= TONE_LOW_RATIO -> Tone.MID
+        else -> Tone.LOW
+    }
+
     data class Snapshot(
         val budgetCents: Long,
         val spentCents: Long,
         /** 剩余可用（可为负 = 超支） */
         val remainingCents: Long,
+        /** 剩余比例 = 剩余 / 预算（可为负），饼图与档位用色的数据源 */
+        val remainingRatio: Float,
+        /** 剩余额度档位（绿-蓝-红） */
+        val tone: Tone,
         /** 本月剩余天数（含今天，最少 1） */
         val daysLeft: Int,
         /** 预算消耗比例 0..1+ */
@@ -40,6 +63,7 @@ object Budget {
         val daysLeft = (today.lengthOfMonth() - today.dayOfMonth + 1).coerceAtLeast(1)
         val remaining = budgetCents - spentCents
         val ratio = if (budgetCents > 0) spentCents.toDouble() / budgetCents else 0.0
+        val remainingRatio = remaining.toDouble() / budgetCents
         val state = when {
             remaining <= 0 -> State.CRITICAL
             ratio >= WARNING_RATIO -> State.WARNING
@@ -50,6 +74,8 @@ object Budget {
             budgetCents = budgetCents,
             spentCents = spentCents,
             remainingCents = remaining,
+            remainingRatio = remainingRatio.toFloat(),
+            tone = remainingTone(remainingRatio.toFloat()),
             daysLeft = daysLeft,
             spentRatio = ratio.toFloat(),
             suggestedDailyCents = suggested,

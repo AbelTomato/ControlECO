@@ -59,4 +59,33 @@ class BudgetTest {
         val s = Budget.compute(2_000_00, 1_000_00, day)!!
         assertEquals(0.5f, s.spentRatio, 0.0001f)
     }
+
+    // ---------- 剩余额度三档（饼图 绿-蓝-红 用色） ----------
+
+    @Test
+    fun `剩余充足为绿_中等为蓝_紧张为红`() {
+        assertEquals(Budget.Tone.OK, Budget.remainingTone(1.0f))
+        assertEquals(Budget.Tone.OK, Budget.remainingTone(0.5f))
+        assertEquals(Budget.Tone.MID, Budget.remainingTone(0.49f))
+        assertEquals(Budget.Tone.MID, Budget.remainingTone(0.2f))
+        assertEquals(Budget.Tone.LOW, Budget.remainingTone(0.19f))
+        assertEquals(Budget.Tone.LOW, Budget.remainingTone(0.0f))
+        assertEquals(Budget.Tone.LOW, Budget.remainingTone(-0.3f))
+    }
+
+    @Test
+    fun `快照携带剩余比例与档位`() {
+        val ok = Budget.compute(1_000_00, 400_00, day)!!
+        assertEquals(0.6f, ok.remainingRatio, 0.0001f)
+        assertEquals(Budget.Tone.OK, ok.tone)
+
+        val mid = Budget.compute(1_000_00, 900_00, day)!!
+        assertEquals(0.1f, mid.remainingRatio, 0.0001f)
+        assertEquals(Budget.Tone.LOW, mid.tone)
+        assertEquals(Budget.State.WARNING, mid.state) // 消耗 90% 同时 State 为警示
+
+        val over = Budget.compute(1_000_00, 1_200_00, day)!!
+        assertEquals(-0.2f, over.remainingRatio, 0.0001f)
+        assertEquals(Budget.Tone.LOW, over.tone)
+    }
 }
