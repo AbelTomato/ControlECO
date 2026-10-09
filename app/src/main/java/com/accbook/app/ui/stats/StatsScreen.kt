@@ -2,6 +2,7 @@ package com.accbook.app.ui.stats
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -24,6 +25,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.accbook.app.data.LedgerViewModel
@@ -35,6 +37,7 @@ import com.accbook.app.ui.common.PeriodSwitch
 import com.accbook.app.ui.common.periodBalanceLabel
 import com.accbook.app.ui.common.periodScopeLabel
 import com.accbook.app.ui.theme.accBook
+import com.accbook.app.ui.theme.categoryColors
 import com.accbook.app.util.Money
 import java.time.LocalDate
 import java.time.YearMonth
@@ -66,7 +69,8 @@ fun StatsScreen(vm: LedgerViewModel, scrollToTopTick: Int = 0) {
     val expense = totalsReady.firstOrNull { it.type == TxType.EXPENSE }?.totalCents ?: 0L
     val income = totalsReady.firstOrNull { it.type == TxType.INCOME }?.totalCents ?: 0L
 
-    // 日均：当前周期用"截至今天"，历史周期用满周期天数
+    // 日均结余：净结余 ÷ 天数（当前周期用"截至今天"，历史周期用满周期天数）；
+    // 结余为负时带上负号（说明这个周期平均每天在净流出）
     val now = YearMonth.now()
     val isCurrentPeriod = if (mode == PeriodMode.MONTH) month == now else month.year == now.year
     val daysElapsed = when {
@@ -75,7 +79,7 @@ fun StatsScreen(vm: LedgerViewModel, scrollToTopTick: Int = 0) {
         isCurrentPeriod -> LocalDate.now().dayOfYear
         else -> if (YearMonth.of(month.year, 2).lengthOfMonth() == 29) 366 else 365
     }
-    val dailyAverage = expense / daysElapsed.coerceAtLeast(1)
+    val dailyBalance = (income - expense) / daysElapsed.coerceAtLeast(1)
 
     // 柱状图数据：月视角每日一根、年视角每月一根
     val bars = remember(rowsReady, month, mode) {
@@ -99,6 +103,10 @@ fun StatsScreen(vm: LedgerViewModel, scrollToTopTick: Int = 0) {
         }
         ChartMath.mergeSlices(actual, budget)
     }
+    // 圆环选中态与配色：配色按"分类名集合"分配（同屏不重复），选中态点空白处取消
+    var selectedSlice by remember(slices) { mutableStateOf<String?>(null) }
+    val palette = MaterialTheme.accBook.categoryPalette
+    val sliceColors = remember(slices, palette) { categoryColors(palette, slices.map { it.name }) }
     val pageScroll = rememberScrollState()
     // 再次点击底部「统计」标签：回到顶部
     LaunchedEffect(scrollToTopTick) {
@@ -107,7 +115,9 @@ fun StatsScreen(vm: LedgerViewModel, scrollToTopTick: Int = 0) {
     Column(
         Modifier
             .fillMaxSize()
-            .verticalScroll(pageScroll),
+            .verticalScroll(pageScroll)
+            // 点页面上任意空白处 = 取消圆环选中（点环 / 点图例行会被它们自己接住）
+            .pointerInput(Unit) { detectTapGestures { selectedSlice = null } },
     ) {
         Row(
             Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 10.dp),
@@ -139,7 +149,7 @@ fun StatsScreen(vm: LedgerViewModel, scrollToTopTick: Int = 0) {
                         color = MaterialTheme.colorScheme.onSurface,
                     )
                     Text(
-                        "${Money.formatYuanGrouped(dailyAverage)} / day",
+                        "${Money.formatYuanGrouped(dailyBalance)} / day",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 2.dp),
@@ -177,13 +187,12 @@ fun StatsScreen(vm: LedgerViewModel, scrollToTopTick: Int = 0) {
             } else {
                 ExpenseBarChart(
                     bars = bars,
-                    hint = if (mode == PeriodMode.MONTH) "点按或滑动柱子查看每日明细" else "点按或滑动柱子查看每月明细",
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 14.dp),
                 )
             }
         }
 
-        // ---- 分类卡：预算 vs 实际 双环饼图 + 图例 ----
+        // ---- 分类卡：预算 vs 实际 双环饼图（两侧是总花费 / 总预算）+ 图例 ----
         SectionLabel("分类预算与占比")
         StatsCard {
             if (slices.isEmpty()) {
@@ -193,7 +202,9 @@ fun StatsScreen(vm: LedgerViewModel, scrollToTopTick: Int = 0) {
                     CategoryDonut(
                         slices = slices,
                         totalActualCents = expense,
-                        hint = "点按或滑动圆环查看分类明细",
+                        colors = sliceColors,
+                        selected = selectedSlice,
+                        onSelect = { selectedSlice = it },
                     )
                     Text(
                         buildString {
@@ -204,7 +215,14 @@ fun StatsScreen(vm: LedgerViewModel, scrollToTopTick: Int = 0) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 12.dp, bottom = 8.dp),
                     )
-                    DonutLegend(slices = slices, totalActualCents = expense)
+                    DonutLegend(
+                        slices = slices,
+                        totalActualCents = expense,
+                        colors = sliceColors,
+                        selected = selectedSlice,
+                        // 点图例 = 点圆环上该分类（同一份选中态，两边同时高亮）
+                        onSelect = { selectedSlice = it },
+                    )
                 }
             }
         }

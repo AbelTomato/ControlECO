@@ -53,7 +53,7 @@ data class AccBookColors(
     val categoryPalette: List<Color>,
 )
 
-private fun lightAccBookColors() = AccBookColors(
+internal fun lightAccBookColors() = AccBookColors(
     income = Color(0xFF3D7A50),
     warning = Color(0xFFB47B10),
     critical = Color(0xFFC1352B),
@@ -83,23 +83,29 @@ private fun lightAccBookColors() = AccBookColors(
         pillSelected = Color(0xFFFFFFFF),
         pillSelectedContent = Color(0xFF16202B),
     ),
-    // 分类调色板：高饱和、色相按 36° 均匀分布（红→橙→橄榄→绿→青绿→青→蓝→紫→洋红→玫红），
-    // 保证饼图/圆环里相邻分类也能一眼区分；不再用低饱和灰调。
+    // 分类调色板：高饱和 + 16 色（暖→绿→青→蓝→紫→玫红），色相之外再拉开明度，
+    // 让同一张饼图里的分类尽量不撞色也不近似；配色表在 Theme 内集中维护。
     categoryPalette = listOf(
         Color(0xFFDC2626), // 红
         Color(0xFFEA580C), // 橙
-        Color(0xFF65A30D), // 橄榄
-        Color(0xFF059669), // 绿
-        Color(0xFF0D9488), // 青绿
+        Color(0xFFCA8A04), // 琥珀
+        Color(0xFFA16207), // 棕黄
+        Color(0xFF65A30D), // 黄绿
+        Color(0xFF16A34A), // 绿
+        Color(0xFF166534), // 深绿
+        Color(0xFF0F766E), // 深青绿
         Color(0xFF0891B2), // 青
         Color(0xFF2563EB), // 蓝
-        Color(0xFF6D28D9), // 紫
-        Color(0xFFC026D3), // 洋红
+        Color(0xFF1E3A8A), // 深蓝
+        Color(0xFF4F46E5), // 靛蓝
+        Color(0xFF7C3AED), // 紫罗兰
+        Color(0xFFA21CAF), // 紫
         Color(0xFFDB2777), // 玫红
+        Color(0xFF9F1239), // 深玫红
     ),
 )
 
-private fun darkAccBookColors() = AccBookColors(
+internal fun darkAccBookColors() = AccBookColors(
     income = Color(0xFF8FC79E),
     warning = Color(0xFFE0B35C),
     critical = Color(0xFFF07C64),
@@ -132,14 +138,20 @@ private fun darkAccBookColors() = AccBookColors(
     categoryPalette = listOf(
         Color(0xFFF87171), // 红
         Color(0xFFFB923C), // 橙
-        Color(0xFFA3E635), // 橄榄
-        Color(0xFF34D399), // 绿
-        Color(0xFF2DD4BF), // 青绿
+        Color(0xFFFCD34D), // 琥珀
+        Color(0xFFCA8A04), // 棕黄
+        Color(0xFFA3E635), // 黄绿
+        Color(0xFF4ADE80), // 绿
+        Color(0xFF15803D), // 深绿
+        Color(0xFF2DD4BF), // 深青绿
         Color(0xFF22D3EE), // 青
         Color(0xFF60A5FA), // 蓝
-        Color(0xFFA78BFA), // 紫
-        Color(0xFFE879F9), // 洋红
+        Color(0xFF1D4ED8), // 深蓝
+        Color(0xFF818CF8), // 靛蓝
+        Color(0xFFA78BFA), // 紫罗兰
+        Color(0xFFE879F9), // 紫
         Color(0xFFF472B6), // 玫红
+        Color(0xFFBE123C), // 深玫红
     ),
 )
 
@@ -166,10 +178,38 @@ data class CardTones(
 
 /** 分类名 → 调色板稳定取色（同一分类全 App 同色，跨会话不变） */
 fun categoryColor(palette: List<Color>, categoryName: String): Color {
-    if (categoryName.isEmpty()) return palette.first()
+    if (palette.isEmpty()) return Color.Unspecified
+    return palette[preferredSlot(palette.size, categoryName)]
+}
+
+/**
+ * 一组分类名 → 一组**互不重复**的颜色（饼图/图例这类"同屏并列"的场景用）。
+ *
+ * 每个分类先按名字哈希取首选位，被占则线性探测下一个空位；分配顺序按名字排序，
+ * 因此结果只取决于**名字集合**（与传入顺序、金额排序无关），换月换年也不会跳色。
+ * 分类数超过调色板容量时才会出现重复（16 色对普通账本足够）。
+ */
+fun categoryColors(palette: List<Color>, names: List<String>): Map<String, Color> {
+    if (palette.isEmpty()) return emptyMap()
+    val used = BooleanArray(palette.size)
+    val out = LinkedHashMap<String, Color>()
+    names.filter { it.isNotEmpty() }.distinct().sorted().forEach { name ->
+        val start = preferredSlot(palette.size, name)
+        // 注意：firstOrNull 返回的是"探测步数"，槽位还得再按起点绕回去
+        val step = (0 until palette.size).firstOrNull { !used[(start + it) % palette.size] } ?: 0
+        val slot = (start + step) % palette.size
+        used[slot] = true
+        out[name] = palette[slot]
+    }
+    return out
+}
+
+/** 名字哈希 → 调色板首选位（同一名字永远从同一位开始探测） */
+private fun preferredSlot(size: Int, name: String): Int {
+    if (size <= 0) return 0
     var h = 0
-    for (ch in categoryName) h = (h * 31 + ch.code) and 0x7FFFFFFF
-    return palette[(h % palette.size).coerceAtLeast(0)]
+    for (ch in name) h = (h * 31 + ch.code) and 0x7FFFFFFF
+    return h % size
 }
 
 /**
