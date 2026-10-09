@@ -9,7 +9,6 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -34,7 +33,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
@@ -63,6 +61,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
@@ -107,6 +106,23 @@ private enum class TxFilter(val label: String) {
 private const val RECENT_DAYS = 3
 
 private val timeFormatter = DateTimeFormatter.ofPattern("HH:mm")
+
+/** 账单行文案：标题 + 小行第一行 + 备注行（备注为空时不占位） */
+internal data class BillRowText(val title: String, val subLine1: String, val note: String)
+
+/**
+ * 账单行的文案规则（纯函数，`BillRowTextTest` 覆盖）：
+ * - 有商户：名称显示**商户**，小行第一行「时间 · 类别」，备注在小行第二行；
+ * - 无商户：名称显示**类别**，小行第一行只留时间，备注在小行第二行。
+ */
+internal fun billRowText(counterparty: String, categoryName: String, time: String, note: String): BillRowText {
+    val merchant = counterparty.trim()
+    return if (merchant.isNotEmpty()) {
+        BillRowText(title = merchant, subLine1 = "$time · $categoryName", note = note)
+    } else {
+        BillRowText(title = categoryName, subLine1 = time, note = note)
+    }
+}
 
 /**
  * 账单页：顶部一张悬浮结余卡（大字结余 + 右侧收入/支出，可换背景图），下面是周期步进与列表。
@@ -500,7 +516,8 @@ fun TransactionListScreen(
     }
 }
 
-/** 单按钮筛选：显示当前口径，点一下循环到下一个（全部 → 支出 → 收入 → 全部） */
+/** 单按钮筛选：显示当前口径，点一下循环到下一个（全部 → 支出 → 收入 → 全部）。
+ *  立体按钮样式（实底 + 投影）：删掉圆形箭头后，靠"凸起"而不是图标暗示可点。 */
 @Composable
 private fun CycleFilterButton(filter: TxFilter, onCycle: () -> Unit) {
     val active = filter != TxFilter.ALL
@@ -510,19 +527,22 @@ private fun CycleFilterButton(filter: TxFilter, onCycle: () -> Unit) {
         tween(180),
         label = "cycleFilterBg",
     )
-    val fg = if (active) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
-    Row(
-        Modifier
-            .clip(shape)
-            .background(bg)
-            .then(if (active) Modifier else Modifier.border(1.dp, MaterialTheme.accBook.hairline, shape))
-            .clickable(onClick = onCycle)
-            .padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
+    val fg = if (active) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+    Surface(
+        shape = shape,
+        color = bg,
+        shadowElevation = 3.dp,
+        tonalElevation = 2.dp,
+        border = if (active) null else BorderStroke(1.dp, MaterialTheme.accBook.hairline),
+        modifier = Modifier.clickable(onClick = onCycle),
     ) {
-        Text(filter.label, style = MaterialTheme.typography.labelLarge, color = fg)
-        Spacer(Modifier.width(5.dp))
-        Icon(Icons.Filled.Refresh, contentDescription = "切换筛选", tint = fg, modifier = Modifier.size(14.dp))
+        Text(
+            filter.label,
+            style = MaterialTheme.typography.labelLarge,
+            color = fg,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp),
+        )
     }
 }
 
@@ -586,7 +606,7 @@ private fun ListScrollbar(state: LazyListState, modifier: Modifier = Modifier) {
     }
 }
 
-/** 日期分组头：今天/昨天浅蓝胶囊；右侧是当天结余（+ 绿 / − 红） */
+/** 日期分组头：**统一样式**（浅蓝底、日期在前，今天/昨天/周几在后，不用描边框住）+ 当天结余（+ 绿 / − 红） */
 @Composable
 private fun DayHeader(day: LocalDate, dayRows: List<TransactionRow>) {
     val ab = MaterialTheme.accBook
@@ -594,13 +614,9 @@ private fun DayHeader(day: LocalDate, dayRows: List<TransactionRow>) {
     val relative = when (day) {
         today -> "今天"
         today.minusDays(1) -> "昨天"
-        else -> null
+        else -> dayOfWeekZh(day.dayOfWeek)
     }
-    val label = if (relative != null) {
-        "$relative · ${day.monthValue}月${day.dayOfMonth}日"
-    } else {
-        "${day.monthValue}月${day.dayOfMonth}日 · ${dayOfWeekZh(day.dayOfWeek)}"
-    }
+    val label = "${day.monthValue}月${day.dayOfMonth}日 · $relative"
     val dayExpense = dayRows.filter { it.type == TxType.EXPENSE }.sumOf { it.amountCents }
     val dayIncome = dayRows.filter { it.type == TxType.INCOME }.sumOf { it.amountCents }
     val dayBalance = dayIncome - dayExpense
@@ -614,21 +630,12 @@ private fun DayHeader(day: LocalDate, dayRows: List<TransactionRow>) {
     ) {
         Surface(
             shape = RoundedCornerShape(8.dp),
-            color = if (relative != null) {
-                MaterialTheme.colorScheme.primaryContainer
-            } else {
-                MaterialTheme.colorScheme.surface
-            },
-            border = if (relative != null) null else BorderStroke(1.dp, ab.hairline),
+            color = MaterialTheme.colorScheme.primaryContainer,
         ) {
             Text(
                 label,
                 style = MaterialTheme.typography.labelLarge,
-                color = if (relative != null) {
-                    MaterialTheme.colorScheme.onPrimaryContainer
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                },
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
             )
         }
@@ -651,14 +658,11 @@ private fun BillRow(
 ) {
     val ab = MaterialTheme.accBook
     val isExpense = row.type == TxType.EXPENSE
-    val title = row.counterparty.ifBlank { row.categoryName }
-    // 副标题：分类 · 时间 · 备注；标题已经是分类名时不再重复分类
     val time = Instant.ofEpochMilli(row.timestamp).atZone(ZoneId.systemDefault()).toLocalTime().format(timeFormatter)
-    val sub = buildList {
-        if (title != row.categoryName) add(row.categoryName)
-        add(time)
-        if (row.note.isNotBlank()) add(row.note)
-    }.joinToString(" · ")
+    val texts = billRowText(row.counterparty, row.categoryName, time, row.note)
+    val subStyle = MaterialTheme.typography.bodySmall
+    val subColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val subModifier = Modifier.fillMaxWidth()
 
     Row(
         Modifier
@@ -676,7 +680,7 @@ private fun BillRow(
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    title,
+                    texts.title,
                     style = MaterialTheme.typography.bodyLarge,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -692,12 +696,23 @@ private fun BillRow(
                 }
             }
             Text(
-                sub,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                texts.subLine1,
+                style = subStyle,
+                color = subColor,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+                modifier = subModifier,
             )
+            if (texts.note.isNotBlank()) {
+                Text(
+                    texts.note,
+                    style = subStyle,
+                    color = subColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = subModifier,
+                )
+            }
         }
         Spacer(Modifier.width(8.dp))
         Text(

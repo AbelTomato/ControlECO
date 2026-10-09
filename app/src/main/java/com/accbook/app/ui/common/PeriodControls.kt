@@ -1,6 +1,5 @@
 package com.accbook.app.ui.common
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -21,7 +20,6 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -114,8 +112,9 @@ fun PeriodSwitch(
 }
 
 /**
- * 周期步进条：[‹] [2026年10月 ▾] [›]。
- * 箭头是浅蓝圆钮（不再是裸露图标），中间胶囊白底描边、点开选择面板，整体圆角统一。
+ * 周期步进条：[‹] [2026年10月] [›]。
+ * 两侧箭头是浅蓝圆钮（唯一的"可点"图形提示），中间日期本身就是选择入口——
+ * 不加方框、不加下拉小三角，文字自己站住。
  */
 @Composable
 fun PeriodStepper(
@@ -128,29 +127,17 @@ fun PeriodStepper(
 ) {
     Row(modifier, verticalAlignment = Alignment.CenterVertically) {
         StepButton(Icons.Filled.KeyboardArrowLeft, "上一${mode.label}") { onPrev() }
-        Spacer(Modifier.width(8.dp))
-        Surface(
-            shape = RoundedCornerShape(12.dp),
-            color = MaterialTheme.colorScheme.surface,
-            border = BorderStroke(1.dp, MaterialTheme.accBook.hairline),
-            shadowElevation = 1.dp,
-            modifier = Modifier.clickable { onOpenPicker() },
-        ) {
-            Row(
-                Modifier.padding(start = 14.dp, end = 9.dp, top = 7.dp, bottom = 7.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(periodLabel(yearMonth, mode), style = MaterialTheme.typography.titleSmall)
-                Spacer(Modifier.width(3.dp))
-                Icon(
-                    Icons.Filled.ArrowDropDown,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(18.dp),
-                )
-            }
-        }
-        Spacer(Modifier.width(8.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(
+            periodLabel(yearMonth, mode),
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier
+                .clip(RoundedCornerShape(10.dp))
+                .clickable { onOpenPicker() }
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+        )
+        Spacer(Modifier.width(6.dp))
         StepButton(Icons.Filled.KeyboardArrowRight, "下一${mode.label}") { onNext() }
     }
 }
