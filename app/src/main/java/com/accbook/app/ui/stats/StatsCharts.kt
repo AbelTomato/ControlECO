@@ -248,11 +248,13 @@ fun ExpenseBarChart(bars: List<BarPoint>, modifier: Modifier = Modifier) {
 }
 
 /**
- * 双环饼图：外环 = 分类预算占比（42% 透明），内环 = 实际支出占比（实色）。
- * 中心不写字：圆环两侧各站一列总览——左「花费」、右「预算」，列内第一行金额、第二行占比
- * （花费列的占比 = 花费占预算，超预算转红；预算列是基准所以恒 100%）。
- * 点按 / 横向滑动任一环选中分类，上方读数行显示「类别 · 金额 · 占比 · 预算」；
- * 选中后其他分类压暗到 22%。**取消选中交给外层**（点页面空白处即取消）。
+ * 双环饼图：外环 = 分类预算占比（55% 透明，实机上调过：42% 时多分类会糊成一片），内环 = 实际支出占比（实色）。
+ * 中心不写字，圆环左右各一列数字，**跟着选中状态走**：
+ * - 未选中：左列总花费、右列总预算；
+ * - 选中分类：左列该分类花费、右列该分类预算，分类名出现在左上角（花费金额上方）。
+ * 每列两行 = 金额（`formatYuanCompact`，与首页同一套进位规则）+ 占比
+ * （左侧 = 花费占该项预算，超预算转红；右侧是基准所以恒 100%，无预算显示「—」）。
+ * 点按 / 横向滑动任一环选中分类；**取消选中交给外层**（点页面空白处即取消）。
  */
 @Composable
 fun CategoryDonut(
@@ -267,53 +269,25 @@ fun CategoryDonut(
     val palette = ab.categoryPalette
     val totalBudget = slices.sumOf { it.budgetCents }
     val selectedSlice = slices.firstOrNull { it.name == selected }
-
-    val readout = if (selectedSlice != null) {
-        buildString {
-            append(selectedSlice.name)
-            append(" · ¥")
-            append(Money.formatYuanGrouped(selectedSlice.actualCents).removePrefix("¥"))
-            append(" · ")
-            append(ChartMath.sharePercent(selectedSlice.actualCents, totalActualCents).roundToInt())
-            append('%')
-            if (selectedSlice.budgetCents > 0L) {
-                append(" · 预算 ¥")
-                append(Money.formatYuanGrouped(selectedSlice.budgetCents).removePrefix("¥"))
-                append(" · ")
-                append(ChartMath.sharePercent(selectedSlice.budgetCents, totalBudget).roundToInt())
-                append('%')
-            }
-        }
-    } else {
-        "\u00A0" // 未选中：留一行空位（不换行空格，看不见但占高），选中时数字出现不顶动圆环
-    }
+    // 两侧数字：有选中看该分类，没选中看总计
+    val actualCents = selectedSlice?.actualCents ?: totalActualCents
+    val budgetCents = selectedSlice?.budgetCents ?: totalBudget
+    val hasBudget = budgetCents > 0L && !(selectedSlice != null && selectedSlice.budgetCents <= 0L)
 
     Column(modifier) {
-        // 读数行：未选中时留空（提示文字已删），保留行高避免图表跳动
-        Text(
-            readout,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Spacer(Modifier.height(8.dp))
         BoxWithConstraints(Modifier.fillMaxWidth()) {
-            val ringSize = minOf(152.dp, maxWidth * 0.46f).coerceAtLeast(96.dp)
-            val columnMax = ((maxWidth - ringSize) / 2f - 6.dp).coerceAtLeast(44.dp)
+            val ringSize = minOf(150.dp, maxWidth * 0.44f).coerceAtLeast(96.dp)
+            val columnMax = ((maxWidth - ringSize) / 2f - 18.dp).coerceAtLeast(40.dp)
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 SideStat(
-                    label = "花费",
-                    amountCents = totalActualCents,
-                    percent = if (totalBudget > 0L) {
-                        ChartMath.sharePercent(totalActualCents, totalBudget)
-                    } else {
-                        null
-                    },
-                    overBudget = totalBudget > 0L && totalActualCents > totalBudget,
+                    caption = selectedSlice?.name,
+                    amountText = Money.formatYuanCompact(actualCents),
+                    percent = if (hasBudget) ChartMath.sharePercent(actualCents, budgetCents) else null,
+                    overBudget = budgetCents > 0L && actualCents > budgetCents,
                     maxWidth = columnMax,
                     modifier = Modifier.weight(1f),
                 )
+                Spacer(Modifier.width(12.dp))
                 Canvas(
                     Modifier
                         .size(ringSize)
@@ -375,13 +349,19 @@ fun CategoryDonut(
                             start += sweep
                         }
                     }
-                    ring(rOuter, strokeOuter, alpha = 0.42f, value = { it.budgetCents }, total = totalBudgetRing)
+                    ring(rOuter, strokeOuter, alpha = 0.55f, value = { it.budgetCents }, total = totalBudgetRing)
                     ring(rInner, strokeInner, alpha = 1f, value = { it.actualCents }, total = totalActualRing)
                 }
+                Spacer(Modifier.width(12.dp))
                 SideStat(
-                    label = "预算",
-                    amountCents = totalBudget,
-                    percent = if (totalBudget > 0L) 100f else null,
+                    caption = null,
+                    // 选中分类没设预算时给「—」，不写 ¥0 误导成"预算为零"
+                    amountText = if (selectedSlice != null && selectedSlice.budgetCents <= 0L) {
+                        "—"
+                    } else {
+                        Money.formatYuanCompact(budgetCents)
+                    },
+                    percent = if (hasBudget) 100f else null,
                     overBudget = false,
                     alignEnd = true,
                     maxWidth = columnMax,
@@ -393,13 +373,14 @@ fun CategoryDonut(
 }
 
 /**
- * 圆环两侧的总览列：标签（花费 / 预算）+ 金额 + 占比。
- * 标签用 titleSmall + onSurface（比原来的说明小字更大更深），金额超宽时自动缩放，不压到圆环。
+ * 圆环两侧的一列数字：可选的分类名（选中时出现在左上角）+ 金额 + 占比。
+ * 金额用首页同一套紧凑格式（小数点前超过 4 位进位 K/M/B）并自动缩放，
+ * 字号刻意比卡片标题小一档，靠留白（与圆环之间 12dp）而不是字号抢视线。
  */
 @Composable
 private fun SideStat(
-    label: String,
-    amountCents: Long,
+    caption: String?,
+    amountText: String,
     percent: Float?,
     overBudget: Boolean,
     alignEnd: Boolean = false,
@@ -411,21 +392,25 @@ private fun SideStat(
         modifier,
         horizontalAlignment = if (alignEnd) Alignment.End else Alignment.Start,
     ) {
-        Text(
-            label,
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
-        Spacer(Modifier.height(2.dp))
+        if (!caption.isNullOrBlank()) {
+            AutoScaledText(
+                text = caption,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxWidth = maxWidth,
+            )
+            Spacer(Modifier.height(2.dp))
+        }
         AutoScaledText(
-            text = Money.formatYuanGrouped(amountCents),
-            style = MaterialTheme.typography.titleMedium,
+            text = amountText,
+            style = MaterialTheme.typography.titleSmall,
             color = MaterialTheme.colorScheme.onSurface,
             maxWidth = maxWidth,
         )
+        Spacer(Modifier.height(1.dp))
         Text(
             percent?.let { "${it.roundToInt()}%" } ?: "—",
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.bodySmall,
             color = if (overBudget) ab.critical else MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }

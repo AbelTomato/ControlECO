@@ -1,19 +1,22 @@
 package com.accbook.app.ui.stats
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -47,6 +50,7 @@ import java.time.YearMonth
  * 月视角每日一柱、年视角每月一柱；横竖轴标简单数字，点按/滑动柱子实时读数。
  * 图表全部自绘（Canvas），不引入第三方图表库。
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun StatsScreen(vm: LedgerViewModel, scrollToTopTick: Int = 0) {
     val month by vm.month.collectAsStateWithLifecycle()
@@ -107,114 +111,137 @@ fun StatsScreen(vm: LedgerViewModel, scrollToTopTick: Int = 0) {
     var selectedSlice by remember(slices) { mutableStateOf<String?>(null) }
     val palette = MaterialTheme.accBook.categoryPalette
     val sliceColors = remember(slices, palette) { categoryColors(palette, slices.map { it.name }) }
-    val pageScroll = rememberScrollState()
+    val listState = rememberLazyListState()
     // 再次点击底部「统计」标签：回到顶部
     LaunchedEffect(scrollToTopTick) {
-        if (scrollToTopTick > 0) pageScroll.animateScrollTo(0)
+        if (scrollToTopTick > 0) listState.animateScrollToItem(0)
     }
-    Column(
-        Modifier
+    // 用 LazyColumn 而不是普通 Column：分类圆环要当 stickyHeader 常驻屏幕上方，
+    // 往下翻图例时圆环仍看得见（点图例 = 点圆环，两边必须同时在场）
+    LazyColumn(
+        state = listState,
+        modifier = Modifier
             .fillMaxSize()
-            .verticalScroll(pageScroll)
             // 点页面上任意空白处 = 取消圆环选中（点环 / 点图例行会被它们自己接住）
             .pointerInput(Unit) { detectTapGestures { selectedSlice = null } },
+        contentPadding = PaddingValues(bottom = 24.dp),
     ) {
-        Row(
-            Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            PeriodStepper(
-                yearMonth = month,
-                mode = mode,
-                onPrev = { vm.prevPeriod() },
-                onNext = { vm.nextPeriod() },
-                onOpenPicker = { showPicker = true },
-            )
-            Spacer(Modifier.weight(1f))
-            PeriodSwitch(mode = mode, onChange = { vm.setPeriodMode(it) })
+        item(key = "period") {
+            Row(
+                Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                PeriodStepper(
+                    yearMonth = month,
+                    mode = mode,
+                    onPrev = { vm.prevPeriod() },
+                    onNext = { vm.nextPeriod() },
+                    onOpenPicker = { showPicker = true },
+                )
+                Spacer(Modifier.weight(1f))
+                PeriodSwitch(mode = mode, onChange = { vm.setPeriodMode(it) })
+            }
         }
 
         // ---- 结论卡：与账单悬浮卡同排版（左：结余大字 + 日均；右：收入 / 支出，+绿 −红，无文字标签） ----
-        StatsCard(Modifier.padding(top = 12.dp)) {
-            Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.Top) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        periodBalanceLabel(mode),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text(
-                        Money.formatYuanGroupedFixed(income - expense),
-                        style = MaterialTheme.typography.headlineMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                    Text(
-                        "${Money.formatYuanGrouped(dailyBalance)} / day",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 2.dp),
-                    )
-                    if (showRefunds && refundReady > 0L) {
+        item(key = "conclusion") {
+            StatsCard(Modifier.padding(top = 12.dp)) {
+                Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.Top) {
+                    Column(Modifier.weight(1f)) {
                         Text(
-                            "退款到账 ${Money.formatYuanGrouped(refundReady)}",
-                            style = MaterialTheme.typography.labelSmall,
+                            periodBalanceLabel(mode),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(
+                            Money.formatYuanGroupedFixed(income - expense),
+                            style = MaterialTheme.typography.headlineMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Text(
+                            "${Money.formatYuanGrouped(dailyBalance)} / day",
+                            style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(top = 2.dp),
                         )
+                        if (showRefunds && refundReady > 0L) {
+                            Text(
+                                "退款到账 ${Money.formatYuanGrouped(refundReady)}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 2.dp),
+                            )
+                        }
                     }
-                }
-                Column(horizontalAlignment = Alignment.End) {
-                    Text(
-                        Money.formatSignedPlain(income),
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.accBook.income,
-                    )
-                    Spacer(Modifier.height(3.dp))
-                    Text(
-                        Money.formatSignedPlain(-expense),
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.accBook.critical,
-                    )
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text(
+                            Money.formatSignedPlain(income),
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.accBook.income,
+                        )
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            Money.formatSignedPlain(-expense),
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.accBook.critical,
+                        )
+                    }
                 }
             }
         }
 
         // ---- 趋势卡：柱状图（可点按/滑动读数） ----
-        SectionLabel(if (mode == PeriodMode.MONTH) "每日支出" else "月度支出")
-        StatsCard {
-            if (expense == 0L) {
-                EmptyNote("${periodScopeLabel(mode)}暂无支出记录，记一笔后这里会出现柱状图")
-            } else {
-                ExpenseBarChart(
-                    bars = bars,
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 14.dp),
-                )
+        item(key = "trendLabel") {
+            SectionLabel(if (mode == PeriodMode.MONTH) "每日支出" else "月度支出")
+        }
+        item(key = "trend") {
+            StatsCard {
+                if (expense == 0L) {
+                    EmptyNote("${periodScopeLabel(mode)}暂无支出记录，记一笔后这里会出现柱状图")
+                } else {
+                    ExpenseBarChart(
+                        bars = bars,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 14.dp),
+                    )
+                }
             }
         }
 
-        // ---- 分类卡：预算 vs 实际 双环饼图（两侧是总花费 / 总预算）+ 图例 ----
-        SectionLabel("分类预算与占比")
-        StatsCard {
-            if (slices.isEmpty()) {
-                EmptyNote("暂无分类数据：记账或设置分类预算后这里会出现饼图")
-            } else {
-                Column(Modifier.fillMaxWidth().padding(14.dp)) {
-                    CategoryDonut(
-                        slices = slices,
-                        totalActualCents = expense,
-                        colors = sliceColors,
-                        selected = selectedSlice,
-                        onSelect = { selectedSlice = it },
-                    )
-                    Text(
-                        buildString {
-                            append("外环 预算占比 · 内环 实际占比")
-                            if (mode == PeriodMode.YEAR) append("（年视角预算按 12 个月计）")
-                        },
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 12.dp, bottom = 8.dp),
-                    )
+        // ---- 分类卡：预算 vs 实际 双环饼图（两侧数字跟着选中项走），常驻屏幕上方 ----
+        item(key = "categoryLabel") { SectionLabel("分类预算与占比") }
+        stickyHeader(key = "categoryDonut") {
+            // 卡片下方会有图例滚过，所以整块先铺一层页面底色，内容不会从圆角外透出来
+            Box(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background)) {
+                StatsCard(Modifier.padding(top = 4.dp)) {
+                    if (slices.isEmpty()) {
+                        EmptyNote("暂无分类数据：记账或设置分类预算后这里会出现饼图")
+                    } else {
+                        CategoryDonut(
+                            slices = slices,
+                            totalActualCents = expense,
+                            colors = sliceColors,
+                            selected = selectedSlice,
+                            onSelect = { selectedSlice = it },
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 14.dp),
+                        )
+                    }
+                }
+            }
+        }
+        if (slices.isNotEmpty()) {
+            item(key = "categoryCaption") {
+                Text(
+                    buildString {
+                        append("外环 预算占比 · 内环 实际占比")
+                        if (mode == PeriodMode.YEAR) append("（年视角预算按 12 个月计）")
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 30.dp, end = 30.dp, top = 12.dp, bottom = 8.dp),
+                )
+            }
+            item(key = "categoryLegend") {
+                StatsCard {
                     DonutLegend(
                         slices = slices,
                         totalActualCents = expense,
@@ -222,11 +249,11 @@ fun StatsScreen(vm: LedgerViewModel, scrollToTopTick: Int = 0) {
                         selected = selectedSlice,
                         // 点图例 = 点圆环上该分类（同一份选中态，两边同时高亮）
                         onSelect = { selectedSlice = it },
+                        modifier = Modifier.padding(vertical = 4.dp),
                     )
                 }
             }
         }
-        Spacer(Modifier.height(24.dp))
     }
 
     if (showPicker) {
