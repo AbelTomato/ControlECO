@@ -11,17 +11,20 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -29,11 +32,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionOnScreen
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
@@ -76,14 +82,31 @@ fun CardImageEditorDialog(
 
     Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
+        // decorFitsSystemWindows = false：对话框窗口按全屏铺开（默认会被状态栏整体顶下去，
+        // 窗口又按整屏高度测量，结果底部的滑条/提示被挤出屏幕外——实测底部 152px 全被裁掉）；
+        // 内边距改由内容自己处理：顶部栏吃状态栏、底部滑条区吃导航栏
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
     ) {
-        Box(Modifier.fillMaxSize().background(backdrop)) {
+        // 对话框窗口在部分 ROM（实测 MIUI）上会被状态栏整体顶下去，而窗口高度仍是整屏高度：
+        // 内容底部这段就跑到屏幕外了（底栏的滑条/提示被裁掉）。这里量出窗口在屏幕上的实际偏移，
+        // 等价地在底部让出这么多高度，内容底部就落回屏幕内；平台不偏移时该值为 0，不影响正常设备。
+        var windowOffsetPx by remember { mutableIntStateOf(0) }
+        Box(
+            Modifier
+                .fillMaxSize()
+                .onGloballyPositioned {
+                    val onScreen = it.positionOnScreen().y.roundToInt()
+                    if (onScreen != windowOffsetPx) windowOffsetPx = onScreen
+                }
+                .padding(bottom = with(density) { windowOffsetPx.toDp() })
+                .background(backdrop),
+        ) {
             Column(Modifier.fillMaxSize()) {
                 // ---- 顶栏：取消 / 标题 / 应用 ----
                 Row(
                     Modifier
                         .fillMaxWidth()
+                        .statusBarsPadding()
                         .padding(horizontal = 8.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -191,33 +214,42 @@ fun CardImageEditorDialog(
                     corner(frameLeft + frameW, frameTop + frameH, -1f, -1f)
                 }
 
-                // ---- 底部：旋转滑条 + 提示 ----
+                // ---- 底部：旋转滑条 + 提示（与全屏预览同一套深色观感，不用白面板）----
                 Surface(
                     shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
-                    color = MaterialTheme.colorScheme.surface,
+                    color = backdrop.copy(alpha = 0.55f),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Column(Modifier.padding(horizontal = 20.dp, vertical = 14.dp).navigationBarsPadding()) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("旋转", style = MaterialTheme.typography.labelLarge)
+                            Text("旋转", style = MaterialTheme.typography.labelLarge, color = overlayInk)
                             Spacer(Modifier.width(10.dp))
                             Text(
                                 "${draft.rotation.roundToInt()}°",
                                 style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                color = overlayInk.copy(alpha = 0.7f),
                             )
                             Spacer(Modifier.weight(1f))
-                            TextButton(onClick = { draft = CardTransform.DEFAULT }) { Text("复位") }
+                            TextButton(onClick = { draft = CardTransform.DEFAULT }) {
+                                Text("复位", color = overlayInk)
+                            }
                         }
                         Slider(
                             value = draft.rotation,
                             onValueChange = { draft = draft.copy(rotation = it).normalized() },
                             valueRange = 0f..360f,
+                            colors = SliderDefaults.colors(
+                                thumbColor = overlayInk,
+                                activeTrackColor = overlayInk,
+                                inactiveTrackColor = overlayInk.copy(alpha = 0.28f),
+                                activeTickColor = Color.Transparent,
+                                inactiveTickColor = Color.Transparent,
+                            ),
                         )
                         Text(
                             "单指拖动移动　双指捏合缩放　下方滑条旋转",
                             style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = overlayInk.copy(alpha = 0.62f),
                         )
                         Spacer(Modifier.height(4.dp))
                     }
