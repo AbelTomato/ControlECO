@@ -324,6 +324,8 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
         accountId: Long,
         timestamp: Long,
         note: String,
+        /** 商户/收款方：通知捕获自带，手动记录可自定义（账单列表标题优先显示它） */
+        counterparty: String = "",
     ) {
         viewModelScope.launch(Dispatchers.IO) {
             if (id > 0) {
@@ -332,6 +334,7 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
                         old.copy(
                             type = type, amountCents = amountCents, categoryId = categoryId,
                             accountId = accountId, timestamp = timestamp, note = note,
+                            counterparty = counterparty,
                         )
                     )
                 }
@@ -340,6 +343,7 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
                     TransactionEntity(
                         type = type, amountCents = amountCents, categoryId = categoryId,
                         accountId = accountId, timestamp = timestamp, note = note,
+                        counterparty = counterparty,
                     )
                 )
             }

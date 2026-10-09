@@ -72,6 +72,7 @@ fun EditTransactionScreen(vm: LedgerViewModel, txId: Long, onBack: () -> Unit) {
     var date by remember { mutableStateOf(LocalDate.now()) }
     // 编辑时保留原记录的时分（改日期不该把时间抹成 00:00）
     var timeOfDay by remember { mutableStateOf(java.time.LocalTime.now()) }
+    var counterparty by remember { mutableStateOf("") }
     var note by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
@@ -86,6 +87,7 @@ fun EditTransactionScreen(vm: LedgerViewModel, txId: Long, onBack: () -> Unit) {
             val local = Instant.ofEpochMilli(t.timestamp).atZone(ZoneId.systemDefault())
             date = local.toLocalDate()
             timeOfDay = local.toLocalTime()
+            counterparty = t.counterparty
             note = t.note
         }
     }
@@ -180,6 +182,14 @@ fun EditTransactionScreen(vm: LedgerViewModel, txId: Long, onBack: () -> Unit) {
             DatePickerButton(date = date, onPick = { date = it })
 
             OutlinedTextField(
+                value = counterparty,
+                onValueChange = { counterparty = it },
+                label = { Text("商户") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            OutlinedTextField(
                 value = note,
                 onValueChange = { note = it },
                 label = { Text("备注") },
@@ -198,7 +208,9 @@ fun EditTransactionScreen(vm: LedgerViewModel, txId: Long, onBack: () -> Unit) {
                         else -> {
                             val ts = java.time.LocalDateTime.of(date, timeOfDay)
                                 .atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
-                            vm.saveTransaction(txId, type, cents, categoryId!!, accountId!!, ts, note.trim())
+                            vm.saveTransaction(
+                                txId, type, cents, categoryId!!, accountId!!, ts, note.trim(), counterparty.trim(),
+                            )
                             onBack()
                         }
                     }

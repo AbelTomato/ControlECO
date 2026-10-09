@@ -1,0 +1,45 @@
+package com.accbook.app.ui.transactions
+
+import org.junit.Assert.assertEquals
+import org.junit.Test
+
+/**
+ * 账单行文案：有商户 → 名称是商户、小行第一行「时间 · 类别」；无商户 → 名称是类别、小行第一行只留时间；
+ * 备注(第二行)两种情况都原样带出。
+ */
+class BillRowTextTest {
+
+    @Test
+    fun `有商户时名称用商户_小行第一行是时间加类别`() {
+        val t = billRowText("星巴克", "餐饮", "09:30", "拿铁")
+        assertEquals("星巴克", t.title)
+        assertEquals("09:30 · 餐饮", t.subLine1)
+        assertEquals("拿铁", t.note)
+    }
+
+    @Test
+    fun `无商户时名称用类别_小行第一行只有时间`() {
+        val t = billRowText("", "餐饮", "09:30", "拿铁")
+        assertEquals("餐饮", t.title)
+        assertEquals("09:30", t.subLine1)
+        assertEquals("拿铁", t.note)
+    }
+
+    @Test
+    fun `备注为空时不产出备注行`() {
+        assertEquals("", billRowText("", "交通", "08:05", "").note)
+        assertEquals("", billRowText("滴滴", "交通", "08:05", "").note)
+    }
+
+    @Test
+    fun `只填空格的商户视同没有商户`() {
+        val t = billRowText("   ", "餐饮", "12:00", "")
+        assertEquals("餐饮", t.title)
+        assertEquals("12:00", t.subLine1)
+    }
+
+    @Test
+    fun `商户名前后空格会被去掉`() {
+        assertEquals("全家便利店", billRowText(" 全家便利店 ", "日用", "21:10", "").title)
+    }
+}

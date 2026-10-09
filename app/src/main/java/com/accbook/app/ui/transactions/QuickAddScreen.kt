@@ -62,6 +62,7 @@ fun QuickAddScreen(vm: LedgerViewModel, onBack: () -> Unit) {
     var categoryId by remember { mutableStateOf<Long?>(null) }
     var accountId by remember { mutableStateOf<Long?>(null) }
     var date by remember { mutableStateOf(LocalDate.now()) }
+    var counterparty by remember { mutableStateOf("") }
     var note by remember { mutableStateOf("") }
     var showMore by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -176,6 +177,13 @@ fun QuickAddScreen(vm: LedgerViewModel, onBack: () -> Unit) {
                 )
                 DatePickerButton(date = date, onPick = { date = it })
                 OutlinedTextField(
+                    value = counterparty,
+                    onValueChange = { counterparty = it },
+                    label = { Text("商户") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
                     value = note,
                     onValueChange = { note = it },
                     label = { Text("备注") },
@@ -185,7 +193,7 @@ fun QuickAddScreen(vm: LedgerViewModel, onBack: () -> Unit) {
                 TextButton(
                     onClick = { showMore = true },
                     modifier = Modifier.fillMaxWidth(),
-                ) { Text("更多细节：账户 · 日期 · 备注") }
+                ) { Text("更多细节：商户 · 账户 · 日期 · 备注") }
             }
 
             Spacer(Modifier.height(8.dp))
@@ -211,7 +219,9 @@ fun QuickAddScreen(vm: LedgerViewModel, onBack: () -> Unit) {
                             } else {
                                 date.atTime(LocalTime.now()).atZone(zone).toInstant().toEpochMilli()
                             }
-                            vm.saveTransaction(-1L, type, amount, categoryId!!, accountId!!, ts, note.trim())
+                            vm.saveTransaction(
+                                -1L, type, amount, categoryId!!, accountId!!, ts, note.trim(), counterparty.trim(),
+                            )
                             onBack()
                         }
                     }
