@@ -42,6 +42,12 @@ import com.accbook.app.ui.keepalive.KeepAliveScreen
 import com.accbook.app.ui.pending.PendingScreen
 import com.accbook.app.ui.profile.ProfileScreen
 import com.accbook.app.ui.refund.RefundLinkScreen
+import com.accbook.app.ui.settings.SettingsAboutScreen
+import com.accbook.app.ui.settings.SettingsAccountScreen
+import com.accbook.app.ui.settings.SettingsDeveloperScreen
+import com.accbook.app.ui.settings.SettingsImportScreen
+import com.accbook.app.ui.settings.SettingsPermissionScreen
+import com.accbook.app.ui.settings.SettingsScreen
 import com.accbook.app.ui.stats.StatsScreen
 import com.accbook.app.ui.theme.accBook
 import com.accbook.app.ui.transactions.EditTransactionScreen
@@ -52,6 +58,32 @@ import com.accbook.app.ui.transactions.TransactionListScreen
 fun AccBookNav(vm: LedgerViewModel, navEvent: Pair<Long, String?> = 0L to null) {
     val navController = rememberNavController()
     val context = LocalContext.current
+
+    // 系统设置页直达（权限页 / 保活页共用）
+    val openNotificationAccess: () -> Unit = {
+        runCatching {
+            context.startActivity(Intent(android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+        }
+        Unit
+    }
+    val openAccessibilitySettings: () -> Unit = {
+        runCatching {
+            context.startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        }
+        Unit
+    }
+    val openOverlayPermission: () -> Unit = {
+        runCatching {
+            context.startActivity(
+                Intent(
+                    android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:${context.packageName}"),
+                ),
+            )
+        }
+        Unit
+    }
+
     // 悬浮卡/系统通知点击跳转（MainActivity 传入 route 事件；路由名是捕获层的对外契约，勿改）
     LaunchedEffect(navEvent.first) {
         when (navEvent.second) {
@@ -65,32 +97,8 @@ fun AccBookNav(vm: LedgerViewModel, navEvent: Pair<Long, String?> = 0L to null) 
                 vm = vm,
                 onQuickAdd = { navController.navigate("quickAdd") },
                 onEditTransaction = { id -> navController.navigate("edit/$id") },
-                onOpenAccounts = { navController.navigate("accounts") },
-                onOpenCategories = { navController.navigate("categories") },
-                onImport = { navController.navigate("import") },
                 onOpenPending = { navController.navigate("pending") },
-                onOpenCaptureLog = { navController.navigate("captureLog") },
-                onOpenNotificationAccess = {
-                    runCatching {
-                        context.startActivity(Intent(android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-                    }
-                },
-                onOpenAccessibilitySettings = {
-                    runCatching {
-                        context.startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                    }
-                },
-                onOpenOverlayPermission = {
-                    runCatching {
-                        context.startActivity(
-                            Intent(
-                                android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                                Uri.parse("package:${context.packageName}"),
-                            ),
-                        )
-                    }
-                },
-                onOpenKeepAlive = { navController.navigate("keepAlive") },
+                onOpenSettings = { navController.navigate("settings") },
             )
         }
         composable("quickAdd") { QuickAddScreen(vm = vm, onBack = { navController.popBackStack() }) }
@@ -104,20 +112,62 @@ fun AccBookNav(vm: LedgerViewModel, navEvent: Pair<Long, String?> = 0L to null) 
         composable("pending") { PendingScreen(vm = vm, onBack = { navController.popBackStack() }) }
         composable("refundLink") { RefundLinkScreen(vm = vm, onBack = { navController.popBackStack() }) }
         composable("captureLog") { CaptureLogScreen(vm = vm, onBack = { navController.popBackStack() }) }
+
+        // ---- 设置体系：设置 →（账户 / 账单导入 / 权限 / 开发者功能 / 关于）----
+        composable("settings") {
+            SettingsScreen(
+                vm = vm,
+                onBack = { navController.popBackStack() },
+                onOpenAccount = { navController.navigate("settings/account") },
+                onOpenImport = { navController.navigate("settings/import") },
+                onOpenPermissions = { navController.navigate("settings/permissions") },
+                onOpenDeveloper = { navController.navigate("settings/developer") },
+                onOpenAbout = { navController.navigate("settings/about") },
+            )
+        }
+        composable("settings/account") {
+            SettingsAccountScreen(
+                vm = vm,
+                onBack = { navController.popBackStack() },
+                onOpenAccounts = { navController.navigate("accounts") },
+                onOpenCategories = { navController.navigate("categories") },
+            )
+        }
+        composable("settings/import") {
+            SettingsImportScreen(
+                vm = vm,
+                onBack = { navController.popBackStack() },
+                onImport = { navController.navigate("import") },
+            )
+        }
+        composable("settings/permissions") {
+            SettingsPermissionScreen(
+                vm = vm,
+                onBack = { navController.popBackStack() },
+                onOpenNotificationAccess = openNotificationAccess,
+                onOpenAccessibilitySettings = openAccessibilitySettings,
+                onOpenOverlayPermission = openOverlayPermission,
+            )
+        }
+        composable("settings/developer") {
+            SettingsDeveloperScreen(
+                vm = vm,
+                onBack = { navController.popBackStack() },
+                onOpenPending = { navController.navigate("pending") },
+                onOpenCaptureLog = { navController.navigate("captureLog") },
+                onOpenKeepAlive = { navController.navigate("keepAlive") },
+            )
+        }
+        composable("settings/about") {
+            SettingsAboutScreen(onBack = { navController.popBackStack() })
+        }
+
         composable("keepAlive") {
             KeepAliveScreen(
                 vm = vm,
                 onBack = { navController.popBackStack() },
-                onOpenNotificationAccess = {
-                    runCatching {
-                        context.startActivity(Intent(android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-                    }
-                },
-                onOpenAccessibilitySettings = {
-                    runCatching {
-                        context.startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                    }
-                },
+                onOpenNotificationAccess = openNotificationAccess,
+                onOpenAccessibilitySettings = openAccessibilitySettings,
             )
         }
     }
@@ -128,15 +178,8 @@ private fun MainScaffold(
     vm: LedgerViewModel,
     onQuickAdd: () -> Unit,
     onEditTransaction: (Long) -> Unit,
-    onOpenAccounts: () -> Unit,
-    onOpenCategories: () -> Unit,
-    onImport: () -> Unit,
     onOpenPending: () -> Unit,
-    onOpenCaptureLog: () -> Unit,
-    onOpenNotificationAccess: () -> Unit,
-    onOpenAccessibilitySettings: () -> Unit,
-    onOpenOverlayPermission: () -> Unit,
-    onOpenKeepAlive: () -> Unit,
+    onOpenSettings: () -> Unit,
 ) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     // 再次点击当前标签 → 计数 +1，由页面自己"回到顶部"（列表/滚动页通用）
@@ -186,18 +229,7 @@ private fun MainScaffold(
                     scrollToTopTick = reenterTick,
                 )
                 2 -> StatsScreen(vm = vm, scrollToTopTick = reenterTick)
-                3 -> ProfileScreen(
-                    vm = vm,
-                    onOpenAccounts = onOpenAccounts,
-                    onOpenCategories = onOpenCategories,
-                    onImport = onImport,
-                    onOpenPending = onOpenPending,
-                    onOpenCaptureLog = onOpenCaptureLog,
-                    onOpenNotificationAccess = onOpenNotificationAccess,
-                    onOpenAccessibilitySettings = onOpenAccessibilitySettings,
-                    onOpenOverlayPermission = onOpenOverlayPermission,
-                    onOpenKeepAlive = onOpenKeepAlive,
-                )
+                3 -> ProfileScreen(onOpenSettings = onOpenSettings)
             }
         }
     }
