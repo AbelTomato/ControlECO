@@ -60,8 +60,8 @@ object ChartMath {
             BarPoint(
                 cents = c,
                 count = n,
-                // 每 5 天标一个数字，月末补一个（28/29/31 这种月底也看得见）
-                axisLabel = if (day % 5 == 0 || day == days) "$day" else null,
+                // 每 5 天标一个数字；月末补一格，但离上一个刻度太近（如 31 距 30）就跳过，避免数字挤在一起
+                axisLabel = if (day % 5 == 0 || (day == days && day % 5 >= 3)) "$day" else null,
                 tip = if (c > 0) {
                     "${month.monthValue}月${day}日 · ${Money.formatYuanGrouped(c)} · $n 笔"
                 } else {

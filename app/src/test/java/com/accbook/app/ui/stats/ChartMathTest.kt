@@ -66,13 +66,22 @@ class ChartMathTest {
     }
 
     @Test
-    fun `月柱子横轴每五天标一次并在月末补一格`() {
-        val bars = ChartMath.monthBars(emptyList(), YearMonth.of(2026, 2), zone)
-        val labels = bars.mapIndexedNotNull { i, b -> b.axisLabel?.let { (i + 1) to it } }
+    fun `月柱子横轴每五天标一次_月末太近则不补格`() {
+        // 2 月：25 → 28 间距够，补一个
+        val feb = ChartMath.monthBars(emptyList(), YearMonth.of(2026, 2), zone)
+        assertEquals(
+            listOf(5, 10, 15, 20, 25, 28),
+            feb.mapIndexedNotNull { i, b -> b.axisLabel?.let { i + 1 } },
+        )
+        assertNull(feb[0].axisLabel)
+        assertEquals("5", feb[4].axisLabel)
 
-        assertEquals(listOf(5, 10, 15, 20, 25, 28), labels.map { it.first })
-        assertNull(bars[0].axisLabel)
-        assertEquals("5", bars[4].axisLabel)
+        // 31 天月份：30 已标过，31 紧挨着就跳过（否则两个数字会挤在一起）
+        val jan = ChartMath.monthBars(emptyList(), YearMonth.of(2026, 1), zone)
+        assertEquals(
+            listOf(5, 10, 15, 20, 25, 30),
+            jan.mapIndexedNotNull { i, b -> b.axisLabel?.let { i + 1 } },
+        )
     }
 
     // ---------- 年视角：每月一根柱 ----------

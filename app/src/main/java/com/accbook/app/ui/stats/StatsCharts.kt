@@ -41,6 +41,8 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.sp
 import com.accbook.app.ui.theme.accBook
 import com.accbook.app.ui.theme.categoryColor
@@ -402,7 +404,11 @@ private fun donutGeometry(widthPx: Float, density: Density): DonutGeometry {
     return DonutGeometry(Offset(widthPx / 2f, widthPx / 2f), rOuter, rInner, strokeOuter, strokeInner)
 }
 
-/** 图例：分类名 + 实际金额/占比，第二行给预算金额/占比（未设预算时明确标注） */
+/**
+ * 图例：分类名 + 右侧两列数字（金额 / 占比）。
+ * 每项两排——上排实际花费、下排预算，**金额与金额、占比与占比纵向对齐**，方便逐项对比；
+ * 未设预算的分类下排标注「未设」。
+ */
 @Composable
 fun DonutLegend(
     slices: List<CategorySlice>,
@@ -411,44 +417,73 @@ fun DonutLegend(
 ) {
     val palette = MaterialTheme.accBook.categoryPalette
     val totalBudget = slices.sumOf { it.budgetCents }
+    // 两列定宽 + 右对齐：跨分类、上下两排的数字都能对齐成表
+    val amountWidth = 96.dp
+    val percentWidth = 42.dp
+
+    @Composable
+    fun NumberCell(text: String, width: Dp, muted: Boolean = false) {
+        Text(
+            text,
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (muted) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.End,
+            modifier = Modifier.width(width),
+        )
+    }
+
     Column(modifier.fillMaxWidth()) {
         slices.forEachIndexed { index, s ->
             if (index > 0) HorizontalDivider(color = MaterialTheme.accBook.hairline)
-            Row(
-                Modifier.fillMaxWidth().padding(vertical = 9.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Box(
-                    Modifier
-                        .size(10.dp)
-                        .clip(CircleShape)
-                        .background(categoryColor(palette, s.name)),
-                )
-                Spacer(Modifier.width(10.dp))
-                Column(Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            s.name,
-                            style = MaterialTheme.typography.bodyMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f),
-                        )
-                        Text(
-                            "${Money.formatYuanGrouped(s.actualCents)} · ${ChartMath.sharePercent(s.actualCents, totalActualCents).roundToInt()}%",
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                    }
+            Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                // 上排：实际花费 + 占比
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        Modifier
+                            .size(10.dp)
+                            .clip(CircleShape)
+                            .background(categoryColor(palette, s.name)),
+                    )
+                    Spacer(Modifier.width(10.dp))
                     Text(
-                        if (s.budgetCents > 0L) {
-                            "预算 ${Money.formatYuanGrouped(s.budgetCents)} · ${ChartMath.sharePercent(s.budgetCents, totalBudget).roundToInt()}%"
-                        } else {
-                            "未设预算"
-                        },
+                        s.name,
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    NumberCell(Money.formatYuanGrouped(s.actualCents), amountWidth)
+                    Spacer(Modifier.width(6.dp))
+                    NumberCell(
+                        "${ChartMath.sharePercent(s.actualCents, totalActualCents).roundToInt()}%",
+                        percentWidth,
+                    )
+                }
+                // 下排：预算（与上排同一列，纵向对齐）
+                Row(Modifier.fillMaxWidth().padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Spacer(Modifier.width(20.dp))
+                    Text(
+                        "预算",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 1.dp),
+                        modifier = Modifier.weight(1f),
                     )
+                    if (s.budgetCents > 0L) {
+                        NumberCell(Money.formatYuanGrouped(s.budgetCents), amountWidth, muted = true)
+                        Spacer(Modifier.width(6.dp))
+                        NumberCell(
+                            "${ChartMath.sharePercent(s.budgetCents, totalBudget).roundToInt()}%",
+                            percentWidth,
+                            muted = true,
+                        )
+                    } else {
+                        NumberCell("未设", amountWidth, muted = true)
+                        Spacer(Modifier.width(6.dp))
+                        NumberCell("", percentWidth)
+                    }
                 }
             }
         }

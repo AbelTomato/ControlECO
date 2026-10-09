@@ -241,7 +241,7 @@ private fun CategoryEditorDialog(
         title = { Text(if (initial == null) "新增分类" else "编辑分类") },
         text = {
             Column(
-                Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState()),
+                Modifier.heightIn(max = 620.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 OutlinedTextField(
