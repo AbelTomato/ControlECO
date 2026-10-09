@@ -100,4 +100,17 @@ class MoneyTest {
         assertEquals("+12,000.00", Money.formatSignedPlain(1_200_000))
         assertEquals("+0.50", Money.formatSignedPlain(50))
     }
+
+    @Test
+    fun `grouping covers zero three-digit and huge amounts`() {
+        // 手写千分位（替代逐次 new DecimalFormat）在各档位上与旧实现一致
+        assertEquals("¥0", Money.formatYuanGrouped(0))
+        assertEquals("¥99", Money.formatYuanGrouped(9_900))
+        assertEquals("¥999", Money.formatYuanGrouped(99_900))
+        assertEquals("¥1,000", Money.formatYuanGrouped(100_000))
+        assertEquals("¥9,999", Money.formatYuanGrouped(999_900))
+        assertEquals("¥12,345,678", Money.formatYuanGrouped(1_234_567_800))
+        assertEquals("+9,999,999,999.99", Money.formatSignedPlain(999_999_999_999L))
+        assertEquals("+92,233,720,368,547,758.07", Money.formatSignedPlain(Long.MAX_VALUE))
+    }
 }

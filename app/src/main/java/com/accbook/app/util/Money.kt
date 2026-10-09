@@ -98,8 +98,26 @@ object Money {
         return sign + grouped(abs) + "." + (abs % 100).toString().padStart(2, '0')
     }
 
-    /** 整数元部分的千分位分组 */
-    private fun grouped(absCents: Long): String = java.text.DecimalFormat("#,##0").format(absCents / 100)
+    /**
+     * 整数元部分的千分位分组（手写，入参为非负分）。
+     *
+     * 原先每次调用都 new 一个 `DecimalFormat("#,##0")`：列表每行每帧都要格式化金额（账单行/日期头/统计），
+     * 构造并解析模式的开销在滚动时是实打实的卡顿来源；手写后只分配结果字符串，输出与 DecimalFormat 一致。
+     */
+    private fun grouped(absCents: Long): String {
+        val yuan = (absCents / 100).toString()
+        if (yuan.length <= 3) return yuan
+        val sb = StringBuilder(yuan.length + (yuan.length - 1) / 3)
+        val head = yuan.length % 3
+        if (head > 0) sb.append(yuan, 0, head)
+        var i = head
+        while (i < yuan.length) {
+            if (i > 0) sb.append(',')
+            sb.append(yuan, i, i + 3)
+            i += 3
+        }
+        return sb.toString()
+    }
 
     /** 保留两位小数（四舍五入）并去除尾零：32.31232 → "32.31"，10.0 → "10" */
     private fun trimNumber(value: Double): String =

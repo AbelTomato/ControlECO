@@ -4,12 +4,8 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -51,8 +47,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -61,7 +59,6 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
@@ -76,6 +73,7 @@ import com.accbook.app.data.db.TxType
 import com.accbook.app.ui.common.CategoryLogo
 import com.accbook.app.ui.common.PeriodPickerSheet
 import com.accbook.app.ui.common.PeriodStepper
+import com.accbook.app.ui.common.SegmentedSwitch
 import com.accbook.app.ui.common.dayOfWeekZh
 import com.accbook.app.ui.common.periodScopeLabel
 import com.accbook.app.ui.theme.accBook
@@ -93,13 +91,11 @@ import kotlinx.coroutines.withContext
 /** 范围/多选删除的二次确认（标题 + 说明 + 执行动作） */
 private data class DeleteConfirm(val title: String, val body: String, val onConfirm: () -> Unit)
 
-/** 收支类型筛选：单个按钮点击循环 全部 → 支出 → 收入 → 全部 */
+/** 收支类型筛选：三段式（全部 / 支出 / 收入），选中段主色实底 */
 private enum class TxFilter(val label: String) {
     ALL("全部"),
     EXPENSE("支出"),
-    INCOME("收入");
-
-    fun next(): TxFilter = entries[(ordinal + 1) % entries.size]
+    INCOME("收入"),
 }
 
 /** 折叠状态下默认展示的最近天数；超出部分用页脚「查看全部」展开 */
@@ -311,12 +307,17 @@ fun TransactionListScreen(
             }
         }
 
-        // ---- 单按钮循环筛选 + 记录数 ----
+        // ---- 收支筛选（三段式）+ 记录数 ----
         Row(
             Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            CycleFilterButton(filter = filter, onCycle = { filter = filter.next() })
+            SegmentedSwitch(
+                options = TxFilter.entries,
+                selected = filter,
+                label = { it.label },
+                onSelect = { filter = it },
+            )
             Spacer(Modifier.weight(1f))
             Text(
                 when {
@@ -516,39 +517,17 @@ fun TransactionListScreen(
     }
 }
 
-/** 单按钮筛选：显示当前口径，点一下循环到下一个（全部 → 支出 → 收入 → 全部）。
- *  立体按钮样式（实底 + 投影）：删掉圆形箭头后，靠"凸起"而不是图标暗示可点。 */
-@Composable
-private fun CycleFilterButton(filter: TxFilter, onCycle: () -> Unit) {
-    val active = filter != TxFilter.ALL
-    val shape = RoundedCornerShape(50)
-    val bg by animateColorAsState(
-        if (active) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
-        tween(180),
-        label = "cycleFilterBg",
-    )
-    val fg = if (active) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
-    Surface(
-        shape = shape,
-        color = bg,
-        shadowElevation = 3.dp,
-        tonalElevation = 2.dp,
-        border = if (active) null else BorderStroke(1.dp, MaterialTheme.accBook.hairline),
-        modifier = Modifier.clickable(onClick = onCycle),
-    ) {
-        Text(
-            filter.label,
-            style = MaterialTheme.typography.labelLarge,
-            color = fg,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp),
-        )
-    }
-}
-
 /**
- * 列表滑动条（自绘）：拇指长度 = 视口/内容估算比例，位置 = 已滚像素比例；
+ * 列表滑动条（自绘）：拇指长度 = 视口/内容比例，位置 = 已滚像素比例；
  * 拖动把位移换算成滚动像素直接交给列表（`dispatchRawDelta`），拖多少内容走多少。
+ *
+ * 实机排查后改掉的三处（原来是"闪动 + 不跟手"）：
+ * 1. **位置改用最后一个可见项算**：列表带 sticky 日期头，被钉住的那一项会被当作
+ *    "第一个可见项"报出来（实测 `vis=2:o0 6:o0 ...`），用它算位置会让拇指一直卡在顶部；
+ *    从最后一个可见项倒推（最后一项永远不会是钉住的头）才拿到真实滚动量。
+ * 2. **高度按 index 缓存**：见过的是实测值，没见过的按已测平均补；没测到任何一项时
+ *    干脆先不画拇指（硬猜平均高度会画出一根长度离谱的拇指，下一帧又跳回正常 = 闪动）。
+ * 3. **拖动比例按下时定死**：拖动中列表在滚、比例若每帧重算，拇指就追不上手指。
  */
 @Composable
 private fun ListScrollbar(state: LazyListState, modifier: Modifier = Modifier) {
@@ -559,21 +538,56 @@ private fun ListScrollbar(state: LazyListState, modifier: Modifier = Modifier) {
 
     val info = state.layoutInfo
     val total = info.totalItemsCount
-    val visibleInfo = info.visibleItemsInfo
     val viewport = (info.viewportEndOffset - info.viewportStartOffset).coerceAtLeast(1)
-    val avgItem = if (visibleInfo.isEmpty()) 1f else visibleInfo.sumOf { it.size }.toFloat() / visibleInfo.size
-    val contentPx = (avgItem * total).coerceAtLeast(viewport.toFloat())
-    val scrollablePx = (contentPx - viewport).coerceAtLeast(1f)
-    val canScroll = state.canScrollForward || state.canScrollBackward
+    val visible = info.visibleItemsInfo
 
-    val first = visibleInfo.firstOrNull()
-    val scrolledPx = if (first == null) 0f else (avgItem * first.index - first.offset).coerceIn(0f, scrollablePx)
+    // 实测高度缓存：按 index 记（组合期间只读，写入放到 SideEffect）。
+    // 键绑总条目数：换月/展开/筛选后条目集合变了，旧高度不能复用
+    val seen = remember(total) { HashMap<Int, Int>() }
+    // 首帧还没测到任何项时拇指不画；SideEffect 补上高度后靠版本号触发一次重组把拇指补出来
+    // （否则"静止在列表顶部"时永远等不到下一次重组，拇指干脆不见了）
+    var measuredVersion by remember(total) { mutableIntStateOf(0) }
+    SideEffect {
+        var changed = false
+        state.layoutInfo.visibleItemsInfo.forEach { item ->
+            if (seen[item.index] != item.size) {
+                seen[item.index] = item.size
+                changed = true
+            }
+        }
+        if (changed) measuredVersion++
+    }
+    val avg = remember(measuredVersion) {
+        if (seen.isEmpty()) 0f else seen.values.sum().toFloat() / seen.size
+    }
+
+    /** 已测到的用实测高度，没测到的按已测平均补：跑几帧就逼近真值，拇指长度不会再变 */
+    fun approxHeight(index: Int): Float = (seen[index] ?: avg).toFloat()
+
+    fun sumHeights(before: Int): Float {
+        var acc = 0f
+        for (i in 0 until before) acc += approxHeight(i)
+        return acc
+    }
+
+    val measured = avg > 0f
+    val contentPx = (if (measured) sumHeights(total) else 0f).coerceAtLeast(viewport.toFloat())
+    val scrollablePx = (contentPx - viewport).coerceAtLeast(1f)
+    // 从最后一个可见项倒推滚动量：它上面所有项的高度和 − 它在视口内的偏移
+    val last = visible.lastOrNull()
+    val scrolledPx = if (measured && last != null) {
+        (sumHeights(last.index) - last.offset).coerceIn(0f, scrollablePx)
+    } else {
+        0f
+    }
     val progress = (scrolledPx / scrollablePx).coerceIn(0f, 1f)
     val thumbFraction = (viewport / contentPx).coerceIn(0.12f, 0.9f)
     val travelPx = (trackHeightPx * (1f - thumbFraction)).coerceAtLeast(1f)
     val thumbHeight = with(LocalDensity.current) { (trackHeightPx * thumbFraction).toDp() }
     // 拖动 1px → 内容滚多少：按"内容可滚量 / 拇指可走距离"换算，保底 0.2 让轻微溢出也能拖动
-    val dragRatio = (scrollablePx / travelPx).coerceAtLeast(0.2f)
+    val ratioNow = (scrollablePx / travelPx).coerceAtLeast(0.2f)
+    val latestRatio by rememberUpdatedState(ratioNow)
+    val canScroll = state.canScrollForward || state.canScrollBackward
 
     // 测量用的 onSizeChanged 必须挂在始终存在的节点上（提前 return 会让轨道高度永远是 0）
     Box(
@@ -581,8 +595,13 @@ private fun ListScrollbar(state: LazyListState, modifier: Modifier = Modifier) {
             .onSizeChanged { trackHeightPx = it.height }
             .pointerInput(canScroll, total) {
                 if (canScroll) {
+                    var dragRatio = 1f
                     detectVerticalDragGestures(
-                        onDragStart = { dragging = true },
+                        onDragStart = {
+                            dragging = true
+                            // 按下时定死比例：整个手势都用它，拇指才会贴着手指走
+                            dragRatio = latestRatio
+                        },
                         onDragEnd = { dragging = false },
                         onDragCancel = { dragging = false },
                     ) { change, dragAmount ->
@@ -593,7 +612,7 @@ private fun ListScrollbar(state: LazyListState, modifier: Modifier = Modifier) {
             },
         contentAlignment = Alignment.TopCenter,
     ) {
-        if (canScroll && trackHeightPx > 0) {
+        if (canScroll && measured && trackHeightPx > 0) {
             Box(
                 Modifier
                     .offset { IntOffset(0, (progress * travelPx).roundToInt()) }
@@ -617,8 +636,9 @@ private fun DayHeader(day: LocalDate, dayRows: List<TransactionRow>) {
         else -> dayOfWeekZh(day.dayOfWeek)
     }
     val label = "${day.monthValue}月${day.dayOfMonth}日 · $relative"
-    val dayExpense = dayRows.filter { it.type == TxType.EXPENSE }.sumOf { it.amountCents }
-    val dayIncome = dayRows.filter { it.type == TxType.INCOME }.sumOf { it.amountCents }
+    // 日期头随滚动反复进出视野，汇总只在数据变化时算一次
+    val dayExpense = remember(dayRows) { dayRows.filter { it.type == TxType.EXPENSE }.sumOf { it.amountCents } }
+    val dayIncome = remember(dayRows) { dayRows.filter { it.type == TxType.INCOME }.sumOf { it.amountCents } }
     val dayBalance = dayIncome - dayExpense
     Row(
         Modifier
@@ -658,7 +678,10 @@ private fun BillRow(
 ) {
     val ab = MaterialTheme.accBook
     val isExpense = row.type == TxType.EXPENSE
-    val time = Instant.ofEpochMilli(row.timestamp).atZone(ZoneId.systemDefault()).toLocalTime().format(timeFormatter)
+    // 时间字符串按时间戳缓存：滚动时行会被反复组合，日期转换 + 格式化不必每帧重来
+    val time = remember(row.timestamp) {
+        Instant.ofEpochMilli(row.timestamp).atZone(ZoneId.systemDefault()).toLocalTime().format(timeFormatter)
+    }
     val texts = billRowText(row.counterparty, row.categoryName, time, row.note)
     val subStyle = MaterialTheme.typography.bodySmall
     val subColor = MaterialTheme.colorScheme.onSurfaceVariant

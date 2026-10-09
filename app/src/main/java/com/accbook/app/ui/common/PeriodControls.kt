@@ -69,13 +69,15 @@ fun periodScopeLabel(mode: PeriodMode): String = when (mode) {
 }
 
 /**
- * 月 / 年 两段式切换：选中段主色实底，未选中透明。
- * 账单页结余卡与统计页顶部共用，两处永远同步（同一份 ViewModel 状态）。
+ * 通用分段切换（月/年切换、账单"全部/支出/收入"筛选共用同一套外观）：
+ * 外层浅主色胶囊，选中段主色实底 + 白字加粗，未选中透明——开着就有"能点、点哪个"的直观感。
  */
 @Composable
-fun PeriodSwitch(
-    mode: PeriodMode,
-    onChange: (PeriodMode) -> Unit,
+fun <T> SegmentedSwitch(
+    options: List<T>,
+    selected: T,
+    label: (T) -> String,
+    onSelect: (T) -> Unit,
     modifier: Modifier = Modifier,
     containerColor: Color = MaterialTheme.accBook.primaryStrong.copy(alpha = 0.16f),
     selectedColor: Color = MaterialTheme.accBook.primaryStrong,
@@ -90,25 +92,52 @@ fun PeriodSwitch(
             .padding(3.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        PeriodMode.entries.forEach { m ->
-            val selected = m == mode
+        options.forEach { option ->
+            val isSelected = option == selected
             Box(
                 Modifier
                     .clip(shape)
-                    .then(if (selected) Modifier.background(selectedColor) else Modifier)
-                    .clickable { onChange(m) }
+                    .then(if (isSelected) Modifier.background(selectedColor) else Modifier)
+                    .clickable { onSelect(option) }
                     .padding(horizontal = 14.dp, vertical = 5.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    m.label,
+                    label(option),
                     style = MaterialTheme.typography.labelLarge,
-                    color = if (selected) selectedContentColor else contentColor,
-                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                    color = if (isSelected) selectedContentColor else contentColor,
+                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
                 )
             }
         }
     }
+}
+
+/**
+ * 月 / 年 两段式切换：选中段主色实底，未选中透明。
+ * 账单页结余卡与统计页顶部共用，两处永远同步（同一份 ViewModel 状态）。
+ */
+@Composable
+fun PeriodSwitch(
+    mode: PeriodMode,
+    onChange: (PeriodMode) -> Unit,
+    modifier: Modifier = Modifier,
+    containerColor: Color = MaterialTheme.accBook.primaryStrong.copy(alpha = 0.16f),
+    selectedColor: Color = MaterialTheme.accBook.primaryStrong,
+    selectedContentColor: Color = MaterialTheme.colorScheme.onPrimary,
+    contentColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+) {
+    SegmentedSwitch(
+        options = PeriodMode.entries,
+        selected = mode,
+        label = { it.label },
+        onSelect = onChange,
+        modifier = modifier,
+        containerColor = containerColor,
+        selectedColor = selectedColor,
+        selectedContentColor = selectedContentColor,
+        contentColor = contentColor,
+    )
 }
 
 /**
