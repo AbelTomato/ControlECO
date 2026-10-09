@@ -85,7 +85,7 @@ fun RowDivider(startPadding: Int = 16) {
 
 /**
  * 通用设置行：标题行（标题 + 右侧取值 + 箭头）在上，说明文字整行折行在下。
- * onClick 为 null 时是不可点击的纯展示行（无箭头）。
+ * onClick 为 null 时是不可点击的纯展示行（无箭头）；没有说明时行高自动收紧。
  */
 @Composable
 fun InfoRow(
@@ -98,7 +98,7 @@ fun InfoRow(
         Modifier
             .fillMaxWidth()
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .padding(horizontal = 16.dp, vertical = 13.dp),
+            .padding(horizontal = 16.dp, vertical = if (subtitle.isNullOrBlank()) 16.dp else 13.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
@@ -127,9 +127,9 @@ fun InfoRow(
                 )
             }
         }
-        subtitle?.let {
+        if (!subtitle.isNullOrBlank()) {
             Text(
-                it,
+                subtitle,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 2.dp),
@@ -138,26 +138,30 @@ fun InfoRow(
     }
 }
 
-/** 开关行的统一外壳：标题 + 说明 + 右侧附加控件（按钮/取值）+ 开关 */
+/** 开关行的统一外壳：标题 + 说明（可选）+ 右侧附加控件（按钮/取值）+ 开关 */
 @Composable
 fun SwitchRowShell(
     title: String,
-    subtitle: String,
+    subtitle: String? = null,
     trailing: @Composable () -> Unit = {},
     switch: (@Composable () -> Unit)? = null,
 ) {
     Row(
-        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = if (subtitle.isNullOrBlank()) 16.dp else 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.bodyLarge)
-            Text(
-                subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 2.dp),
-            )
+            if (!subtitle.isNullOrBlank()) {
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
         }
         trailing()
         switch?.invoke()
@@ -166,7 +170,7 @@ fun SwitchRowShell(
 
 /** 纯开关行 */
 @Composable
-fun SwitchRow(title: String, subtitle: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+fun SwitchRow(title: String, subtitle: String? = null, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
     SwitchRowShell(
         title = title,
         subtitle = subtitle,

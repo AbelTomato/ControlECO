@@ -2,6 +2,11 @@ package com.accbook.app.ui
 
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -91,7 +96,21 @@ fun AccBookNav(vm: LedgerViewModel, navEvent: Pair<Long, String?> = 0L to null) 
             com.accbook.app.capture.CaptureCenter.ROUTE_REFUND_LINK -> navController.navigate("refundLink")
         }
     }
-    NavHost(navController = navController, startDestination = "main") {
+    // 转场：默认的 700ms 淡入淡出太慢，改成 180ms 淡入 + 轻微横向位移（层级更清楚、手感利落）
+    NavHost(
+        navController = navController,
+        startDestination = "main",
+        enterTransition = {
+            fadeIn(animationSpec = tween(180)) +
+                slideInHorizontally(animationSpec = tween(180), initialOffsetX = { it / 14 })
+        },
+        exitTransition = { fadeOut(animationSpec = tween(120)) },
+        popEnterTransition = { fadeIn(animationSpec = tween(160)) },
+        popExitTransition = {
+            fadeOut(animationSpec = tween(120)) +
+                slideOutHorizontally(animationSpec = tween(160), targetOffsetX = { it / 14 })
+        },
+    ) {
         composable("main") {
             MainScaffold(
                 vm = vm,
@@ -99,6 +118,7 @@ fun AccBookNav(vm: LedgerViewModel, navEvent: Pair<Long, String?> = 0L to null) 
                 onEditTransaction = { id -> navController.navigate("edit/$id") },
                 onOpenPending = { navController.navigate("pending") },
                 onOpenSettings = { navController.navigate("settings") },
+                onOpenCategories = { navController.navigate("categories") },
             )
         }
         composable("quickAdd") { QuickAddScreen(vm = vm, onBack = { navController.popBackStack() }) }
@@ -116,7 +136,6 @@ fun AccBookNav(vm: LedgerViewModel, navEvent: Pair<Long, String?> = 0L to null) 
         // ---- 设置体系：设置 →（账户 / 账单导入 / 权限 / 开发者功能 / 关于）----
         composable("settings") {
             SettingsScreen(
-                vm = vm,
                 onBack = { navController.popBackStack() },
                 onOpenAccount = { navController.navigate("settings/account") },
                 onOpenImport = { navController.navigate("settings/import") },
@@ -127,7 +146,6 @@ fun AccBookNav(vm: LedgerViewModel, navEvent: Pair<Long, String?> = 0L to null) 
         }
         composable("settings/account") {
             SettingsAccountScreen(
-                vm = vm,
                 onBack = { navController.popBackStack() },
                 onOpenAccounts = { navController.navigate("accounts") },
                 onOpenCategories = { navController.navigate("categories") },
@@ -180,6 +198,7 @@ private fun MainScaffold(
     onEditTransaction: (Long) -> Unit,
     onOpenPending: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenCategories: () -> Unit,
 ) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     // 再次点击当前标签 → 计数 +1，由页面自己"回到顶部"（列表/滚动页通用）
@@ -229,7 +248,11 @@ private fun MainScaffold(
                     scrollToTopTick = reenterTick,
                 )
                 2 -> StatsScreen(vm = vm, scrollToTopTick = reenterTick)
-                3 -> ProfileScreen(onOpenSettings = onOpenSettings)
+                3 -> ProfileScreen(
+                    vm = vm,
+                    onOpenSettings = onOpenSettings,
+                    onOpenCategories = onOpenCategories,
+                )
             }
         }
     }

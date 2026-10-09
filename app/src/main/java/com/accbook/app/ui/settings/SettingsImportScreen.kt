@@ -14,6 +14,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.accbook.app.data.LedgerViewModel
 import com.accbook.app.ui.common.InfoRow
 import com.accbook.app.ui.common.PaneCard
+import com.accbook.app.ui.common.RowDivider
 import com.accbook.app.ui.common.SectionTitle
 import com.accbook.app.ui.common.SettingsPage
 import com.accbook.app.ui.common.SwitchRow
@@ -30,12 +31,7 @@ fun SettingsImportScreen(
     SettingsPage(title = "账单导入", onBack = onBack) {
         SectionTitle("导入")
         PaneCard {
-            InfoRow(
-                title = "选择账单文件",
-                subtitle = "解析后进入预览页，确认账户与分类再批量入账",
-                trailing = "去导入",
-                onClick = onImport,
-            )
+            InfoRow(title = "选择账单文件", onClick = onImport)
         }
 
         SectionTitle("导出账单（微信 / 支付宝）")
@@ -49,12 +45,6 @@ fun SettingsImportScreen(
                 TutorialStep(
                     "2. 支付宝",
                     "我的 → 账单 → 右上角「…」 → 开具交易流水证明，用途选「用于个人对账」，CSV 会发送到邮箱。",
-                )
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    "把收到的文件传到手机，回到上面的「选择账单文件」导入即可；重复导入的账单会被自动去重。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
@@ -84,7 +74,6 @@ private fun RefundDisplaySetting(vm: LedgerViewModel) {
     val showRefunds by vm.showRefunds.collectAsStateWithLifecycle()
     SwitchRow(
         title = "显示退款记录",
-        subtitle = "开启后账单标记「退款收入 / 已退款」，并额外显示退款合计；关闭则不显示、不计入",
         checked = showRefunds,
         onCheckedChange = { vm.setShowRefunds(it) },
     )

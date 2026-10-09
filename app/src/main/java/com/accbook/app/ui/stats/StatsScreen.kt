@@ -2,7 +2,6 @@ package com.accbook.app.ui.stats
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -14,7 +13,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -26,7 +24,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.accbook.app.data.LedgerViewModel
@@ -35,6 +32,7 @@ import com.accbook.app.data.db.TxType
 import com.accbook.app.ui.common.PeriodPickerSheet
 import com.accbook.app.ui.common.PeriodStepper
 import com.accbook.app.ui.common.PeriodSwitch
+import com.accbook.app.ui.common.periodBalanceLabel
 import com.accbook.app.ui.common.periodScopeLabel
 import com.accbook.app.ui.theme.accBook
 import com.accbook.app.util.Money
@@ -101,9 +99,6 @@ fun StatsScreen(vm: LedgerViewModel, scrollToTopTick: Int = 0) {
         }
         ChartMath.mergeSlices(actual, budget)
     }
-    val top = slices.firstOrNull()?.takeIf { it.actualCents > 0 }
-    val topShare = top?.let { ChartMath.sharePercent(it.actualCents, expense).toInt() } ?: 0
-
     val pageScroll = rememberScrollState()
     // 再次点击底部「统计」标签：回到顶部
     LaunchedEffect(scrollToTopTick) {
@@ -129,43 +124,48 @@ fun StatsScreen(vm: LedgerViewModel, scrollToTopTick: Int = 0) {
             PeriodSwitch(mode = mode, onChange = { vm.setPeriodMode(it) })
         }
 
-        // ---- 结论卡：本期支出大字 + 收入/结余/退款 ----
+        // ---- 结论卡：与账单悬浮卡同排版（左：结余大字 + 日均；右：收入 / 支出，+绿 −红，无文字标签） ----
         StatsCard(Modifier.padding(top = 12.dp)) {
             Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.Top) {
                 Column(Modifier.weight(1f)) {
                     Text(
-                        "${periodScopeLabel(mode)}支出",
+                        periodBalanceLabel(mode),
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text(
-                        Money.formatYuanGrouped(expense),
+                        Money.formatYuanGroupedFixed(income - expense),
                         style = MaterialTheme.typography.headlineMedium,
                         color = MaterialTheme.colorScheme.onSurface,
                     )
                     Text(
-                        "日均 ${Money.formatYuanGrouped(dailyAverage)}",
+                        "${Money.formatYuanGrouped(dailyAverage)} / day",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 2.dp),
                     )
-                }
-                Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    MetricRow("收入", "+${Money.formatYuanGrouped(income)}", MaterialTheme.accBook.income)
-                    MetricRow("结余", Money.formatYuanGrouped(income - expense), MaterialTheme.colorScheme.onSurface)
                     if (showRefunds && refundReady > 0L) {
-                        MetricRow("退款到账", Money.formatYuanGrouped(refundReady), MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            "退款到账 ${Money.formatYuanGrouped(refundReady)}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 2.dp),
+                        )
                     }
                 }
-            }
-            if (expense > 0L) {
-                HorizontalDivider(color = MaterialTheme.accBook.hairline)
-                Text(
-                    if (top != null) "花得最多的是「${top.name}」，占 $topShare%" else "本期暂无支出",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                )
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(
+                        Money.formatSignedPlain(income),
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.accBook.income,
+                    )
+                    Spacer(Modifier.height(3.dp))
+                    Text(
+                        Money.formatSignedPlain(-expense),
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.accBook.critical,
+                    )
+                }
             }
         }
 
@@ -193,7 +193,7 @@ fun StatsScreen(vm: LedgerViewModel, scrollToTopTick: Int = 0) {
                     CategoryDonut(
                         slices = slices,
                         totalActualCents = expense,
-                        modifier = Modifier.align(Alignment.CenterHorizontally),
+                        hint = "点按或滑动圆环查看分类明细",
                     )
                     Text(
                         buildString {
@@ -202,7 +202,7 @@ fun StatsScreen(vm: LedgerViewModel, scrollToTopTick: Int = 0) {
                         },
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 10.dp, bottom = 8.dp),
+                        modifier = Modifier.padding(top = 12.dp, bottom = 8.dp),
                     )
                     DonutLegend(slices = slices, totalActualCents = expense)
                 }
@@ -218,24 +218,6 @@ fun StatsScreen(vm: LedgerViewModel, scrollToTopTick: Int = 0) {
             onSelectMonth = { vm.setMonth(it) },
             onSelectYear = { vm.setMonth(YearMonth.of(it, month.monthValue)) },
             onDismiss = { showPicker = false },
-        )
-    }
-}
-
-/** 结论卡右侧的一行小指标：标签 + 取值（取值可带语义色） */
-@Composable
-private fun MetricRow(label: String, value: String, valueColor: Color) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            label,
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Text(
-            value,
-            style = MaterialTheme.typography.titleSmall,
-            color = valueColor,
-            modifier = Modifier.padding(start = 8.dp),
         )
     }
 }

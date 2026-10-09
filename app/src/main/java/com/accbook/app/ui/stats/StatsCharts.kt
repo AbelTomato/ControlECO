@@ -21,6 +21,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -243,70 +244,162 @@ fun ExpenseBarChart(bars: List<BarPoint>, hint: String, modifier: Modifier = Mod
 }
 
 /**
- * 双环饼图：外环 = 分类预算占比（半透明），内环 = 实际支出占比（实色）；
- * 中心显示实际支出合计。没有预算/没有支出时对应环只留底轨。
+ * 双环饼图：外环 = 分类预算占比（42% 透明），内环 = 实际支出占比（实色）；
+ * 点按 / 横向滑动任一环可选中分类，上方读数行显示「类别 · 金额 · 占比」（含预算占比）。
+ * 中心不写字，读数都在上方一行 + 下方图例里。
  */
 @Composable
 fun CategoryDonut(
     slices: List<CategorySlice>,
     totalActualCents: Long,
+    hint: String,
     modifier: Modifier = Modifier,
 ) {
     val ab = MaterialTheme.accBook
     val palette = ab.categoryPalette
-    Box(modifier, contentAlignment = Alignment.Center) {
-        Canvas(Modifier.size(176.dp)) {
-            val strokeOuter = 20.dp.toPx()
-            val strokeInner = 16.dp.toPx()
-            val ringGap = 8.dp.toPx()
-            val c = center
-            val rOuter = size.minDimension / 2f - strokeOuter / 2f
-            val rInner = rOuter - strokeOuter / 2f - ringGap - strokeInner / 2f
+    var selected by remember(slices) { mutableStateOf<String?>(null) }
+    val selectedSlice = slices.firstOrNull { it.name == selected }
 
-            // 底轨
-            drawCircle(ab.ringTrack, radius = rOuter, center = c, style = Stroke(strokeOuter))
-            drawCircle(ab.ringTrack, radius = rInner, center = c, style = Stroke(strokeInner))
-
-            val totalBudget = slices.sumOf { it.budgetCents }
-            val totalActual = slices.sumOf { it.actualCents }
-
-            fun ring(radius: Float, width: Float, alpha: Float, value: (CategorySlice) -> Long, total: Long) {
-                if (total <= 0L) return
-                var start = -90f
-                slices.forEach { s ->
-                    val v = value(s)
-                    val sweep = v * 360f / total
-                    if (v > 0L) {
-                        val pad = min(1.2f, sweep * 0.06f)
-                        drawArc(
-                            color = categoryColor(palette, s.name).copy(alpha = alpha),
-                            startAngle = start + pad,
-                            sweepAngle = (sweep - pad * 2).coerceAtLeast(0.8f),
-                            useCenter = false,
-                            topLeft = Offset(c.x - radius, c.y - radius),
-                            size = Size(radius * 2, radius * 2),
-                            style = Stroke(width),
-                        )
-                    }
-                    start += sweep
-                }
+    val readout = if (selectedSlice != null) {
+        buildString {
+            append(selectedSlice.name)
+            append(" · ¥")
+            append(Money.formatYuanGrouped(selectedSlice.actualCents).removePrefix("¥"))
+            append(" · ")
+            append(ChartMath.sharePercent(selectedSlice.actualCents, totalActualCents).roundToInt())
+            append('%')
+            if (selectedSlice.budgetCents > 0L) {
+                val totalBudget = slices.sumOf { it.budgetCents }
+                append(" · 预算 ¥")
+                append(Money.formatYuanGrouped(selectedSlice.budgetCents).removePrefix("¥"))
+                append(" · ")
+                append(ChartMath.sharePercent(selectedSlice.budgetCents, totalBudget).roundToInt())
+                append('%')
             }
-            ring(rOuter, strokeOuter, alpha = 0.42f, value = { it.budgetCents }, total = totalBudget)
-            ring(rInner, strokeInner, alpha = 1f, value = { it.actualCents }, total = totalActual)
         }
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(
-                "实际支出",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
-                Money.formatYuanCompact(totalActualCents),
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
+    } else {
+        hint
+    }
+
+    Column(modifier) {
+        Text(
+            readout,
+            style = MaterialTheme.typography.bodySmall,
+            color = if (selectedSlice != null) {
+                MaterialTheme.colorScheme.onSurface
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(Modifier.height(10.dp))
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            Canvas(
+                Modifier
+                    .size(176.dp)
+                    .pointerInput(slices) {
+                        val scope = this
+                        fun pick(pos: Offset) {
+                            selected = donutGeometry(scope.size.width.toFloat(), scope).sliceAt(pos, slices)
+                        }
+                        detectTapGestures { pos -> pick(pos) }
+                    }
+                    .pointerInput(slices) {
+                        val scope = this
+                        fun pick(pos: Offset) {
+                            selected = donutGeometry(scope.size.width.toFloat(), scope).sliceAt(pos, slices)
+                        }
+                        detectHorizontalDragGestures(
+                            onDragStart = { pos -> pick(pos) },
+                            onHorizontalDrag = { change, _ ->
+                                pick(change.position)
+                                change.consume()
+                            },
+                        )
+                    },
+            ) {
+                val strokeOuter = 20.dp.toPx()
+                val strokeInner = 16.dp.toPx()
+                val ringGap = 8.dp.toPx()
+                val c = center
+                val rOuter = size.minDimension / 2f - strokeOuter / 2f
+                val rInner = rOuter - strokeOuter / 2f - ringGap - strokeInner / 2f
+
+                // 底轨
+                drawCircle(ab.ringTrack, radius = rOuter, center = c, style = Stroke(strokeOuter))
+                drawCircle(ab.ringTrack, radius = rInner, center = c, style = Stroke(strokeInner))
+
+                val totalBudget = slices.sumOf { it.budgetCents }
+                val totalActual = slices.sumOf { it.actualCents }
+
+                fun ring(radius: Float, width: Float, alpha: Float, value: (CategorySlice) -> Long, total: Long) {
+                    if (total <= 0L) return
+                    var start = -90f
+                    slices.forEach { s ->
+                        val v = value(s)
+                        val sweep = v * 360f / total
+                        if (v > 0L) {
+                            val dim = selected != null && selected != s.name
+                            val pad = min(1.2f, sweep * 0.06f)
+                            drawArc(
+                                color = categoryColor(palette, s.name).copy(alpha = if (dim) alpha * 0.22f else alpha),
+                                startAngle = start + pad,
+                                sweepAngle = (sweep - pad * 2).coerceAtLeast(0.8f),
+                                useCenter = false,
+                                topLeft = Offset(c.x - radius, c.y - radius),
+                                size = Size(radius * 2, radius * 2),
+                                style = Stroke(width),
+                            )
+                        }
+                        start += sweep
+                    }
+                }
+                ring(rOuter, strokeOuter, alpha = 0.42f, value = { it.budgetCents }, total = totalBudget)
+                ring(rInner, strokeInner, alpha = 1f, value = { it.actualCents }, total = totalActual)
+            }
         }
     }
+}
+
+/** 饼图几何：绘制与命中共用（半径按画布最小边推导，与绘制逻辑一致） */
+private class DonutGeometry(
+    private val center: Offset,
+    private val rOuter: Float,
+    private val rInner: Float,
+    private val strokeOuter: Float,
+    private val strokeInner: Float,
+) {
+    /** 触点落在哪一环的哪个分类上（外环优先；都不中返回 null 表示清除选中） */
+    fun sliceAt(pos: Offset, slices: List<CategorySlice>): String? {
+        val dx = pos.x - center.x
+        val dy = pos.y - center.y
+        val dist = kotlin.math.hypot(dx.toDouble(), dy.toDouble()).toFloat()
+        val onOuter = kotlin.math.abs(dist - rOuter) <= strokeOuter * 0.9f
+        val onInner = kotlin.math.abs(dist - rInner) <= strokeInner * 0.9f
+        if (!onOuter && !onInner) return null
+        var deg = Math.toDegrees(kotlin.math.atan2(dy.toDouble(), dx.toDouble())).toFloat() + 90f
+        if (deg < 0f) deg += 360f
+        val list = if (onOuter) slices.filter { it.budgetCents > 0L } else slices.filter { it.actualCents > 0L }
+        val total = list.sumOf { if (onOuter) it.budgetCents else it.actualCents }
+        if (total <= 0L) return null
+        var acc = 0f
+        list.forEach { s ->
+            val sweep = (if (onOuter) s.budgetCents else s.actualCents) * 360f / total
+            if (deg >= acc && deg < acc + sweep) return s.name
+            acc += sweep
+        }
+        return list.lastOrNull()?.name
+    }
+}
+
+private fun donutGeometry(widthPx: Float, density: Density): DonutGeometry {
+    val strokeOuter = with(density) { 20.dp.toPx() }
+    val strokeInner = with(density) { 16.dp.toPx() }
+    val ringGap = with(density) { 8.dp.toPx() }
+    val rOuter = widthPx / 2f - strokeOuter / 2f
+    val rInner = rOuter - strokeOuter / 2f - ringGap - strokeInner / 2f
+    return DonutGeometry(Offset(widthPx / 2f, widthPx / 2f), rOuter, rInner, strokeOuter, strokeInner)
 }
 
 /** 图例：分类名 + 实际金额/占比，第二行给预算金额/占比（未设预算时明确标注） */

@@ -4,7 +4,7 @@ import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
@@ -16,6 +16,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -31,13 +32,13 @@ import com.accbook.app.ui.common.RowDivider
 import com.accbook.app.ui.common.SectionTitle
 import com.accbook.app.ui.common.SettingsPage
 import com.accbook.app.ui.common.SwitchRow
-import com.accbook.app.ui.common.SwitchRowShell
 import com.accbook.app.ui.common.a11yPathFor
 import com.accbook.app.ui.common.overlayPathFor
+import com.accbook.app.ui.theme.accBook
 
 /**
  * 设置 → 权限：三块权限（通知监听 / 无障碍 / 悬浮窗）的状态、开关与开启教程都在这一页。
- * 手动触发（测试）按钮不在这里，见「开发者功能 → 手动启动」。
+ * 行上只留标题与开关；授权状态用右侧短标签表达（未授权时附「去开启」）。
  */
 @Composable
 fun SettingsPermissionScreen(
@@ -58,46 +59,62 @@ fun SettingsPermissionScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    SettingsPage(title = "权限与自动记账", onBack = onBack) {
+    SettingsPage(title = "权限", onBack = onBack) {
         NotificationSection(vm, resumeTick, onOpenNotificationAccess)
         A11ySection(vm, resumeTick, onOpenAccessibilitySettings)
         OverlaySection(vm, resumeTick, onOpenOverlayPermission)
+    }
+}
 
+/** 权限状态行：标题 + 状态短标签（已授权=绿，未开启=灰）+ 未授权时的直达按钮 */
+@Composable
+private fun PermissionStatusRow(
+    title: String,
+    granted: Boolean,
+    grantedText: String,
+    ungrantedText: String,
+    actionText: String,
+    onAction: () -> Unit,
+) {
+    Row(
+        Modifier.padding(horizontal = 16.dp, vertical = 15.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Text(
-            "银行短信识别将在后续版本提供。开关都正常仍收不到通知时，" +
-                "见「开发者功能 → 日志与诊断」中的保活与自启动；" +
-                "测试悬浮窗/通知链路可用「开发者功能 → 手动启动」。",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
+            title,
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.weight(1f),
         )
+        Text(
+            if (granted) grantedText else ungrantedText,
+            style = MaterialTheme.typography.labelMedium,
+            color = if (granted) MaterialTheme.accBook.income else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (!granted) {
+            TextButton(onClick = onAction) { Text(actionText) }
+        }
     }
 }
 
 @Composable
 private fun NotificationSection(vm: LedgerViewModel, resumeTick: Int, onOpenNotificationAccess: () -> Unit) {
-    val connected by vm.listenerConnected.collectAsStateWithLifecycle()
     val granted = remember(resumeTick) { vm.isListenerGranted() }
     val captureEnabled by vm.captureEnabled.collectAsStateWithLifecycle()
     val refundLinkEnabled by vm.refundLinkEnabled.collectAsStateWithLifecycle()
 
     SectionTitle("通知监听")
     PaneCard {
-        SwitchRowShell(
+        PermissionStatusRow(
             title = "通知监听",
-            subtitle = when {
-                granted && connected -> "已连接，收款/动账通知将自动进入待确认队列"
-                granted -> "已授权（连接状态未知，若长时间无记录请重启手机）"
-                else -> "未开启，需在系统设置中授予「通知使用权」"
-            },
-            trailing = {
-                if (!granted) TextButton(onClick = onOpenNotificationAccess) { Text("去开启") }
-            },
+            granted = granted,
+            grantedText = "已授权",
+            ungrantedText = "未开启",
+            actionText = "去开启",
+            onAction = onOpenNotificationAccess,
         )
         RowDivider()
         SwitchRow(
             title = "自动记录收款/动账通知",
-            subtitle = "捕获微信/支付宝/云闪付的收款与动账通知，解析后进入待确认队列",
             checked = captureEnabled,
             onCheckedChange = { vm.setCaptureEnabled(it) },
         )
@@ -106,8 +123,6 @@ private fun NotificationSection(vm: LedgerViewModel, resumeTick: Int, onOpenNoti
         RowDivider()
         SwitchRow(
             title = "退款到账关联提醒",
-            subtitle = "微信「退款到账通知」不带金额无法自动入账：弹出提醒卡/通知，" +
-                "点击进入 App 选择被退款的账单（生成退款收入并标记原支出已退款）",
             checked = refundLinkEnabled,
             onCheckedChange = { vm.setRefundLinkEnabled(it) },
         )
@@ -121,15 +136,6 @@ private fun NotificationSection(vm: LedgerViewModel, resumeTick: Int, onOpenNoti
                 "回到本页状态应显示「已连接」；付款后可在捕获日志看到通知快照。",
                 "若长时间无记录：重启手机 → 打开应用再看状态（部分机型需重新开关一次）。",
             ),
-        )
-    }
-    // 通知权限（POST_NOTIFICATIONS）在下面的提醒行内按需申请
-    if (Build.VERSION.SDK_INT >= 33 && !vm.canPostNotifications()) {
-        Text(
-            "提示：动账通知提醒需要系统通知权限，点该行的「申请权限」即可。",
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 24.dp, vertical = 6.dp),
         )
     }
 }
@@ -149,50 +155,46 @@ private fun CaptureNotifySetting(vm: LedgerViewModel, resumeTick: Int) {
         ).show()
     }
 
-    SwitchRowShell(
-        title = "动账通知提醒",
-        subtitle = "捕获到动账/退款时屏幕上方横幅提醒（支付宝支付页会拦截悬浮窗，通知是可靠入口），" +
-            "点击进入待确认队列；与悬浮卡同笔二选一操作即可，操作后另一方自动消失",
-        trailing = {
-            if (!notifGranted) {
-                TextButton(onClick = {
-                    if (Build.VERSION.SDK_INT >= 33) {
-                        permissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
-                    }
-                }) { Text("申请权限") }
-            } else {
-                TextButton(onClick = { openCaptureChannelSettings(context) }) { Text("横幅设置") }
-            }
-        },
-        switch = {
-            Switch(checked = enabled, onCheckedChange = { vm.setCaptureNotifyEnabled(it) })
-        },
-    )
+    Row(
+        Modifier.padding(horizontal = 16.dp, vertical = 15.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "动账通知提醒",
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.weight(1f),
+        )
+        if (!notifGranted) {
+            TextButton(onClick = {
+                if (Build.VERSION.SDK_INT >= 33) {
+                    permissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                }
+            }) { Text("权限") }
+        } else {
+            TextButton(onClick = { openCaptureChannelSettings(context) }) { Text("横幅") }
+        }
+        Switch(checked = enabled, onCheckedChange = { vm.setCaptureNotifyEnabled(it) })
+    }
 }
 
 @Composable
 private fun A11ySection(vm: LedgerViewModel, resumeTick: Int, onOpenAccessibilitySettings: () -> Unit) {
-    val connected by vm.a11yConnected.collectAsStateWithLifecycle()
     val enabled = remember(resumeTick) { vm.isA11yEnabled() }
     val captureOn by vm.a11yCaptureEnabled.collectAsStateWithLifecycle()
 
     SectionTitle("无障碍（页面采集）")
     PaneCard {
-        SwitchRowShell(
+        PermissionStatusRow(
             title = "无障碍页面采集",
-            subtitle = when {
-                enabled && connected -> "已连接，支付成功页/账单详情页自动补全收款方与支付方式"
-                enabled -> "已开启（连接未知，若长时间无记录请重启手机）"
-                else -> "未开启，需在系统无障碍设置中启用「AccBook 支付页面采集」"
-            },
-            trailing = {
-                if (!enabled) TextButton(onClick = onOpenAccessibilitySettings) { Text("去开启") }
-            },
+            granted = enabled,
+            grantedText = "已授权",
+            ungrantedText = "未开启",
+            actionText = "去开启",
+            onAction = onOpenAccessibilitySettings,
         )
         RowDivider()
         SwitchRow(
             title = "自动记录支付页面",
-            subtitle = "无障碍开启时，从支付页/账单详情提取金额进入待确认队列；与通知捕获同笔自动合并，只入账一次",
             checked = captureOn,
             onCheckedChange = { vm.setA11yCaptureEnabled(it) },
         )
@@ -217,21 +219,17 @@ private fun OverlaySection(vm: LedgerViewModel, resumeTick: Int, onOpenOverlayPe
 
     SectionTitle("悬浮窗")
     PaneCard {
-        SwitchRowShell(
+        PermissionStatusRow(
             title = "悬浮确认窗",
-            subtitle = if (granted) {
-                "已授权，支付完成后悬浮预填卡片，点一下即入账（不进待确认队列）"
-            } else {
-                "需要「显示在其他应用上层」权限；未授权时降级为进入待确认队列"
-            },
-            trailing = {
-                if (!granted) TextButton(onClick = onOpenOverlayPermission) { Text("去授权") }
-            },
+            granted = granted,
+            grantedText = "已授权",
+            ungrantedText = "未授权",
+            actionText = "去授权",
+            onAction = onOpenOverlayPermission,
         )
         RowDivider()
         SwitchRow(
             title = "支付完成弹出悬浮窗",
-            subtitle = "需同时开启无障碍页面采集；华为/荣耀支付保护中心、小米支付保险箱可能拦截，见保活设置",
             checked = floatingOn,
             onCheckedChange = { vm.setFloatingConfirmEnabled(it) },
         )
