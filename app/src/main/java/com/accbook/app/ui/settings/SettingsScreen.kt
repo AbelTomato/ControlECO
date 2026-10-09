@@ -78,8 +78,8 @@ fun SettingsScreen(
         SectionTitle("自动记账")
         PaneCard {
             InfoRow(
-                title = "权限与自动记账",
-                subtitle = "通知监听 / 无障碍 / 悬浮窗：状态、开关与开启教程",
+                title = "权限",
+                subtitle = "通知监听 / 无障碍 / 悬浮窗：开关与开启教程",
                 trailing = "$grantedCount/3 已授权",
                 onClick = onOpenPermissions,
             )
