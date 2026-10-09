@@ -215,7 +215,7 @@ fun CardImageEditorDialog(
                             valueRange = 0f..360f,
                         )
                         Text(
-                            "单指拖动移动 · 双指捏合缩放 · 下方滑条旋转",
+                            "单指拖动移动　双指捏合缩放　下方滑条旋转",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

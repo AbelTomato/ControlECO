@@ -1,11 +1,12 @@
 package com.accbook.app.ui.transactions
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 账单行文案：有商户 → 名称是商户、小行第一行「时间 · 类别」；无商户 → 名称是类别、小行第一行只留时间；
- * 备注(第二行)两种情况都原样带出。
+ * 账单行文案：有商户 → 名称是商户、小行第一行「时间　类别」；无商户 → 名称是类别、小行第一行只留时间；
+ * 备注(第二行)两种情况都原样带出。分隔用空白，不用「·」。
  */
 class BillRowTextTest {
 
@@ -13,7 +14,8 @@ class BillRowTextTest {
     fun `有商户时名称用商户_小行第一行是时间加类别`() {
         val t = billRowText("星巴克", "餐饮", "09:30", "拿铁")
         assertEquals("星巴克", t.title)
-        assertEquals("09:30 · 餐饮", t.subLine1)
+        assertEquals("09:30  餐饮", t.subLine1)
+        assertTrue("不应再用「·」间隔", !t.subLine1.contains('·'))
         assertEquals("拿铁", t.note)
     }
 

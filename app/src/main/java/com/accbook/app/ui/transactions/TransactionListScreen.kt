@@ -108,13 +108,13 @@ internal data class BillRowText(val title: String, val subLine1: String, val not
 
 /**
  * 账单行的文案规则（纯函数，`BillRowTextTest` 覆盖）：
- * - 有商户：名称显示**商户**，小行第一行「时间 · 类别」，备注在小行第二行；
+ * - 有商户：名称显示**商户**，小行第一行「时间　类别」（空白间隔，不用「·」），备注在小行第二行；
  * - 无商户：名称显示**类别**，小行第一行只留时间，备注在小行第二行。
  */
 internal fun billRowText(counterparty: String, categoryName: String, time: String, note: String): BillRowText {
     val merchant = counterparty.trim()
     return if (merchant.isNotEmpty()) {
-        BillRowText(title = merchant, subLine1 = "$time · $categoryName", note = note)
+        BillRowText(title = merchant, subLine1 = "$time  $categoryName", note = note)
     } else {
         BillRowText(title = categoryName, subLine1 = time, note = note)
     }
@@ -268,7 +268,7 @@ fun TransactionListScreen(
 
         // ---- 周期步进 + 批量菜单 ----
         Row(
-            Modifier.fillMaxWidth().padding(start = 16.dp, end = 6.dp, top = 10.dp),
+            Modifier.fillMaxWidth().padding(start = 16.dp, end = 6.dp, top = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             PeriodStepper(
@@ -277,6 +277,7 @@ fun TransactionListScreen(
                 onPrev = { vm.prevPeriod() },
                 onNext = { vm.nextPeriod() },
                 onOpenPicker = { showPicker = true },
+                compact = true,
             )
             Spacer(Modifier.weight(1f))
             if (!selecting) {
@@ -309,7 +310,7 @@ fun TransactionListScreen(
 
         // ---- 收支筛选（三段式）+ 记录数 ----
         Row(
-            Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 10.dp),
+            Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             SegmentedSwitch(
@@ -317,6 +318,7 @@ fun TransactionListScreen(
                 selected = filter,
                 label = { it.label },
                 onSelect = { filter = it },
+                compact = true,
             )
             Spacer(Modifier.weight(1f))
             Text(
@@ -410,7 +412,7 @@ fun TransactionListScreen(
                                         }
                                     },
                                 )
-                                HorizontalDivider(color = ab.hairline, modifier = Modifier.padding(start = 76.dp))
+                                HorizontalDivider(color = ab.hairline, modifier = Modifier.padding(start = 64.dp))
                             }
                         }
                         if (hiddenDays > 0) {
@@ -421,7 +423,7 @@ fun TransactionListScreen(
                                 ) {
                                     Text(
                                         "查看${periodScopeLabel(mode)}全部账单（还有 $hiddenDays 天）",
-                                        style = MaterialTheme.typography.bodyMedium,
+                                        style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
@@ -635,7 +637,7 @@ private fun DayHeader(day: LocalDate, dayRows: List<TransactionRow>) {
         today.minusDays(1) -> "昨天"
         else -> dayOfWeekZh(day.dayOfWeek)
     }
-    val label = "${day.monthValue}月${day.dayOfMonth}日 · $relative"
+    val label = "${day.monthValue}月${day.dayOfMonth}日  $relative"
     // 日期头随滚动反复进出视野，汇总只在数据变化时算一次
     val dayExpense = remember(dayRows) { dayRows.filter { it.type == TxType.EXPENSE }.sumOf { it.amountCents } }
     val dayIncome = remember(dayRows) { dayRows.filter { it.type == TxType.INCOME }.sumOf { it.amountCents } }
@@ -644,7 +646,7 @@ private fun DayHeader(day: LocalDate, dayRows: List<TransactionRow>) {
         Modifier
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.background)
-            .padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 7.dp),
+            .padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 5.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -654,9 +656,9 @@ private fun DayHeader(day: LocalDate, dayRows: List<TransactionRow>) {
         ) {
             Text(
                 label,
-                style = MaterialTheme.typography.labelLarge,
+                style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onPrimaryContainer,
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
             )
         }
         Text(
@@ -683,7 +685,7 @@ private fun BillRow(
         Instant.ofEpochMilli(row.timestamp).atZone(ZoneId.systemDefault()).toLocalTime().format(timeFormatter)
     }
     val texts = billRowText(row.counterparty, row.categoryName, time, row.note)
-    val subStyle = MaterialTheme.typography.bodySmall
+    val subStyle = MaterialTheme.typography.labelSmall
     val subColor = MaterialTheme.colorScheme.onSurfaceVariant
     val subModifier = Modifier.fillMaxWidth()
 
@@ -691,20 +693,20 @@ private fun BillRow(
         Modifier
             .fillMaxWidth()
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
-            .padding(horizontal = 20.dp, vertical = 12.dp),
+            .padding(horizontal = 20.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (selecting) {
             Checkbox(checked = selected, onCheckedChange = { onClick() })
             Spacer(Modifier.width(4.dp))
         }
-        CategoryLogo(categoryName = row.categoryName, icon = row.categoryIcon)
-        Spacer(Modifier.width(14.dp))
+        CategoryLogo(categoryName = row.categoryName, icon = row.categoryIcon, size = 34.dp)
+        Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     texts.title,
-                    style = MaterialTheme.typography.bodyLarge,
+                    style = MaterialTheme.typography.bodyMedium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false),
@@ -740,7 +742,7 @@ private fun BillRow(
         Spacer(Modifier.width(8.dp))
         Text(
             Money.formatSignedPlain(if (isExpense) -row.amountCents else row.amountCents),
-            style = MaterialTheme.typography.titleMedium,
+            style = MaterialTheme.typography.titleSmall,
             color = if (isExpense) MaterialTheme.colorScheme.onSurface else ab.income,
         )
     }

@@ -39,6 +39,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.accbook.app.data.PeriodMode
 import com.accbook.app.ui.theme.accBook
@@ -71,6 +72,7 @@ fun periodScopeLabel(mode: PeriodMode): String = when (mode) {
 /**
  * 通用分段切换（月/年切换、账单"全部/支出/收入"筛选共用同一套外观）：
  * 外层浅主色胶囊，选中段主色实底 + 白字加粗，未选中透明——开着就有"能点、点哪个"的直观感。
+ * [compact] = 账单页那种"一屏塞更多信息"的小一号（文字小一档、内边距收窄）。
  */
 @Composable
 fun <T> SegmentedSwitch(
@@ -79,6 +81,7 @@ fun <T> SegmentedSwitch(
     label: (T) -> String,
     onSelect: (T) -> Unit,
     modifier: Modifier = Modifier,
+    compact: Boolean = false,
     containerColor: Color = MaterialTheme.accBook.primaryStrong.copy(alpha = 0.16f),
     selectedColor: Color = MaterialTheme.accBook.primaryStrong,
     selectedContentColor: Color = MaterialTheme.colorScheme.onPrimary,
@@ -89,7 +92,7 @@ fun <T> SegmentedSwitch(
         modifier
             .clip(shape)
             .background(containerColor)
-            .padding(3.dp),
+            .padding(if (compact) 2.dp else 3.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         options.forEach { option ->
@@ -99,12 +102,19 @@ fun <T> SegmentedSwitch(
                     .clip(shape)
                     .then(if (isSelected) Modifier.background(selectedColor) else Modifier)
                     .clickable { onSelect(option) }
-                    .padding(horizontal = 14.dp, vertical = 5.dp),
+                    .padding(
+                        horizontal = if (compact) 12.dp else 14.dp,
+                        vertical = if (compact) 3.dp else 5.dp,
+                    ),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
                     label(option),
-                    style = MaterialTheme.typography.labelLarge,
+                    style = if (compact) {
+                        MaterialTheme.typography.labelMedium
+                    } else {
+                        MaterialTheme.typography.labelLarge
+                    },
                     color = if (isSelected) selectedContentColor else contentColor,
                     fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
                 )
@@ -143,7 +153,7 @@ fun PeriodSwitch(
 /**
  * 周期步进条：[‹] [2026年10月] [›]。
  * 两侧箭头是浅蓝圆钮（唯一的"可点"图形提示），中间日期本身就是选择入口——
- * 不加方框、不加下拉小三角，文字自己站住。
+ * 不加方框、不加下拉小三角，文字自己站住；[compact] 供账单页用小一号（一屏多放几行）。
  */
 @Composable
 fun PeriodStepper(
@@ -153,33 +163,53 @@ fun PeriodStepper(
     onNext: () -> Unit,
     onOpenPicker: () -> Unit,
     modifier: Modifier = Modifier,
+    compact: Boolean = false,
 ) {
     Row(modifier, verticalAlignment = Alignment.CenterVertically) {
-        StepButton(Icons.Filled.KeyboardArrowLeft, "上一${mode.label}") { onPrev() }
-        Spacer(Modifier.width(6.dp))
+        StepButton(
+            icon = Icons.Filled.KeyboardArrowLeft,
+            desc = "上一${mode.label}",
+            onClick = onPrev,
+            size = if (compact) 30.dp else 36.dp,
+        )
+        Spacer(Modifier.width(if (compact) 4.dp else 6.dp))
         Text(
             periodLabel(yearMonth, mode),
-            style = MaterialTheme.typography.titleMedium,
+            style = if (compact) {
+                MaterialTheme.typography.titleSmall
+            } else {
+                MaterialTheme.typography.titleMedium
+            },
             color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier
                 .clip(RoundedCornerShape(10.dp))
                 .clickable { onOpenPicker() }
-                .padding(horizontal = 10.dp, vertical = 6.dp),
+                .padding(horizontal = if (compact) 8.dp else 10.dp, vertical = if (compact) 4.dp else 6.dp),
         )
-        Spacer(Modifier.width(6.dp))
-        StepButton(Icons.Filled.KeyboardArrowRight, "下一${mode.label}") { onNext() }
+        Spacer(Modifier.width(if (compact) 4.dp else 6.dp))
+        StepButton(
+            icon = Icons.Filled.KeyboardArrowRight,
+            desc = "下一${mode.label}",
+            onClick = onNext,
+            size = if (compact) 30.dp else 36.dp,
+        )
     }
 }
 
 @Composable
-private fun StepButton(icon: ImageVector, desc: String, onClick: () -> Unit) {
+private fun StepButton(icon: ImageVector, desc: String, onClick: () -> Unit, size: Dp = 36.dp) {
     Surface(
         shape = CircleShape,
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        modifier = Modifier.size(36.dp).clickable(onClick = onClick),
+        modifier = Modifier.size(size).clickable(onClick = onClick),
     ) {
         Box(contentAlignment = Alignment.Center) {
-            Icon(icon, contentDescription = desc, tint = MaterialTheme.accBook.primaryStrong, modifier = Modifier.size(20.dp))
+            Icon(
+                icon,
+                contentDescription = desc,
+                tint = MaterialTheme.accBook.primaryStrong,
+                modifier = Modifier.size(size * 0.55f),
+            )
         }
     }
 }
