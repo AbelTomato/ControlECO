@@ -2,9 +2,8 @@ package com.accbook.app.ui.stats
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.drag
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -129,18 +128,23 @@ fun ExpenseBarChart(bars: List<BarPoint>, hint: String, modifier: Modifier = Mod
             Modifier
                 .fillMaxWidth()
                 .height(150.dp)
+                // 点按选柱；横向拖动跟手读数。用 detectHorizontalDragGestures 而非全量 drag：
+                // 纵向滑动交给外层滚动容器，图表不会"吃掉"页面滚动
                 .pointerInput(bars) {
-                    val scope = this
-                    awaitEachGesture {
-                        val geom = barGeometry(scope.size.width.toFloat(), bars.size, scope)
-                        val down = awaitFirstDown()
-                        selected = geom.indexAt(down.position.x)
-                        down.consume()
-                        drag(down.id) { change ->
-                            selected = geom.indexAt(change.position.x)
-                            change.consume()
-                        }
+                    detectTapGestures { offset ->
+                        selected = barGeometry(size.width.toFloat(), bars.size, this).indexAt(offset.x)
                     }
+                }
+                .pointerInput(bars) {
+                    detectHorizontalDragGestures(
+                        onDragStart = { offset ->
+                            selected = barGeometry(size.width.toFloat(), bars.size, this).indexAt(offset.x)
+                        },
+                        onHorizontalDrag = { change, _ ->
+                            selected = barGeometry(size.width.toFloat(), bars.size, this).indexAt(change.position.x)
+                            change.consume()
+                        },
+                    )
                 },
         ) {
             if (bars.isEmpty()) return@Canvas
