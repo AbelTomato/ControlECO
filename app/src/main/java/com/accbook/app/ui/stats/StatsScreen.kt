@@ -232,7 +232,7 @@ fun StatsScreen(vm: LedgerViewModel, scrollToTopTick: Int = 0) {
             item(key = "categoryCaption") {
                 Text(
                     buildString {
-                        append("外环 预算占比 · 内环 实际占比")
+                        append("外环 预算占比　内环 实际占比")
                         if (mode == PeriodMode.YEAR) append("（年视角预算按 12 个月计）")
                     },
                     style = MaterialTheme.typography.labelSmall,

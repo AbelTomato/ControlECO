@@ -252,8 +252,11 @@ fun ExpenseBarChart(bars: List<BarPoint>, modifier: Modifier = Modifier) {
  * 中心不写字，圆环左右各一列数字，**跟着选中状态走**：
  * - 未选中：左列总花费、右列总预算；
  * - 选中分类：左列该分类花费、右列该分类预算，分类名出现在左上角（花费金额上方）。
- * 每列两行 = 金额（`formatYuanCompact`，与首页同一套进位规则）+ 占比
- * （左侧 = 花费占该项预算，超预算转红；右侧是基准所以恒 100%，无预算显示「—」）。
+ * 每列两行 = 金额（`formatYuanCompact`，与首页同一套进位规则）+ 百分比：
+ * - 选中分类时两侧都按**占比**给（分类花费 ÷ 总花费、分类预算 ÷ 总预算，与图例同一口径）；
+ * - 未选中时总花费沿用「花费 ÷ 预算」（预算用了多少），总预算侧是基准所以 100%；
+ * - 没设预算（或选中分类没预算）时百分比显示「—」。
+ * 超预算时左侧百分比转警示红（未选中 = 总花费超总预算，选中 = 该分类超自己的预算）。
  * 点按 / 横向滑动任一环选中分类；**取消选中交给外层**（点页面空白处即取消）。
  */
 @Composable
@@ -273,6 +276,18 @@ fun CategoryDonut(
     val actualCents = selectedSlice?.actualCents ?: totalActualCents
     val budgetCents = selectedSlice?.budgetCents ?: totalBudget
     val hasBudget = budgetCents > 0L && !(selectedSlice != null && selectedSlice.budgetCents <= 0L)
+    // 左侧百分比：选中看"该分类占总花费的份额"，未选中看"总花费占总预算的比例"（保持原口径）
+    val leftPercent = when {
+        selectedSlice != null -> ChartMath.sharePercent(actualCents, totalActualCents)
+        hasBudget -> ChartMath.sharePercent(actualCents, budgetCents)
+        else -> null
+    }
+    // 右侧百分比：选中看"该分类预算占总预算的份额"，未选中时总预算就是基准（100%）
+    val rightPercent = when {
+        !hasBudget -> null
+        selectedSlice != null -> ChartMath.sharePercent(budgetCents, totalBudget)
+        else -> 100f
+    }
 
     Column(modifier) {
         BoxWithConstraints(Modifier.fillMaxWidth()) {
@@ -282,7 +297,7 @@ fun CategoryDonut(
                 SideStat(
                     caption = selectedSlice?.name,
                     amountText = Money.formatYuanCompact(actualCents),
-                    percent = if (hasBudget) ChartMath.sharePercent(actualCents, budgetCents) else null,
+                    percent = leftPercent,
                     overBudget = budgetCents > 0L && actualCents > budgetCents,
                     maxWidth = columnMax,
                     modifier = Modifier.weight(1f),
@@ -361,7 +376,7 @@ fun CategoryDonut(
                     } else {
                         Money.formatYuanCompact(budgetCents)
                     },
-                    percent = if (hasBudget) 100f else null,
+                    percent = rightPercent,
                     overBudget = false,
                     alignEnd = true,
                     maxWidth = columnMax,
