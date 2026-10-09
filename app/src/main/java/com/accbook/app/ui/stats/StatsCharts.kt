@@ -1,0 +1,359 @@
+package com.accbook.app.ui.stats
+
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.drag
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.accbook.app.ui.theme.accBook
+import com.accbook.app.ui.theme.categoryColor
+import com.accbook.app.util.Money
+import kotlin.math.min
+import kotlin.math.roundToInt
+
+/**
+ * 统计页图表（自绘，不引第三方库）：
+ * - [ExpenseBarChart] 可交互柱状图：横竖轴都标简单数字，点按/滑动实时读出手指所在柱的数据；
+ * - [CategoryDonut] 双环饼图：外环 = 分类预算占比，内环 = 实际支出占比（同色同分类，便于对照）；
+ * - [DonutLegend] 图例：每行给出实际金额/占比与预算金额/占比。
+ */
+
+// 图表几何常量：绘制与手势命中共用同一套算法，避免两处对不齐
+private val GUTTER_DP = 34.dp     // 左侧纵轴数字区宽度
+private val BOTTOM_DP = 18.dp     // 底部横轴数字区高度
+private val BAR_GAP_WIDE = 6.dp   // 柱少（按月）时的柱间距
+private val BAR_GAP_NARROW = 2.dp // 柱多（按天）时的柱间距
+
+/** 柱状图几何：绘图与命中共用（宽度相关的量在这里集中算一次） */
+private class BarGeometry(
+    val gutter: Float,
+    val bottom: Float,
+    val barWidth: Float,
+    val pitch: Float,
+    val count: Int,
+) {
+    fun indexAt(x: Float): Int = ((x - gutter) / pitch).toInt().coerceIn(0, count - 1)
+    fun left(index: Int): Float = gutter + index * pitch
+    fun center(index: Int): Float = left(index) + barWidth / 2f
+}
+
+private fun barGeometry(widthPx: Float, n: Int, density: Density): BarGeometry {
+    val gutter = with(density) { GUTTER_DP.toPx() }
+    val bottom = with(density) { BOTTOM_DP.toPx() }
+    val gap = with(density) { (if (n > 16) BAR_GAP_NARROW else BAR_GAP_WIDE).toPx() }
+    val plotW = (widthPx - gutter).coerceAtLeast(1f)
+    val barW = ((plotW - gap * (n - 1)) / n).coerceAtLeast(1f)
+    return BarGeometry(gutter, bottom, barW, barW + gap, n)
+}
+
+/**
+ * 可交互柱状图：手指按下即选中该柱，滑动时读数跟着手指走（不是只能点）。
+ * 上方固定一行显示选中柱的明细；图上有一条虚线指示 + 金额气泡。
+ */
+@Composable
+fun ExpenseBarChart(bars: List<BarPoint>, hint: String, modifier: Modifier = Modifier) {
+    val ab = MaterialTheme.accBook
+    val barColor = MaterialTheme.colorScheme.primary
+    val highlightColor = ab.primaryStrong
+    val gridColor = ab.hairline
+    val axisColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val bubbleBg = ab.primaryStrong
+    val bubbleInk = MaterialTheme.colorScheme.onPrimary
+
+    val measurer = rememberTextMeasurer()
+    val axisStyle = remember(axisColor) {
+        TextStyle(color = axisColor, fontSize = 9.sp, fontWeight = FontWeight.Medium)
+    }
+    val bubbleStyle = remember(bubbleInk) {
+        TextStyle(color = bubbleInk, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+    }
+    // 文字量测缓存：拖动手势每帧都会重画，避免重复量同一串文字
+    val axisCache = remember(measurer, axisStyle) { mutableMapOf<String, TextLayoutResult>() }
+    val bubbleCache = remember(measurer, bubbleStyle) { mutableMapOf<String, TextLayoutResult>() }
+
+    var selected by remember(bars) { mutableIntStateOf(-1) }
+    val selectedBar = bars.getOrNull(selected)
+
+    Column(modifier) {
+        // 读数行：未选中时给操作提示，选中后显示"日期 · 金额 · 笔数"
+        Text(
+            text = selectedBar?.tip ?: hint,
+            style = MaterialTheme.typography.bodySmall,
+            color = if (selectedBar != null) {
+                MaterialTheme.colorScheme.onSurface
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(Modifier.height(10.dp))
+        Canvas(
+            Modifier
+                .fillMaxWidth()
+                .height(150.dp)
+                .pointerInput(bars) {
+                    val scope = this
+                    awaitEachGesture {
+                        val geom = barGeometry(scope.size.width.toFloat(), bars.size, scope)
+                        val down = awaitFirstDown()
+                        selected = geom.indexAt(down.position.x)
+                        down.consume()
+                        drag(down.id) { change ->
+                            selected = geom.indexAt(change.position.x)
+                            change.consume()
+                        }
+                    }
+                },
+        ) {
+            if (bars.isEmpty()) return@Canvas
+            val geom = barGeometry(size.width, bars.size, this)
+            val plotTop = 6.dp.toPx()
+            val plotBottom = size.height - geom.bottom
+            val plotH = (plotBottom - plotTop).coerceAtLeast(1f)
+            val maxYuan = ChartMath.niceCeil(bars.maxOf { it.cents / 100f })
+
+            fun yAt(cents: Long): Float =
+                plotBottom - (cents / 100f / maxYuan).coerceIn(0f, 1f) * plotH
+
+            fun axisLayout(text: String): TextLayoutResult =
+                axisCache.getOrPut(text) { measurer.measure(text, axisStyle) }
+
+            fun drawAxisText(text: String, x: Float, top: Float, alignRight: Boolean) {
+                val l = axisLayout(text)
+                val tx = if (alignRight) x - l.size.width else x - l.size.width / 2f
+                drawText(l, topLeft = Offset(tx, top))
+            }
+
+            // 1) 横向网格线 + 纵轴数字（0 / 一半 / 上限）
+            listOf(0f, maxYuan / 2f, maxYuan).forEach { v ->
+                val y = plotBottom - (v / maxYuan) * plotH
+                drawLine(gridColor, Offset(geom.gutter, y), Offset(size.width, y), strokeWidth = 1.dp.toPx())
+                val text = ChartMath.axisAmount(v)
+                val l = axisLayout(text)
+                drawAxisText(text, geom.gutter - 6.dp.toPx(), y - l.size.height / 2f, alignRight = true)
+            }
+            // 2) 纵轴轴线
+            drawLine(gridColor, Offset(geom.gutter, plotTop), Offset(geom.gutter, plotBottom), strokeWidth = 1.dp.toPx())
+
+            // 3) 柱子：有支出的实心柱，零支出画一根发丝刻度保持"每一天都在"的节奏
+            bars.forEachIndexed { i, bar ->
+                val left = geom.left(i)
+                if (bar.cents > 0L) {
+                    val top = yAt(bar.cents)
+                    val h = (plotBottom - top).coerceAtLeast(2.dp.toPx())
+                    val color = when {
+                        i == selected -> highlightColor
+                        selected >= 0 -> barColor.copy(alpha = 0.42f)
+                        else -> barColor
+                    }
+                    drawRoundRect(
+                        color = color,
+                        topLeft = Offset(left, plotBottom - h),
+                        size = Size(geom.barWidth, h),
+                        cornerRadius = CornerRadius(min(3.dp.toPx(), geom.barWidth / 2f)),
+                    )
+                } else {
+                    drawLine(
+                        color = gridColor,
+                        start = Offset(left, plotBottom - 1.dp.toPx()),
+                        end = Offset(left + geom.barWidth, plotBottom - 1.dp.toPx()),
+                        strokeWidth = 1.dp.toPx(),
+                    )
+                }
+            }
+
+            // 4) 选中：虚线指示 + 金额气泡（顶部放不下时挪到柱内）
+            if (selected in bars.indices) {
+                val bar = bars[selected]
+                val centerX = geom.center(selected)
+                drawLine(
+                    color = highlightColor.copy(alpha = 0.35f),
+                    start = Offset(centerX, plotTop),
+                    end = Offset(centerX, plotBottom),
+                    strokeWidth = 1.dp.toPx(),
+                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f)),
+                )
+                val label = if (bar.cents > 0L) Money.formatYuanCompact(bar.cents) else "无支出"
+                val l = bubbleCache.getOrPut(label) { measurer.measure(label, bubbleStyle) }
+                val padH = 7.dp.toPx()
+                val padV = 3.dp.toPx()
+                val bw = l.size.width + padH * 2
+                val bh = l.size.height + padV * 2
+                val bubbleX = (centerX - bw / 2f).coerceIn(geom.gutter, (size.width - bw).coerceAtLeast(geom.gutter))
+                var bubbleY = yAt(bar.cents) - bh - 6.dp.toPx()
+                if (bubbleY < plotTop) bubbleY = yAt(bar.cents) + 6.dp.toPx()
+                drawRoundRect(
+                    color = bubbleBg,
+                    topLeft = Offset(bubbleX, bubbleY),
+                    size = Size(bw, bh),
+                    cornerRadius = CornerRadius(6.dp.toPx()),
+                )
+                drawText(l, topLeft = Offset(bubbleX + padH, bubbleY + padV))
+            }
+
+            // 5) 横轴数字（简单数字：天/月编号）
+            bars.forEachIndexed { i, bar ->
+                val label = bar.axisLabel ?: return@forEachIndexed
+                drawAxisText(label, geom.center(i), plotBottom + 3.dp.toPx(), alignRight = false)
+            }
+        }
+    }
+}
+
+/**
+ * 双环饼图：外环 = 分类预算占比（半透明），内环 = 实际支出占比（实色）；
+ * 中心显示实际支出合计。没有预算/没有支出时对应环只留底轨。
+ */
+@Composable
+fun CategoryDonut(
+    slices: List<CategorySlice>,
+    totalActualCents: Long,
+    modifier: Modifier = Modifier,
+) {
+    val ab = MaterialTheme.accBook
+    val palette = ab.categoryPalette
+    Box(modifier, contentAlignment = Alignment.Center) {
+        Canvas(Modifier.size(176.dp)) {
+            val strokeOuter = 20.dp.toPx()
+            val strokeInner = 16.dp.toPx()
+            val ringGap = 8.dp.toPx()
+            val c = center
+            val rOuter = size.minDimension / 2f - strokeOuter / 2f
+            val rInner = rOuter - strokeOuter / 2f - ringGap - strokeInner / 2f
+
+            // 底轨
+            drawCircle(ab.ringTrack, radius = rOuter, center = c, style = Stroke(strokeOuter))
+            drawCircle(ab.ringTrack, radius = rInner, center = c, style = Stroke(strokeInner))
+
+            val totalBudget = slices.sumOf { it.budgetCents }
+            val totalActual = slices.sumOf { it.actualCents }
+
+            fun ring(radius: Float, width: Float, alpha: Float, value: (CategorySlice) -> Long, total: Long) {
+                if (total <= 0L) return
+                var start = -90f
+                slices.forEach { s ->
+                    val v = value(s)
+                    val sweep = v * 360f / total
+                    if (v > 0L) {
+                        val pad = min(1.2f, sweep * 0.06f)
+                        drawArc(
+                            color = categoryColor(palette, s.name).copy(alpha = alpha),
+                            startAngle = start + pad,
+                            sweepAngle = (sweep - pad * 2).coerceAtLeast(0.8f),
+                            useCenter = false,
+                            topLeft = Offset(c.x - radius, c.y - radius),
+                            size = Size(radius * 2, radius * 2),
+                            style = Stroke(width),
+                        )
+                    }
+                    start += sweep
+                }
+            }
+            ring(rOuter, strokeOuter, alpha = 0.42f, value = { it.budgetCents }, total = totalBudget)
+            ring(rInner, strokeInner, alpha = 1f, value = { it.actualCents }, total = totalActual)
+        }
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                "实际支出",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                Money.formatYuanCompact(totalActualCents),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+        }
+    }
+}
+
+/** 图例：分类名 + 实际金额/占比，第二行给预算金额/占比（未设预算时明确标注） */
+@Composable
+fun DonutLegend(
+    slices: List<CategorySlice>,
+    totalActualCents: Long,
+    modifier: Modifier = Modifier,
+) {
+    val palette = MaterialTheme.accBook.categoryPalette
+    val totalBudget = slices.sumOf { it.budgetCents }
+    Column(modifier.fillMaxWidth()) {
+        slices.forEachIndexed { index, s ->
+            if (index > 0) HorizontalDivider(color = MaterialTheme.accBook.hairline)
+            Row(
+                Modifier.fillMaxWidth().padding(vertical = 9.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    Modifier
+                        .size(10.dp)
+                        .clip(CircleShape)
+                        .background(categoryColor(palette, s.name)),
+                )
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            s.name,
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text(
+                            "${Money.formatYuanGrouped(s.actualCents)} · ${ChartMath.sharePercent(s.actualCents, totalActualCents).roundToInt()}%",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+                    Text(
+                        if (s.budgetCents > 0L) {
+                            "预算 ${Money.formatYuanGrouped(s.budgetCents)} · ${ChartMath.sharePercent(s.budgetCents, totalBudget).roundToInt()}%"
+                        } else {
+                            "未设预算"
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 1.dp),
+                    )
+                }
+            }
+        }
+    }
+}

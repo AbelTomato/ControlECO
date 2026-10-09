@@ -1,12 +1,12 @@
 package com.accbook.app.ui.stats
 
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -27,31 +26,25 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.accbook.app.data.LedgerViewModel
-import com.accbook.app.data.db.TransactionRow
-import com.accbook.app.data.db.TxType
 import com.accbook.app.data.PeriodMode
+import com.accbook.app.data.db.TxType
 import com.accbook.app.ui.common.PeriodPickerSheet
 import com.accbook.app.ui.common.PeriodStepper
 import com.accbook.app.ui.common.PeriodSwitch
-import com.accbook.app.ui.common.SummaryRow
 import com.accbook.app.ui.common.periodScopeLabel
 import com.accbook.app.ui.theme.accBook
-import com.accbook.app.ui.theme.categoryColor
 import com.accbook.app.util.Money
-import java.time.Instant
 import java.time.LocalDate
 import java.time.YearMonth
-import java.time.ZoneId
 
 /**
- * 统计页：结论 > 趋势 > 分类细节（信息层级自上而下）。
- * 不引入图表库：趋势为自绘 Canvas 柱状图，分类为条形占比。
+ * 统计页：结论 → 趋势（可交互柱状图）→ 分类（预算 vs 实际双环饼图）。
+ * 月视角每日一柱、年视角每月一柱；横竖轴标简单数字，点按/滑动柱子实时读数。
+ * 图表全部自绘（Canvas），不引入第三方图表库。
  */
 @Composable
 fun StatsScreen(vm: LedgerViewModel, scrollToTopTick: Int = 0) {
@@ -63,6 +56,8 @@ fun StatsScreen(vm: LedgerViewModel, scrollToTopTick: Int = 0) {
     val rows by vm.periodRows.collectAsStateWithLifecycle()
     val showRefunds by vm.showRefunds.collectAsStateWithLifecycle()
     val refundTotal by vm.periodRefundTotal.collectAsStateWithLifecycle()
+    val categoryBudgets by vm.categoryBudgets.collectAsStateWithLifecycle()
+    val categories by vm.categories.collectAsStateWithLifecycle()
 
     // 数据未到位前整页不画（避免先显示 0 / 空图再跳数）
     val rowsReady = rows ?: return
@@ -83,8 +78,31 @@ fun StatsScreen(vm: LedgerViewModel, scrollToTopTick: Int = 0) {
         else -> if (YearMonth.of(month.year, 2).lengthOfMonth() == 29) 366 else 365
     }
     val dailyAverage = expense / daysElapsed.coerceAtLeast(1)
-    val top = byCategoryReady.firstOrNull()
-    val topShare = if (top != null && expense > 0) (top.totalCents * 100 / expense) else 0L
+
+    // 柱状图数据：月视角每日一根、年视角每月一根
+    val bars = remember(rowsReady, month, mode) {
+        if (mode == PeriodMode.MONTH) {
+            ChartMath.monthBars(rowsReady, month)
+        } else {
+            ChartMath.yearBars(rowsReady, month)
+        }
+    }
+
+    // 分类切片：实际支出（本期）+ 分类预算（年视角按 12 个月合计）
+    val slices = remember(byCategoryReady, categoryBudgets, categories, mode) {
+        val actual = byCategoryReady.map { it.categoryName to it.totalCents }
+        val budget = categoryBudgets.entries.mapNotNull { (id, cents) ->
+            val category = categories.firstOrNull { it.id == id }
+            if (category == null || category.type != TxType.EXPENSE || cents <= 0L) {
+                null
+            } else {
+                category.name to if (mode == PeriodMode.YEAR) cents * 12 else cents
+            }
+        }
+        ChartMath.mergeSlices(actual, budget)
+    }
+    val top = slices.firstOrNull()?.takeIf { it.actualCents > 0 }
+    val topShare = top?.let { ChartMath.sharePercent(it.actualCents, expense).toInt() } ?: 0
 
     val pageScroll = rememberScrollState()
     // 再次点击底部「统计」标签：回到顶部
@@ -110,87 +128,83 @@ fun StatsScreen(vm: LedgerViewModel, scrollToTopTick: Int = 0) {
             Spacer(Modifier.weight(1f))
             PeriodSwitch(mode = mode, onChange = { vm.setPeriodMode(it) })
         }
-        SummaryRow(
-            incomeCents = income,
-            expenseCents = expense,
-            cancelledCents = if (showRefunds) refundReady else null,
-        )
-        HorizontalDivider(color = MaterialTheme.accBook.hairline)
 
-        // 第一层级：结论
-        Column(Modifier.fillMaxWidth().padding(16.dp)) {
-            if (expense == 0L) {
+        // ---- 结论卡：本期支出大字 + 收入/结余/退款 ----
+        StatsCard(Modifier.padding(top = 12.dp)) {
+            Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.Top) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "${periodScopeLabel(mode)}支出",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        Money.formatYuanGrouped(expense),
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Text(
+                        "日均 ${Money.formatYuanGrouped(dailyAverage)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
+                Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    MetricRow("收入", "+${Money.formatYuanGrouped(income)}", MaterialTheme.accBook.income)
+                    MetricRow("结余", Money.formatYuanGrouped(income - expense), MaterialTheme.colorScheme.onSurface)
+                    if (showRefunds && refundReady > 0L) {
+                        MetricRow("退款到账", Money.formatYuanGrouped(refundReady), MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+            if (expense > 0L) {
+                HorizontalDivider(color = MaterialTheme.accBook.hairline)
                 Text(
-                    "${periodScopeLabel(mode)}暂无支出记录",
+                    if (top != null) "花得最多的是「${top.name}」，占 $topShare%" else "本期暂无支出",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            } else {
-                Text(
-                    "${periodScopeLabel(mode)}支出 ${Money.formatYuanGrouped(expense)} · 日均 ${Money.formatYuanGrouped(dailyAverage)}",
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    if (top != null) "花得最多的是「${top.categoryName}」，占 $topShare%" else "",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
                 )
             }
         }
 
-        // 第二层级：每日支出趋势（自绘）
+        // ---- 趋势卡：柱状图（可点按/滑动读数） ----
         SectionLabel(if (mode == PeriodMode.MONTH) "每日支出" else "月度支出")
-        ExpenseChart(
-            rows = rowsReady,
-            month = month,
-            mode = mode,
-            modifier = Modifier.padding(horizontal = 16.dp),
-        )
+        StatsCard {
+            if (expense == 0L) {
+                EmptyNote("${periodScopeLabel(mode)}暂无支出记录，记一笔后这里会出现柱状图")
+            } else {
+                ExpenseBarChart(
+                    bars = bars,
+                    hint = if (mode == PeriodMode.MONTH) "点按或滑动柱子查看每日明细" else "点按或滑动柱子查看每月明细",
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 14.dp),
+                )
+            }
+        }
 
-        // 第三层级：分类细节
-        SectionLabel("分类占比")
-        if (byCategoryReady.isEmpty()) {
-            Text(
-                "暂无支出分类数据",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 16.dp),
-            )
-        } else {
-            Column(Modifier.padding(horizontal = 16.dp)) {
-                byCategoryReady.forEach { c ->
-                    val fraction = if (expense > 0) c.totalCents.toFloat() / expense else 0f
-                    val share = if (expense > 0) c.totalCents * 100 / expense else 0L
-                    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-                        Row(Modifier.fillMaxWidth()) {
-                            Text(c.categoryName, style = MaterialTheme.typography.bodyMedium)
-                            Spacer(Modifier.weight(1f))
-                            Text(
-                                "${Money.formatYuanGrouped(c.totalCents)} · $share%",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Spacer(Modifier.height(6.dp))
-                        Box(
-                            Modifier
-                                .fillMaxWidth()
-                                .height(6.dp)
-                                .clip(RoundedCornerShape(3.dp))
-                                .background(MaterialTheme.accBook.ringTrack),
-                        ) {
-                            Box(
-                                Modifier
-                                    .fillMaxWidth(fraction.coerceIn(0.01f, 1f))
-                                    .fillMaxHeight()
-                                    .clip(RoundedCornerShape(3.dp))
-                                    .background(
-                                        categoryColor(MaterialTheme.accBook.categoryPalette, c.categoryName),
-                                    ),
-                            )
-                        }
-                    }
+        // ---- 分类卡：预算 vs 实际 双环饼图 + 图例 ----
+        SectionLabel("分类预算与占比")
+        StatsCard {
+            if (slices.isEmpty()) {
+                EmptyNote("暂无分类数据：记账或设置分类预算后这里会出现饼图")
+            } else {
+                Column(Modifier.fillMaxWidth().padding(14.dp)) {
+                    CategoryDonut(
+                        slices = slices,
+                        totalActualCents = expense,
+                        modifier = Modifier.align(Alignment.CenterHorizontally),
+                    )
+                    Text(
+                        buildString {
+                            append("外环 预算占比 · 内环 实际占比")
+                            if (mode == PeriodMode.YEAR) append("（年视角预算按 12 个月计）")
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 10.dp, bottom = 8.dp),
+                    )
+                    DonutLegend(slices = slices, totalActualCents = expense)
                 }
             }
         }
@@ -208,68 +222,54 @@ fun StatsScreen(vm: LedgerViewModel, scrollToTopTick: Int = 0) {
     }
 }
 
+/** 结论卡右侧的一行小指标：标签 + 取值（取值可带语义色） */
+@Composable
+private fun MetricRow(label: String, value: String, valueColor: Color) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            value,
+            style = MaterialTheme.typography.titleSmall,
+            color = valueColor,
+            modifier = Modifier.padding(start = 8.dp),
+        )
+    }
+}
+
 @Composable
 private fun SectionLabel(text: String) {
     Text(
         text,
-        style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.onBackground,
+        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 18.dp, bottom = 8.dp),
     )
 }
 
-/** 支出柱状图：月模式按天、年模式按月；零花销的画发丝线刻度，保持节奏感 */
+/** 白色卡片：与账单/设置页同一套视觉（16dp 圆角 + 发丝描边） */
 @Composable
-private fun ExpenseChart(
-    rows: List<TransactionRow>,
-    month: YearMonth,
-    mode: PeriodMode,
-    modifier: Modifier = Modifier,
-) {
-    val ab = MaterialTheme.accBook
-    val barColor = MaterialTheme.colorScheme.primary
-    val daily = remember(rows, month, mode) {
-        if (mode == PeriodMode.MONTH) {
-            FloatArray(month.lengthOfMonth()).also { arr ->
-                rows.filter { it.type == TxType.EXPENSE }.forEach { r ->
-                    val d = Instant.ofEpochMilli(r.timestamp).atZone(ZoneId.systemDefault()).toLocalDate()
-                    if (d.year == month.year && d.month == month.month) {
-                        arr[d.dayOfMonth - 1] += r.amountCents / 100f
-                    }
-                }
-            }
-        } else {
-            FloatArray(12).also { arr ->
-                rows.filter { it.type == TxType.EXPENSE }.forEach { r ->
-                    val d = Instant.ofEpochMilli(r.timestamp).atZone(ZoneId.systemDefault()).toLocalDate()
-                    if (d.year == month.year) arr[d.monthValue - 1] += r.amountCents / 100f
-                }
-            }
-        }
-    }
-    Canvas(modifier.fillMaxWidth().height(110.dp)) {
-        val n = daily.size.coerceAtLeast(1)
-        val gap = 3.dp.toPx()
-        val barWidth = ((size.width - gap * (n - 1)) / n).coerceAtLeast(1f)
-        val max = daily.max().coerceAtLeast(1f)
-        daily.forEachIndexed { i, v ->
-            val x = i * (barWidth + gap)
-            if (v > 0f) {
-                val h = (v / max) * (size.height - 4.dp.toPx())
-                drawRoundRect(
-                    color = barColor,
-                    topLeft = Offset(x, size.height - h),
-                    size = Size(barWidth, h.coerceAtLeast(2.dp.toPx())),
-                    cornerRadius = CornerRadius(2.dp.toPx()),
-                )
-            } else {
-                drawLine(
-                    color = ab.hairline,
-                    start = Offset(x, size.height - 1.dp.toPx()),
-                    end = Offset(x + barWidth, size.height - 1.dp.toPx()),
-                    strokeWidth = 1.dp.toPx(),
-                )
-            }
-        }
-    }
+private fun StatsCard(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
+    Column(
+        modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(MaterialTheme.colorScheme.surface)
+            .border(1.dp, MaterialTheme.accBook.hairline, RoundedCornerShape(16.dp)),
+        content = content,
+    )
+}
+
+@Composable
+private fun EmptyNote(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(16.dp),
+    )
 }
