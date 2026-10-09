@@ -371,11 +371,6 @@ private fun ModeRemaining(s: Budget.Snapshot, today: LocalDate) {
                     }
                 }
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        "本月还可以花",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier.warningHeartbeat(alarming, severity),
@@ -390,7 +385,7 @@ private fun ModeRemaining(s: Budget.Snapshot, today: LocalDate) {
                     }
                     // 细环口径说明：避免"这条蓝环还剩多少"再被读反
                     Text(
-                        "本月剩余 $daysLeftInMonth 天",
+                        "$daysLeftInMonth Day",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -573,12 +568,6 @@ private fun ModeSpentAndDeposit(snapshot: Budget.Snapshot?, spentCents: Long, to
                 color = depositColor,
                 maxWidth = textMaxWidth,
                 modifier = Modifier.warningHeartbeat(depositNegative, if (depositNegative) 0.5f else 0f),
-            )
-            Spacer(Modifier.height(6.dp))
-            Text(
-                "全部账户余额合计",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
