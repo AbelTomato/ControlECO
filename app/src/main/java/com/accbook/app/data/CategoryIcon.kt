@@ -14,7 +14,8 @@ import kotlin.math.max
  *
  * - `""`                        默认：按分类名取内置图形（关键词 → 几何/SVG 图形）
  * - `EMOJI:🍜`                  自定义 emoji
- * - `GLYPH:BURGER`              内置图形（`Glyph` 枚举名）
+ * - `GLYPH:BURGER`              内置图形（`Glyph` 枚举名），颜色按分类名自动取
+ * - `GLYPH:BURGER:DC2626`       内置图形 + 自定义颜色（RGB 十六进制）
  * - `IMAGE:cat_icon_123.jpg`    应用内部存储里的图片（相册选图后压缩存入）
  */
 object CategoryIcon {
@@ -35,15 +36,33 @@ object CategoryIcon {
 
     fun emoji(value: String) = EMOJI_PREFIX + value.trim()
 
-    fun glyph(name: String) = GLYPH_PREFIX + name
+    /** 内置图形规格；[colorRgb] 为 null 时按分类名自动取色 */
+    fun glyph(name: String, colorRgb: Int? = null): String {
+        val base = GLYPH_PREFIX + name
+        return if (colorRgb == null) base else base + ":" + "%06X".format(colorRgb and 0xFFFFFF)
+    }
 
     fun image(fileName: String) = IMAGE_PREFIX + fileName
 
     fun emojiOf(icon: String): String? =
         icon.takeIf { it.startsWith(EMOJI_PREFIX) }?.removePrefix(EMOJI_PREFIX)?.ifBlank { null }
 
-    fun glyphOf(icon: String): String? =
-        icon.takeIf { it.startsWith(GLYPH_PREFIX) }?.removePrefix(GLYPH_PREFIX)?.ifBlank { null }
+    /** 内置图形名（颜色部分不算名字） */
+    fun glyphOf(icon: String): String? = glyphParts(icon)?.first?.ifBlank { null }
+
+    /** 内置图形的自定义颜色（RGB 整数）；没写颜色返回 null（= 按分类名取色） */
+    fun glyphColorOf(icon: String): Int? = glyphParts(icon)?.second
+
+    private fun glyphParts(icon: String): Pair<String, Int?>? {
+        if (!icon.startsWith(GLYPH_PREFIX)) return null
+        val body = icon.removePrefix(GLYPH_PREFIX)
+        val sep = body.indexOf(':')
+        if (sep < 0) return body to null
+        val name = body.substring(0, sep)
+        // 用 Long 解析再取低 24 位：手写成 8 位（带 FF 前缀）也认，不因超出 Int 范围整段作废
+        val rgb = body.substring(sep + 1).trim().toLongOrNull(16)?.let { (it and 0xFFFFFF).toInt() }
+        return name to rgb
+    }
 
     fun imageOf(icon: String): String? =
         icon.takeIf { it.startsWith(IMAGE_PREFIX) }?.removePrefix(IMAGE_PREFIX)?.ifBlank { null }

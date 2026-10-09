@@ -12,6 +12,7 @@ import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -30,6 +31,7 @@ import kotlinx.coroutines.withContext
 fun CategoryLogo(categoryName: String, icon: String, size: Dp = 40.dp) {
     val emoji = CategoryIcon.emojiOf(icon)
     val glyphName = CategoryIcon.glyphOf(icon)
+    val customColor = CategoryIcon.glyphColorOf(icon)
     val imageFile = CategoryIcon.imageOf(icon)
     when {
         emoji != null -> {
@@ -44,7 +46,10 @@ fun CategoryLogo(categoryName: String, icon: String, size: Dp = 40.dp) {
             if (glyph == null) {
                 CategoryGlyph(categoryName, size)
             } else {
-                GlyphIcon(glyph = glyph, tint = glyphTint(glyph, categoryName), size = size)
+                // 自定义颜色优先；没写颜色才回落到"按分类名取色"
+                val tint = customColor?.let { Color(it or 0xFF000000.toInt()) }
+                    ?: glyphTint(glyph, categoryName)
+                GlyphIcon(glyph = glyph, tint = tint, size = size)
             }
         }
         else -> CategoryGlyph(categoryName, size)
