@@ -365,7 +365,7 @@ fun CategoryDonut(
 }
 
 /** 饼图几何：绘制与命中共用（半径按画布最小边推导，与绘制逻辑一致） */
-private class DonutGeometry(
+internal class DonutGeometry(
     private val center: Offset,
     private val rOuter: Float,
     private val rInner: Float,
@@ -395,7 +395,7 @@ private class DonutGeometry(
     }
 }
 
-private fun donutGeometry(widthPx: Float, density: Density): DonutGeometry {
+internal fun donutGeometry(widthPx: Float, density: Density): DonutGeometry {
     val strokeOuter = with(density) { 20.dp.toPx() }
     val strokeInner = with(density) { 16.dp.toPx() }
     val ringGap = with(density) { 8.dp.toPx() }
