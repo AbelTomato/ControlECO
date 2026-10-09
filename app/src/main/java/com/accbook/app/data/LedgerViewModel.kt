@@ -442,17 +442,27 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------- 分类 ----------
 
-    /** 保存分类；回调携带保存后的 id（新建时用于紧接着写入分类预算） */
-    fun saveCategory(id: Long, name: String, type: TxType, onResult: (savedId: Long, error: String?) -> Unit) {
+    /** 保存分类（新增或改名 / 换图标 / 改类型）；icon 规格见 [CategoryIcon] */
+    fun saveCategory(
+        id: Long,
+        name: String,
+        type: TxType,
+        icon: String,
+        onResult: (savedId: Long, error: String?) -> Unit,
+    ) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val savedId = if (id > 0) {
                     categoryDao.getAll().firstOrNull { it.id == id }?.let { old ->
-                        categoryDao.update(old.copy(name = name, type = type))
+                        // 换图标时清掉旧的图片文件，避免内部存储越攒越多
+                        if (old.icon != icon) {
+                            CategoryIcon.deleteImage(getApplication(), CategoryIcon.imageOf(old.icon))
+                        }
+                        categoryDao.update(old.copy(name = name, type = type, icon = icon))
                     }
                     id
                 } else {
-                    categoryDao.insert(CategoryEntity(name = name, type = type))
+                    categoryDao.insert(CategoryEntity(name = name, type = type, icon = icon))
                 }
                 withContext(Dispatchers.Main) { onResult(savedId, null) }
             } catch (e: Exception) {
@@ -468,7 +478,9 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
             if (used > 0) {
                 withContext(Dispatchers.Main) { onResult("该分类下有 $used 笔交易，无法删除") }
             } else {
+                val icon = categoryDao.getAll().firstOrNull { it.id == id }?.icon
                 categoryDao.deleteById(id)
+                CategoryIcon.deleteImage(getApplication(), CategoryIcon.imageOf(icon ?: ""))
                 setCategoryBudget(id, 0L) // 分类删除时同步清理其分类预算
                 withContext(Dispatchers.Main) { onResult(null) }
             }

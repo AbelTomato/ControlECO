@@ -7,7 +7,7 @@ import androidx.room.Query
 import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 
-/** 列表页一行：交易 + 关联分类/账户名 */
+/** 列表页一行：交易 + 关联分类/账户名（categoryIcon = 分类自定义图标规格） */
 data class TransactionRow(
     val id: Long,
     val type: TxType,
@@ -18,6 +18,7 @@ data class TransactionRow(
     val source: TxSource,
     val categoryId: Long,
     val categoryName: String,
+    val categoryIcon: String = "",
     val accountId: Long,
     val accountName: String,
     val refundMark: RefundMark,
@@ -50,7 +51,8 @@ interface TransactionDao {
     @Query(
         """SELECT t.id AS id, t.type AS type, t.amountCents AS amountCents, t.timestamp AS timestamp,
            t.note AS note, t.counterparty AS counterparty, t.source AS source,
-           c.id AS categoryId, c.name AS categoryName, a.id AS accountId, a.name AS accountName,
+           c.id AS categoryId, c.name AS categoryName, c.icon AS categoryIcon,
+           a.id AS accountId, a.name AS accountName,
            t.refundMark AS refundMark
            FROM transactions t
            JOIN categories c ON t.categoryId = c.id
@@ -102,7 +104,8 @@ interface TransactionDao {
     @Query(
         """SELECT t.id AS id, t.type AS type, t.amountCents AS amountCents, t.timestamp AS timestamp,
            t.note AS note, t.counterparty AS counterparty, t.source AS source,
-           c.id AS categoryId, c.name AS categoryName, a.id AS accountId, a.name AS accountName,
+           c.id AS categoryId, c.name AS categoryName, c.icon AS categoryIcon,
+           a.id AS accountId, a.name AS accountName,
            t.refundMark AS refundMark
            FROM transactions t
            JOIN categories c ON t.categoryId = c.id

@@ -1,16 +1,13 @@
 package com.accbook.app.ui.common
 
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -20,41 +17,89 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.accbook.app.ui.theme.accBook
 import com.accbook.app.ui.theme.categoryColor
 
 /**
- * 分类几何标记：账单列表行首的小 logo。
+ * 分类标记：账单列表行首的小 logo，也是自定义图标的"内置图形"库。
  *
- * 用简单几何图形（碗/车/袋/房/十字/星/书本/信号/上行箭头/波动/环/点阵/三角/菱形/柱/方阵）
- * 代替单个汉字底片——常见分类按关键词命中语义图形（餐饮→碗、交通→车、购物→袋…），
- * 其余按分类名哈希稳定取形；同一分类在任何页面、任何会话都是同一形状 + 同一颜色，便于判别。
+ * 图形来源两类：
+ * 1. **用户提供的 6 个 SVG**（购物 / 餐饮 / 交通 / 工资 / 娱乐 / 日用，见 [GlyphPaths]）——
+ *    按路径原样绘制，颜色由分类色板下发；
+ * 2. 自绘几何图形（碗 / 车 / 袋 / 房 / 十字 / 星 / 书 / 信号 / 红包 / K 线 / ￥ …）。
+ *
+ * 常见分类按关键词命中语义图形，其余按分类名哈希稳定取形；同一分类在任何页面、
+ * 任何会话都是同一形状 + 同一颜色，便于判别。
  */
-private enum class Glyph {
-    BURGER, BOWL, CAR, BAG, HOUSE, CROSS, STAR, BOOK, SIGNAL, ARROW_UP, WAVE,
-    RED_PACKET, CANDLES, YEN, RING, DOTS, TRIANGLE, DIAMOND, BARS, GRID,
+enum class Glyph(val label: String) {
+    // 用户提供的 SVG 图形
+    SVG_BAG("购物袋"),
+    SVG_MEAL("餐盘"),
+    SVG_CAR("汽车"),
+    SVG_SALARY("工资袋"),
+    SVG_GAME("游戏手柄"),
+    SVG_DAILY("日用瓶"),
+    // 自绘几何图形
+    BURGER("汉堡"),
+    BOWL("碗"),
+    CAR("小车"),
+    BAG("袋子"),
+    HOUSE("房子"),
+    CROSS("医疗"),
+    STAR("星星"),
+    BOOK("书本"),
+    SIGNAL("信号"),
+    ARROW_UP("上行箭头"),
+    WAVE("波动"),
+    RED_PACKET("红包"),
+    CANDLES("K 线"),
+    YEN("￥"),
+    RING("圆环"),
+    DOTS("省略号"),
+    TRIANGLE("三角"),
+    DIAMOND("菱形"),
+    BARS("柱状图"),
+    GRID("方块组"),
+    ;
+
+    /** SVG 图形对应的路径数据；自绘图形为 null */
+    val svgData: String?
+        get() = when (this) {
+            SVG_BAG -> GlyphPaths.BAG
+            SVG_MEAL -> GlyphPaths.MEAL
+            SVG_CAR -> GlyphPaths.CAR
+            SVG_SALARY -> GlyphPaths.SALARY
+            SVG_GAME -> GlyphPaths.GAME
+            SVG_DAILY -> GlyphPaths.DAILY
+            else -> null
+        }
 }
 
 private val KEYWORDS: List<Pair<List<String>, Glyph>> = listOf(
-    listOf("餐", "食", "饭", "菜", "汉堡", "快餐", "外卖", "宵夜", "烧烤") to Glyph.BURGER,
+    listOf("餐", "食", "饭", "菜", "汉堡", "快餐", "外卖", "宵夜", "烧烤", "饮料") to Glyph.SVG_MEAL,
     listOf("咖啡", "奶茶", "饮", "酒", "茶") to Glyph.BOWL,
-    listOf("交通", "出行", "打车", "网约", "出租", "地铁", "公交", "加油", "停车", "高铁", "机票", "车") to Glyph.CAR,
-    listOf("购物", "服饰", "衣", "鞋", "日用", "超市", "百货", "美妆", "数码") to Glyph.BAG,
-    listOf("住", "房", "租", "物业", "水电", "燃气", "家居", "装修") to Glyph.HOUSE,
+    listOf("交通", "出行", "打车", "网约", "出租", "地铁", "公交", "加油", "停车", "高铁", "机票", "车") to Glyph.SVG_CAR,
+    listOf("购物", "服饰", "衣", "鞋", "超市", "百货", "美妆", "数码") to Glyph.SVG_BAG,
+    listOf("日用", "生活用品", "日用品", "家居日用") to Glyph.SVG_DAILY,
+    listOf("住", "房", "租", "物业", "水电", "燃气", "装修") to Glyph.HOUSE,
     listOf("医", "药", "健康", "体检", "挂号") to Glyph.CROSS,
-    listOf("娱乐", "游戏", "电影", "旅行", "旅游", "景点", "演出", "会员") to Glyph.STAR,
+    listOf("游戏", "娱乐", "电玩", "网吧") to Glyph.SVG_GAME,
+    listOf("电影", "旅行", "旅游", "景点", "演出", "会员") to Glyph.STAR,
     listOf("教育", "学习", "书", "培训", "课程", "考试") to Glyph.BOOK,
     listOf("通讯", "话费", "流量", "网络", "宽带", "电话") to Glyph.SIGNAL,
     listOf("红包", "压岁") to Glyph.RED_PACKET,
-    listOf("工资", "薪", "奖金", "收入") to Glyph.YEN,
+    listOf("工资", "薪", "奖金", "收入", "报酬", "补贴") to Glyph.SVG_SALARY,
     listOf("报销", "退款", "收款", "转入") to Glyph.ARROW_UP,
     listOf("转", "理财", "投资", "基金", "股票", "公积金", "收益") to Glyph.CANDLES,
     listOf("其他", "其它", "杂") to Glyph.DOTS,
 )
 
-private fun glyphFor(categoryName: String): Glyph {
+/** 分类名 → 形状：先关键词，再按名字哈希稳定取形 */
+fun glyphForName(categoryName: String): Glyph {
     KEYWORDS.firstOrNull { (words, _) -> words.any { categoryName.contains(it) } }?.let { return it.second }
     val shapes = Glyph.entries.filter { it != Glyph.DOTS && it != Glyph.RED_PACKET }
     var h = 7
@@ -62,15 +107,29 @@ private fun glyphFor(categoryName: String): Glyph {
     return shapes[h % shapes.size]
 }
 
+/** 图标规格里的图形名 → 图形（未知名字返回 null，调用方回落到按名字取形） */
+fun glyphByName(name: String): Glyph? = Glyph.entries.firstOrNull { it.name == name }
+
+/** 图形的固定用色：红包用喜庆红，其余用分类稳定色 */
 @Composable
-fun CategoryGlyph(categoryName: String, size: Dp = 40.dp) {
-    val glyph = remember(categoryName) { glyphFor(categoryName) }
-    // 红包固定用明亮红；其余用分类稳定色。不画底板，只留图形本身。
-    val tint = if (glyph == Glyph.RED_PACKET) {
+fun glyphTint(glyph: Glyph, categoryName: String): Color =
+    if (glyph == Glyph.RED_PACKET) {
         MaterialTheme.accBook.festiveRed
     } else {
         categoryColor(MaterialTheme.accBook.categoryPalette, categoryName)
     }
+
+/** 默认分类标记（未自定义图标时）：按分类名取形 + 分类色 */
+@Composable
+fun CategoryGlyph(categoryName: String, size: Dp = 40.dp) {
+    val glyph = remember(categoryName) { glyphForName(categoryName) }
+    // 不画底板，只留图形本身
+    GlyphIcon(glyph = glyph, tint = glyphTint(glyph, categoryName), size = size)
+}
+
+/** 指定图形的渲染（图标选择器、自定义图标、默认标记共用） */
+@Composable
+fun GlyphIcon(glyph: Glyph, tint: Color, size: Dp = 40.dp) {
     Box(Modifier.size(size), contentAlignment = Alignment.Center) {
         Canvas(Modifier.size(size * 0.62f)) { drawGlyph(glyph, tint) }
     }
@@ -79,6 +138,11 @@ fun CategoryGlyph(categoryName: String, size: Dp = 40.dp) {
 // ---------- 各形状画法：统一画在 s×s 画布里 ----------
 
 private fun DrawScope.drawGlyph(glyph: Glyph, color: Color) {
+    val svg = glyph.svgData
+    if (svg != null) {
+        drawSvgGlyph(svg, color)
+        return
+    }
     val s = size.minDimension
     val w = s * 0.15f
     val stroke = Stroke(width = w, cap = StrokeCap.Round)
@@ -358,5 +422,31 @@ private fun DrawScope.drawGlyph(glyph: Glyph, color: Color) {
                 )
             }
         }
+        // 六个 SVG 图形在上面已经提前 return
+        else -> Unit
+    }
+}
+
+// ---------- 用户提供的 SVG 图形：按路径原样绘制 ----------
+
+/** 解析结果进程内缓存（只在绘制线程访问）：同一图形反复画不再重复解析 */
+private val svgPathCache = HashMap<String, Path>()
+
+private fun svgPathOf(data: String): Path = svgPathCache.getOrPut(data) {
+    runCatching { PathParser().parsePathString(data).toPath() }.getOrElse { Path() }
+}
+
+/** 把 960×960 的 viewBox（x∈[0,960]，y∈[-960,0]）等比缩放到当前画布并居中 */
+private fun DrawScope.drawSvgGlyph(data: String, color: Color) {
+    val s = size.minDimension
+    val k = s / GlyphPaths.VIEWPORT
+    val half = GlyphPaths.VIEWPORT / 2f
+    withTransform({
+        translate(size.width / 2f, size.height / 2f)
+        scale(k, k, pivot = Offset.Zero)
+        // 该坐标系原点在左上、y 向下为负：先把中心 (480,-480) 平移到原点
+        translate(-half, half)
+    }) {
+        drawPath(svgPathOf(data), color)
     }
 }

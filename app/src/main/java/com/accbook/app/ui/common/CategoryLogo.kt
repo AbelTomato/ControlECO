@@ -1,0 +1,74 @@
+package com.accbook.app.ui.common
+
+import android.graphics.Bitmap
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import com.accbook.app.data.CategoryIcon
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
+/**
+ * 分类图标（列表/选择器共用）：按 [icon] 规格渲染——
+ * 默认（空）走「按分类名取内置图形」，也可为 emoji、指定内置图形、相册上传的图片。
+ */
+@Composable
+fun CategoryLogo(categoryName: String, icon: String, size: Dp = 40.dp) {
+    val emoji = CategoryIcon.emojiOf(icon)
+    val glyphName = CategoryIcon.glyphOf(icon)
+    val imageFile = CategoryIcon.imageOf(icon)
+    when {
+        emoji != null -> {
+            val fontSize = with(LocalDensity.current) { (size * 0.78f).toSp() }
+            Box(Modifier.size(size), contentAlignment = Alignment.Center) {
+                Text(emoji, fontSize = fontSize, maxLines = 1, softWrap = false)
+            }
+        }
+        imageFile != null -> ImageLogo(categoryName, imageFile, size)
+        glyphName != null -> {
+            val glyph = glyphByName(glyphName)
+            if (glyph == null) {
+                CategoryGlyph(categoryName, size)
+            } else {
+                GlyphIcon(glyph = glyph, tint = glyphTint(glyph, categoryName), size = size)
+            }
+        }
+        else -> CategoryGlyph(categoryName, size)
+    }
+}
+
+/** 相册上传的图标：内部存储解码（有缓存），解码未完成前留白，不闪默认图形 */
+@Composable
+private fun ImageLogo(categoryName: String, fileName: String, size: Dp) {
+    val context = LocalContext.current
+    val bitmap by produceState<Bitmap?>(initialValue = null, fileName) {
+        value = withContext(Dispatchers.IO) { CategoryIcon.loadImage(context, fileName) }
+    }
+    val bmp = bitmap
+    if (bmp != null) {
+        Image(
+            bitmap = bmp.asImageBitmap(),
+            contentDescription = categoryName,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .size(size)
+                .clip(RoundedCornerShape(size * 0.30f)),
+        )
+    } else {
+        Box(Modifier.size(size))
+    }
+}

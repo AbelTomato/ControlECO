@@ -1,20 +1,33 @@
 package com.accbook.app.ui.accounts
 
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
@@ -31,25 +44,75 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.accbook.app.data.CategoryIcon
 import com.accbook.app.data.LedgerViewModel
 import com.accbook.app.data.db.CategoryEntity
 import com.accbook.app.data.db.TxType
+import com.accbook.app.ui.common.CategoryLogo
+import com.accbook.app.ui.common.Glyph
+import com.accbook.app.ui.common.GlyphIcon
+import com.accbook.app.ui.common.glyphTint
+import com.accbook.app.ui.theme.accBook
 import com.accbook.app.util.Money
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+/** emoji 快捷选择（不够用可以在下面的输入框里贴任意 emoji） */
+private val PRESET_EMOJIS = listOf(
+    "🍜", "🍔", "☕", "🍎", "🛒", "👕", "🚌", "🚗", "🏠", "💊", "🎮", "📱", "✈️", "🎁",
+)
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun CategoriesScreen(vm: LedgerViewModel, onBack: () -> Unit) {
     val categories by vm.categories.collectAsStateWithLifecycle()
     val budgets by vm.categoryBudgets.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
     var showEditor by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<CategoryEntity?>(null) }
+    var draftIcon by remember { mutableStateOf("") }
+    // 本次编辑里刚导入、还没保存的图片：取消时删掉，避免留孤儿文件
+    var freshImport by remember { mutableStateOf<String?>(null) }
+
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) {
+            scope.launch {
+                val fileName = withContext(Dispatchers.IO) { CategoryIcon.importImage(context, uri) }
+                if (fileName != null) {
+                    CategoryIcon.deleteImage(context, freshImport)
+                    freshImport = fileName
+                    draftIcon = CategoryIcon.image(fileName)
+                } else {
+                    Toast.makeText(context, "这张图片读取失败，换一张试试", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    fun openEditor(category: CategoryEntity?) {
+        editing = category
+        draftIcon = category?.icon ?: ""
+        freshImport = null
+        showEditor = true
+    }
+
+    fun discardFreshImport() {
+        CategoryIcon.deleteImage(context, freshImport)
+        freshImport = null
+    }
 
     Scaffold(
         topBar = {
@@ -61,7 +124,7 @@ fun CategoriesScreen(vm: LedgerViewModel, onBack: () -> Unit) {
             )
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = { editing = null; showEditor = true }) {
+            FloatingActionButton(onClick = { openEditor(null) }) {
                 Icon(Icons.Filled.Add, contentDescription = "新增分类")
             }
         },
@@ -69,7 +132,7 @@ fun CategoriesScreen(vm: LedgerViewModel, onBack: () -> Unit) {
         LazyColumn(Modifier.padding(padding).fillMaxSize()) {
             item(key = "hint") {
                 Text(
-                    "为支出分类设置「月预算」后，首页「分类剩余预算」预览会用圆环显示各分类剩余。",
+                    "点分类可改名、换图标（emoji / 内置图形 / 相册图片）、设月预算。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
@@ -91,10 +154,12 @@ fun CategoriesScreen(vm: LedgerViewModel, onBack: () -> Unit) {
                         Row(
                             Modifier
                                 .fillMaxWidth()
-                                .clickable { editing = c; showEditor = true }
+                                .clickable { openEditor(c) }
                                 .padding(horizontal = 16.dp, vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
+                            CategoryLogo(categoryName = c.name, icon = c.icon, size = 30.dp)
+                            Spacer(Modifier.width(12.dp))
                             Text(c.name, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
                             if (c.type == TxType.EXPENSE && budget > 0L) {
                                 Text(
@@ -115,20 +180,35 @@ fun CategoriesScreen(vm: LedgerViewModel, onBack: () -> Unit) {
         CategoryEditorDialog(
             initial = editing,
             initialBudgetCents = editing?.let { budgets[it.id] } ?: 0L,
-            onSave = { id, name, type, budgetCents ->
-                vm.saveCategory(id, name, type) { savedId, err ->
+            icon = draftIcon,
+            onIconChange = { draftIcon = it },
+            onPickImage = {
+                imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+            },
+            onClearFreshImport = { discardFreshImport() },
+            onSave = { id, name, type, budgetCents, icon ->
+                vm.saveCategory(id, name, type, icon) { savedId, err ->
                     if (err == null) {
                         vm.setCategoryBudget(savedId, if (type == TxType.EXPENSE) budgetCents else 0L)
+                        freshImport = null // 已入库，文件归分类所有
                         showEditor = false
                     }
                 }
             },
             onDelete = editing?.let { entity ->
                 {
-                    vm.deleteCategory(entity.id) { err -> if (err == null) showEditor = false }
+                    vm.deleteCategory(entity.id) { err ->
+                        if (err == null) {
+                            discardFreshImport()
+                            showEditor = false
+                        }
+                    }
                 }
             },
-            onClose = { showEditor = false },
+            onClose = {
+                discardFreshImport()
+                showEditor = false
+            },
         )
     }
 }
@@ -138,7 +218,11 @@ fun CategoriesScreen(vm: LedgerViewModel, onBack: () -> Unit) {
 private fun CategoryEditorDialog(
     initial: CategoryEntity?,
     initialBudgetCents: Long,
-    onSave: (Long, String, TxType, Long) -> Unit,
+    icon: String,
+    onIconChange: (String) -> Unit,
+    onPickImage: () -> Unit,
+    onClearFreshImport: () -> Unit,
+    onSave: (Long, String, TxType, Long, String) -> Unit,
     onDelete: (() -> Unit)?,
     onClose: () -> Unit,
 ) {
@@ -147,13 +231,19 @@ private fun CategoryEditorDialog(
     var budgetText by remember {
         mutableStateOf(if (initialBudgetCents > 0L) Money.formatCents(initialBudgetCents) else "")
     }
+    var emojiText by remember { mutableStateOf(CategoryIcon.emojiOf(icon) ?: "") }
     var error by remember { mutableStateOf<String?>(null) }
+
+    val emojiInvalid = emojiText.isNotBlank() && !CategoryIcon.isEmojiInput(emojiText)
 
     AlertDialog(
         onDismissRequest = onClose,
         title = { Text(if (initial == null) "新增分类" else "编辑分类") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
@@ -172,6 +262,109 @@ private fun CategoryEditorDialog(
                         label = { Text("收入") },
                     )
                 }
+
+                // ---- 图标：当前效果 + 相册图片 / 恢复默认 ----
+                Text("图标", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CategoryLogo(categoryName = name, icon = icon, size = 52.dp)
+                    Spacer(Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            iconLabel(icon),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Row {
+                            TextButton(onClick = onPickImage) { Text("相册图片") }
+                            if (icon.isNotEmpty()) {
+                                TextButton(onClick = {
+                                    onClearFreshImport()
+                                    emojiText = ""
+                                    onIconChange("")
+                                }) { Text("恢复默认") }
+                            }
+                        }
+                    }
+                }
+
+                // ---- emoji：快捷选择 + 任意输入 ----
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    PRESET_EMOJIS.forEach { e ->
+                        val selected = icon == CategoryIcon.emoji(e)
+                        Box(
+                            Modifier
+                                .size(34.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(
+                                    if (selected) {
+                                        MaterialTheme.colorScheme.primaryContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.surfaceContainer
+                                    },
+                                )
+                                .clickable {
+                                    emojiText = e
+                                    onIconChange(CategoryIcon.emoji(e))
+                                },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(e, fontSize = 17.sp)
+                        }
+                    }
+                }
+                OutlinedTextField(
+                    value = emojiText,
+                    onValueChange = { input ->
+                        emojiText = input
+                        if (CategoryIcon.isEmojiInput(input)) onIconChange(CategoryIcon.emoji(input))
+                    },
+                    label = { Text("其他 emoji（可粘贴）") },
+                    singleLine = true,
+                    isError = emojiInvalid,
+                    supportingText = if (emojiInvalid) {
+                        { Text("请输入 emoji（不接受文字）") }
+                    } else {
+                        null
+                    },
+                )
+
+                // ---- 内置图形 ----
+                Text("内置图形", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Glyph.entries.forEach { g ->
+                        val selected = icon == CategoryIcon.glyph(g.name)
+                        Box(
+                            Modifier
+                                .size(38.dp)
+                                .clip(RoundedCornerShape(11.dp))
+                                .background(
+                                    if (selected) {
+                                        MaterialTheme.colorScheme.primaryContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.surfaceContainer
+                                    },
+                                )
+                                .clickable {
+                                    emojiText = ""
+                                    onIconChange(CategoryIcon.glyph(g.name))
+                                },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            GlyphIcon(
+                                glyph = g,
+                                tint = glyphTint(g, name.ifBlank { "默认" }),
+                                size = 32.dp,
+                            )
+                        }
+                    }
+                }
+
                 if (type == TxType.EXPENSE) {
                     OutlinedTextField(
                         value = budgetText,
@@ -214,9 +407,17 @@ private fun CategoryEditorDialog(
                     }
                     cents
                 }
-                onSave(initial?.id ?: 0L, trimmed, type, budgetCents)
+                onSave(initial?.id ?: 0L, trimmed, type, budgetCents, icon)
             }) { Text("保存") }
         },
         dismissButton = { TextButton(onClick = onClose) { Text("取消") } },
     )
+}
+
+/** 图标来源的说明文案 */
+private fun iconLabel(icon: String): String = when {
+    CategoryIcon.emojiOf(icon) != null -> "emoji 图标"
+    CategoryIcon.glyphOf(icon) != null -> "内置图形"
+    CategoryIcon.imageOf(icon) != null -> "相册图片"
+    else -> "默认：按分类名自动取形"
 }

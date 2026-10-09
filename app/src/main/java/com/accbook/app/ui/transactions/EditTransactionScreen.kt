@@ -40,7 +40,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.accbook.app.data.LedgerViewModel
 import com.accbook.app.data.db.TransactionEntity
 import com.accbook.app.data.db.TxType
-import com.accbook.app.ui.common.CategoryBadge
+import com.accbook.app.ui.common.CategoryLogo
 import com.accbook.app.ui.common.DatePickerButton
 import com.accbook.app.ui.common.DropdownSelector
 import com.accbook.app.ui.theme.accBook
@@ -163,7 +163,7 @@ fun EditTransactionScreen(vm: LedgerViewModel, txId: Long, onBack: () -> Unit) {
                         FilterChip(
                             selected = categoryId == c.id,
                             onClick = { categoryId = c.id },
-                            leadingIcon = { CategoryBadge(c.name, size = 22.dp) },
+                            leadingIcon = { CategoryLogo(categoryName = c.name, icon = c.icon, size = 22.dp) },
                             label = { Text(c.name) },
                         )
                     }

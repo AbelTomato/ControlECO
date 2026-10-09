@@ -39,6 +39,12 @@ data class CategoryEntity(
     val name: String,
     val type: TxType,
     val sortOrder: Int = 0,
+    /**
+     * 自定义图标（见 data/CategoryIcon）："" = 按分类名取内置图形；
+     * "EMOJI:🍜" / "GLYPH:BURGER" / "IMAGE:cat_icon_<ts>.jpg"
+     */
+    @ColumnInfo(defaultValue = "")
+    val icon: String = "",
 )
 
 @Entity(

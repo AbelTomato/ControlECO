@@ -43,6 +43,8 @@ data class AccBookColors(
     val ringTrack: Color,
     /** 红包等喜庆色（分类 logo 专用，明亮红） */
     val festiveRed: Color,
+    /** 叠加在图片/照片上的前景色（图片编辑器参考框、角落标记用；深浅色主题都是白） */
+    val overlayInk: Color,
     /** 结余卡浅底配色（浅色背景图/默认浅蓝卡面用） */
     val cardOnLight: CardTones,
     /** 结余卡深底配色（深色背景图/深色主题卡面用） */
@@ -60,6 +62,7 @@ private fun lightAccBookColors() = AccBookColors(
     hairline = Color(0xFFE3EAF1),
     ringTrack = Color(0xFFD6E1ED),
     festiveRed = Color(0xFFD2453C),
+    overlayInk = Color(0xFFFFFFFF),
     cardOnLight = CardTones(
         ink = Color(0xFF14212E),
         sub = Color(0xFF4E6175),
@@ -80,15 +83,19 @@ private fun lightAccBookColors() = AccBookColors(
         pillSelected = Color(0xFFFFFFFF),
         pillSelectedContent = Color(0xFF16202B),
     ),
+    // 分类调色板：高饱和、色相按 36° 均匀分布（红→橙→橄榄→绿→青绿→青→蓝→紫→洋红→玫红），
+    // 保证饼图/圆环里相邻分类也能一眼区分；不再用低饱和灰调。
     categoryPalette = listOf(
-        Color(0xFF5E7C9E), // 蓝
-        Color(0xFF6E8B84), // 青绿灰
-        Color(0xFF7B7BA6), // 蓝紫
-        Color(0xFF9C7B8B), // 灰玫
-        Color(0xFF5F8CA6), // 钢青
-        Color(0xFF78909C), // 石板灰
-        Color(0xFF8A7FA8), // 藕紫
-        Color(0xFF6F9A96), // 灰青
+        Color(0xFFDC2626), // 红
+        Color(0xFFEA580C), // 橙
+        Color(0xFF65A30D), // 橄榄
+        Color(0xFF059669), // 绿
+        Color(0xFF0D9488), // 青绿
+        Color(0xFF0891B2), // 青
+        Color(0xFF2563EB), // 蓝
+        Color(0xFF6D28D9), // 紫
+        Color(0xFFC026D3), // 洋红
+        Color(0xFFDB2777), // 玫红
     ),
 )
 
@@ -101,6 +108,7 @@ private fun darkAccBookColors() = AccBookColors(
     hairline = Color(0xFF2A323B),
     ringTrack = Color(0xFF333C47),
     festiveRed = Color(0xFFE88272),
+    overlayInk = Color(0xFFFFFFFF),
     cardOnLight = CardTones(
         ink = Color(0xFF14212E),
         sub = Color(0xFF4E6175),
@@ -122,14 +130,16 @@ private fun darkAccBookColors() = AccBookColors(
         pillSelectedContent = Color(0xFF16202B),
     ),
     categoryPalette = listOf(
-        Color(0xFF9FBAD8),
-        Color(0xFF9CC0B6),
-        Color(0xFFB0AEDC),
-        Color(0xFFD0A8B8),
-        Color(0xFF9CC2D8),
-        Color(0xFFB0C0CC),
-        Color(0xFFC2B4DC),
-        Color(0xFFA8CFC9),
+        Color(0xFFF87171), // 红
+        Color(0xFFFB923C), // 橙
+        Color(0xFFA3E635), // 橄榄
+        Color(0xFF34D399), // 绿
+        Color(0xFF2DD4BF), // 青绿
+        Color(0xFF22D3EE), // 青
+        Color(0xFF60A5FA), // 蓝
+        Color(0xFFA78BFA), // 紫
+        Color(0xFFE879F9), // 洋红
+        Color(0xFFF472B6), // 玫红
     ),
 )
 

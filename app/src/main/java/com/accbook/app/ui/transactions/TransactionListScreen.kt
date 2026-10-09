@@ -74,7 +74,7 @@ import com.accbook.app.data.LedgerViewModel
 import com.accbook.app.data.db.RefundMark
 import com.accbook.app.data.db.TransactionRow
 import com.accbook.app.data.db.TxType
-import com.accbook.app.ui.common.CategoryGlyph
+import com.accbook.app.ui.common.CategoryLogo
 import com.accbook.app.ui.common.PeriodPickerSheet
 import com.accbook.app.ui.common.PeriodStepper
 import com.accbook.app.ui.common.dayOfWeekZh
@@ -473,25 +473,13 @@ fun TransactionListScreen(
 
     if (showImageEditor && !cardImageUri.isNullOrBlank()) {
         CardImageEditorDialog(
+            image = cardImage?.drawable,
             initial = cardTransform,
             onApply = {
                 vm.setCardTransform(it)
                 showImageEditor = false
             },
             onDismiss = { showImageEditor = false },
-            preview = { draft ->
-                BalanceCard(
-                    mode = mode,
-                    balanceCents = income - expense,
-                    incomeCents = income,
-                    expenseCents = expense,
-                    imagePath = cardImageUri,
-                    image = cardImage,
-                    transform = draft,
-                    onModeChange = {},
-                    onOpenImageSettings = {},
-                )
-            },
         )
     }
 
@@ -683,7 +671,7 @@ private fun BillRow(
             Checkbox(checked = selected, onCheckedChange = { onClick() })
             Spacer(Modifier.width(4.dp))
         }
-        CategoryGlyph(row.categoryName)
+        CategoryLogo(categoryName = row.categoryName, icon = row.categoryIcon)
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
