@@ -41,6 +41,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -49,6 +50,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -61,6 +64,7 @@ import com.accbook.app.data.db.TxType
 import com.accbook.app.ui.common.CategoryLogo
 import com.accbook.app.ui.common.Glyph
 import com.accbook.app.ui.common.GlyphIcon
+import com.accbook.app.ui.common.glyphByName
 import com.accbook.app.ui.common.glyphTint
 import com.accbook.app.ui.theme.accBook
 import com.accbook.app.util.Money
@@ -78,6 +82,7 @@ private val PRESET_EMOJIS = listOf(
 fun CategoriesScreen(vm: LedgerViewModel, onBack: () -> Unit) {
     val categories by vm.categories.collectAsStateWithLifecycle()
     val budgets by vm.categoryBudgets.collectAsStateWithLifecycle()
+    val monthlyBudget by vm.monthlyBudgetCents.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -130,14 +135,6 @@ fun CategoriesScreen(vm: LedgerViewModel, onBack: () -> Unit) {
         },
     ) { padding ->
         LazyColumn(Modifier.padding(padding).fillMaxSize()) {
-            item(key = "hint") {
-                Text(
-                    "点分类可改名、换图标（emoji / 内置图形 / 相册图片）、设月预算。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                )
-            }
             listOf(TxType.EXPENSE to "支出分类", TxType.INCOME to "收入分类").forEach { (type, label) ->
                 val list = categories.filter { it.type == type }
                 if (list.isNotEmpty()) {
@@ -163,7 +160,7 @@ fun CategoriesScreen(vm: LedgerViewModel, onBack: () -> Unit) {
                             Text(c.name, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
                             if (c.type == TxType.EXPENSE && budget > 0L) {
                                 Text(
-                                    "月预算 ${Money.formatYuanGrouped(budget)}",
+                                    Money.formatYuanGrouped(budget),
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.primary,
                                 )
@@ -180,6 +177,11 @@ fun CategoriesScreen(vm: LedgerViewModel, onBack: () -> Unit) {
         CategoryEditorDialog(
             initial = editing,
             initialBudgetCents = editing?.let { budgets[it.id] } ?: 0L,
+            // 可分配余量 = 月总预算 − 其它分类预算之和（本分类不计入，等于本次最多能设多少）
+            totalBudgetCents = monthlyBudget,
+            otherAllocatedCents = budgets.entries
+                .filter { it.key != editing?.id }
+                .sumOf { it.value },
             icon = draftIcon,
             onIconChange = { draftIcon = it },
             onPickImage = {
@@ -218,6 +220,8 @@ fun CategoriesScreen(vm: LedgerViewModel, onBack: () -> Unit) {
 private fun CategoryEditorDialog(
     initial: CategoryEntity?,
     initialBudgetCents: Long,
+    totalBudgetCents: Long,
+    otherAllocatedCents: Long,
     icon: String,
     onIconChange: (String) -> Unit,
     onPickImage: () -> Unit,
@@ -235,6 +239,13 @@ private fun CategoryEditorDialog(
     var error by remember { mutableStateOf<String?>(null) }
 
     val emojiInvalid = emojiText.isNotBlank() && !CategoryIcon.isEmojiInput(emojiText)
+    val palette = MaterialTheme.accBook.categoryPalette
+
+    // 还可分配多少：总预算 − 其它分类预算（本分类不计）。没设总预算时不限制
+    val hasTotalBudget = totalBudgetCents > 0L
+    val allocatableCents = if (hasTotalBudget) (totalBudgetCents - otherAllocatedCents).coerceAtLeast(0L) else 0L
+    // 上限取"可分配"与"本分类现值"的较大者：历史数据已经超标时，至少能原样保存/往下调
+    val maxAllowedCents = if (hasTotalBudget) maxOf(allocatableCents, initialBudgetCents) else Long.MAX_VALUE
 
     AlertDialog(
         onDismissRequest = onClose,
@@ -261,6 +272,31 @@ private fun CategoryEditorDialog(
                         onClick = { type = TxType.INCOME },
                         label = { Text("收入") },
                     )
+                }
+
+                // ---- 预算（放在图标之上：先定"多少钱"，再定"长什么样"）----
+                if (type == TxType.EXPENSE) {
+                    OutlinedTextField(
+                        value = budgetText,
+                        onValueChange = { budgetText = it },
+                        label = { Text("分类月预算") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        singleLine = true,
+                    )
+                    if (hasTotalBudget) {
+                        // 一句话就够：剩下的额度就是本次能填的上限；填超了直接变红，不额外加文字
+                        val typed = Money.parseCents(budgetText.trim())
+                        val overAllocatable = typed != null && typed > allocatableCents
+                        Text(
+                            "还可分配 ${Money.formatYuanGrouped(allocatableCents)}",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (overAllocatable) {
+                                MaterialTheme.accBook.critical
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
+                    }
                 }
 
                 // ---- 图标：当前效果 + 相册图片 / 恢复默认 ----
@@ -337,8 +373,9 @@ private fun CategoryEditorDialog(
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
+                    val currentGlyph = CategoryIcon.glyphOf(icon)
                     Glyph.entries.forEach { g ->
-                        val selected = icon == CategoryIcon.glyph(g.name)
+                        val selected = currentGlyph == g.name
                         Box(
                             Modifier
                                 .size(38.dp)
@@ -352,33 +389,74 @@ private fun CategoryEditorDialog(
                                 )
                                 .clickable {
                                     emojiText = ""
-                                    onIconChange(CategoryIcon.glyph(g.name))
+                                    // 换图形时保留已选的颜色
+                                    onIconChange(CategoryIcon.glyph(g.name, CategoryIcon.glyphColorOf(icon)))
                                 },
                             contentAlignment = Alignment.Center,
                         ) {
                             GlyphIcon(
                                 glyph = g,
-                                tint = glyphTint(g, name.ifBlank { "默认" }),
+                                tint = glyphSwatchTint(g, name.ifBlank { "默认" }, currentGlyph, icon),
                                 size = 32.dp,
                             )
                         }
                     }
                 }
 
-                if (type == TxType.EXPENSE) {
-                    OutlinedTextField(
-                        value = budgetText,
-                        onValueChange = { budgetText = it },
-                        label = { Text("分类月预算（元，可留空）") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        singleLine = true,
-                    )
-                    Text(
-                        "用于首页「分类剩余预算」预览；留空或 0 表示不跟踪该分类",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                // ---- 内置图形的颜色（默认=按分类名自动取色）----
+                val glyphName = CategoryIcon.glyphOf(icon)
+                if (glyphName != null) {
+                    val glyph = glyphByName(glyphName)
+                    val currentColor = CategoryIcon.glyphColorOf(icon)
+                    Text("图形颜色", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        // 默认：按分类名取色（等于清除自定义颜色）
+                        Box(
+                            Modifier
+                                .size(28.dp)
+                                .clip(RoundedCornerShape(9.dp))
+                                .background(MaterialTheme.colorScheme.surfaceContainer)
+                                .clickable { onIconChange(CategoryIcon.glyph(glyphName)) },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                "默认",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (currentColor == null) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                            )
+                        }
+                        palette.forEach { c ->
+                            val rgb = c.toArgb() and 0xFFFFFF
+                            val selected = currentColor == rgb
+                            Box(
+                                Modifier
+                                    .size(28.dp)
+                                    .clip(RoundedCornerShape(9.dp))
+                                    .background(if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer)
+                                    .clickable { onIconChange(CategoryIcon.glyph(glyphName, rgb)) },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Box(
+                                    Modifier
+                                        .size(if (selected) 20.dp else 18.dp)
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(c),
+                                )
+                                if (glyph != null && selected) {
+                                    GlyphIcon(glyph = glyph, tint = MaterialTheme.colorScheme.onPrimaryContainer, size = 22.dp)
+                                }
+                            }
+                        }
+                    }
                 }
+
                 error?.let {
                     Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                 }
@@ -407,11 +485,23 @@ private fun CategoryEditorDialog(
                     }
                     cents
                 }
+                if (type == TxType.EXPENSE && budgetCents > maxAllowedCents) {
+                    error = "最多可设 ${Money.formatYuanGrouped(maxAllowedCents)}"
+                    return@TextButton
+                }
                 onSave(initial?.id ?: 0L, trimmed, type, budgetCents, icon)
             }) { Text("保存") }
         },
         dismissButton = { TextButton(onClick = onClose) { Text("取消") } },
     )
+}
+
+/** 图标选择网格里某格的用色：正在编辑的图形用已选颜色，其它格子按各自名字取色 */
+@Composable
+private fun glyphSwatchTint(glyph: Glyph, categoryName: String, currentGlyph: String?, icon: String): Color {
+    val custom = CategoryIcon.glyphColorOf(icon)
+    if (custom != null && currentGlyph == glyph.name) return Color(custom or 0xFF000000.toInt())
+    return glyphTint(glyph, categoryName)
 }
 
 /** 图标来源的说明文案 */
