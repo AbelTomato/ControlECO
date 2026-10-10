@@ -100,6 +100,15 @@ interface TransactionDao {
     @Query("SELECT * FROM transactions WHERE id = :id")
     suspend fun getById(id: Long): TransactionEntity?
 
+    /** 自动入账后页面通道捕获同笔：按捕获去重键（externalId = "NTF:" + dedupKey）回填更全的页面信息 */
+    @Query(
+        """UPDATE transactions
+           SET amountCents = :amountCents, timestamp = :timestamp,
+               counterparty = :counterparty, note = :note
+           WHERE externalId = :externalId"""
+    )
+    suspend fun updateCapturedByExternalId(externalId: String, amountCents: Long, timestamp: Long, counterparty: String, note: String)
+
     /** 退款关联候选：近 60 天未退款的支出（供"无金额退款通知→手动关联"使用） */
     @Query(
         """SELECT t.id AS id, t.type AS type, t.amountCents AS amountCents, t.timestamp AS timestamp,
@@ -242,9 +251,6 @@ interface PendingDao {
     @Query("SELECT COUNT(*) FROM pending_transactions WHERE dedupKey = :dedupKey")
     suspend fun countByDedupKey(dedupKey: String): Int
 
-    @Query("UPDATE pending_transactions SET counterparty = :counterparty, note = :note WHERE id = :id")
-    suspend fun updateEnrichment(id: Long, counterparty: String, note: String)
-
     @Query("SELECT * FROM pending_transactions WHERE status = 'PENDING' ORDER BY createdAt DESC")
     fun observePending(): Flow<List<PendingTransactionEntity>>
 
@@ -253,6 +259,23 @@ interface PendingDao {
 
     @Query("SELECT * FROM pending_transactions WHERE status = 'PENDING'")
     suspend fun getAllPending(): List<PendingTransactionEntity>
+
+    /** 跨通道合并池：待确认 + 自动入账条目（AUTO 只用于页面信息回填，不进列表） */
+    @Query("SELECT * FROM pending_transactions WHERE status IN ('PENDING', 'AUTO') ORDER BY createdAt DESC LIMIT 200")
+    suspend fun getMergeable(): List<PendingTransactionEntity>
+
+    /** 页面信息优先回填：覆盖金额/时间/商户/备注/规则（跨通道同一笔，页面侧信息更全） */
+    @Query(
+        """UPDATE pending_transactions
+           SET amountCents = :amountCents, timestamp = :timestamp, counterparty = :counterparty,
+               note = :note, ruleName = :ruleName
+           WHERE id = :id"""
+    )
+    suspend fun updateFromPage(id: Long, amountCents: Long, timestamp: Long, counterparty: String, note: String, ruleName: String)
+
+    /** 自动入账条目的合并窗口很短，次日清理（dedupKey 仍是交易的 externalId，删除不影响去重） */
+    @Query("DELETE FROM pending_transactions WHERE status = 'AUTO' AND createdAt < :cutoff")
+    suspend fun deleteAutoOlderThan(cutoff: Long)
 
     @Query("DELETE FROM pending_transactions WHERE id = :id")
     suspend fun deleteById(id: Long)

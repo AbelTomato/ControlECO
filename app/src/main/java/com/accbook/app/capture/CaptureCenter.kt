@@ -16,6 +16,7 @@ import com.accbook.app.data.db.CapturedNotificationEntity
 import com.accbook.app.data.db.CategoryDao
 import com.accbook.app.data.db.CategoryEntity
 import com.accbook.app.data.db.PendingDao
+import com.accbook.app.data.db.PendingStatus
 import com.accbook.app.data.db.PendingTransactionEntity
 import com.accbook.app.data.db.RefundMark
 import com.accbook.app.data.db.TransactionDao
@@ -34,8 +35,9 @@ import kotlinx.coroutines.launch
 /**
  * 采集中心：通知监听与无障碍页面两条通道的唯一入口。
  * 通道流程一致：原始快照落库（不解析）→ 规则引擎 → 待确认队列。
- * 跨通道去重：dedupKey 同构（包名|TYPE|金额分|分钟），按 ±1 分钟容错查找既有条目——
- * 同一笔交易"通知+页面"双捕获时只保留一条，页面侧信息更全（收款方/支付方式）则回填富化。
+ * 跨通道去重：两条通道在 10s 内捕获同一笔（同包名 + 同方向 + 金额）只保留一条，
+ * **页面信息优先**——页面侧带商户/支付方式，捕获在后时覆盖通知侧的稀疏值与金额（见 CaptureMerge）。
+ * 设置开启「自动入账」时识别到即直接记账（不再逐笔确认），条目留 AUTO 记录供页面回填。
  * debug 构建可全量记录（设置开关），Logcat tag=AccBook 便于真实样本调试。
  */
 object CaptureCenter {
@@ -46,12 +48,16 @@ object CaptureCenter {
     private const val KEY_FLOATING_CONFIRM_ENABLED = "floating_confirm_enabled"
     private const val KEY_REFUND_LINK_ENABLED = "refund_link_enabled"
     private const val KEY_CAPTURE_NOTIFY_ENABLED = "capture_notify_enabled"
+    private const val KEY_AUTO_ENTRY_ENABLED = "auto_entry_enabled"
     private const val KEY_DEBUG_CAPTURE_ALL = "debug_capture_all"
 
     /** 点击通知/悬浮卡跳转的路由（MainActivity intent extra） */
     const val EXTRA_ROUTE = "accbook.route"
     const val ROUTE_PENDING = "pending"
     const val ROUTE_REFUND_LINK = "refundLink"
+
+    /** 「已自动入账」横幅直达该笔记录的编辑页（route = 前缀 + 交易 id，追加路由，不改既有契约） */
+    const val ROUTE_EDIT_PREFIX = "edit/"
 
     /** 渠道 v2：横幅提醒（IMPORTANCE_HIGH 才会弹屏幕上方横幅）；旧渠道 capture（DEFAULT 静默）删除 */
     const val CHANNEL_CAPTURE = "capture_alert"
@@ -276,6 +282,15 @@ object CaptureCenter {
         AppLog.i("Ntf", "captureNotifyEnabled=$enabled")
     }
 
+    /** 自动入账：识别到付款后按推测分类/账户直接记账，不再逐笔确认（默认关，可选开启） */
+    fun isAutoEntryEnabled(): Boolean =
+        prefs().getBoolean(KEY_AUTO_ENTRY_ENABLED, false)
+
+    fun setAutoEntryEnabled(enabled: Boolean) {
+        prefs().edit().putBoolean(KEY_AUTO_ENTRY_ENABLED, enabled).apply()
+        AppLog.i("Ntf", "autoEntryEnabled=$enabled")
+    }
+
     /** 悬浮窗被支付保护拦截时，用系统通知提醒用户确认入账（安卓 13+ 需 POST_NOTIFICATIONS） */
     fun canPostNotifications(): Boolean =
         if (Build.VERSION.SDK_INT >= 33) {
@@ -296,6 +311,8 @@ object CaptureCenter {
         scope.launch {
             captureDao.deleteOlderThan(System.currentTimeMillis() - KEEP_DAYS * 24 * 3_600_000)
             captureDao.keepNewest(KEEP_ROWS)
+            // 自动入账条目只在合并窗口（10s）内有意义，留一天足够，避免长期堆积
+            pendingDao.deleteAutoOlderThan(System.currentTimeMillis() - 24 * 3_600_000)
         }
     }
 
@@ -366,12 +383,35 @@ object CaptureCenter {
                     }
                     return@launch
                 }
-                // 跨通道去重（±1 分钟容错）：通知先到时页面捕获会富化这条，而不是另起一条
-                val related = findRelatedPending(
-                    packageName, parsed.type, parsed.isRefund, parsed.amountCents, postTime / 60_000,
+                // 跨通道去重（10s 窗口）：页面通道先捕获/自动入账了同一笔 → 通知侧信息更少，不覆盖。
+                // 通知侧严格比金额：同 App 内 10s 内两笔金额不同的付款不能被并成一笔（丢记录）
+                val related = pickRelatedPending(
+                    pendingDao.getMergeable(), packageName, parsed.type, parsed.amountCents,
+                    System.currentTimeMillis(),
                 )
                 if (related != null) {
-                    AppLog.d("Ntf", "skip duplicate pending ${parsed.dedupKey} (related ${related.dedupKey})")
+                    AppLog.d("Ntf", "skip duplicate ${parsed.dedupKey} (page side won, related #${related.pending.id})")
+                    return@launch
+                }
+                // 自动入账（设置开启）：按推测分类/账户直接落账，不进待确认、不弹悬浮卡
+                if (isAutoEntryEnabled() && autoEnter(
+                        type = parsed.type,
+                        amountCents = parsed.amountCents,
+                        timestamp = postTime,
+                        counterparty = "",
+                        note = parsed.note,
+                        sourcePackage = packageName,
+                        dedupKey = parsed.dedupKey,
+                        ruleName = parsed.ruleName,
+                        isRefund = parsed.isRefund,
+                    )
+                ) {
+                    captureDao.updateMatch(rawId, parsed.ruleName, true)
+                    AppLog.i(
+                        "Ntf",
+                        "auto entry: ${parsed.ruleName} ${parsed.type} ${Money.formatYuan(parsed.amountCents)}" +
+                            (if (parsed.isRefund) " [退款]" else "") + " pkg=$packageName",
+                    )
                     return@launch
                 }
                 pendingDao.insert(
@@ -505,34 +545,70 @@ object CaptureCenter {
                     return@launch
                 }
 
-                val related = findRelatedPending(
-                    packageName, parsed.type, isRefund = false, parsed.amountCents,
-                    (parsed.txTime ?: capturedAt) / 60_000,
+                // 跨通道合并（10s 窗口）：通知先捕获时用页面信息覆盖（页面更全：商户/支付方式）；
+                // 页面是权威来源，金额对不上（通知误解析）也按同笔处理、以页面金额为准
+                val related = pickRelatedPending(
+                    pendingDao.getMergeable(), packageName, parsed.type, parsed.amountCents, capturedAt,
+                    allowAmountMismatch = true,
                 )
                 if (related != null) {
-                    // 富化：通知捕获的条目缺收款方/支付方式，页面侧信息补进去；
-                    // 去重闸门在入账时（externalId 唯一），悬浮窗照常弹出供用户一键确认
-                    val note = buildString {
-                        append(related.note)
-                        if (parsed.counterparty.isNotBlank() && !related.note.contains(parsed.counterparty)) {
-                            if (isNotEmpty()) append(" · ")
-                            append(parsed.counterparty)
-                        }
-                        val method = parsed.paymentMethod
-                        if (method != null && !related.note.contains(method)) {
-                            if (isNotEmpty()) append(" · ")
-                            append("支付方式 $method")
-                        }
-                    }.take(300)
-                    pendingDao.updateEnrichment(
-                        related.id,
-                        counterparty = parsed.counterparty.ifBlank { related.counterparty },
-                        note = note,
+                    val merged = mergePageInfo(
+                        existing = related.pending,
+                        pageAmountCents = parsed.amountCents,
+                        pageTxTime = parsed.txTime,
+                        pageCounterparty = parsed.counterparty,
+                        pageNote = parsed.note,
+                        pagePaymentMethod = parsed.paymentMethod,
+                        pageRuleName = parsed.ruleName,
                     )
+                    pendingDao.updateFromPage(
+                        related.pending.id,
+                        merged.amountCents,
+                        merged.timestamp,
+                        merged.counterparty,
+                        merged.note,
+                        merged.ruleName,
+                    )
+                    val autoEntered = related.pending.status == PendingStatus.AUTO
+                    if (autoEntered) {
+                        // 自动入账的那笔：把页面信息同步回交易本身
+                        txDao.updateCapturedByExternalId(
+                            "NTF:${related.pending.dedupKey}",
+                            merged.amountCents,
+                            merged.timestamp,
+                            merged.counterparty,
+                            merged.note,
+                        )
+                    }
                     captureDao.updateMatch(rawId, parsed.ruleName, true)
-                    AppLog.i("Page", "enriched pending #${related.id} ${parsed.ruleName} ${Money.formatYuan(parsed.amountCents)}")
-                    // 通知通道已发过横幅通知；这里只弹富化后的悬浮卡，确认/忽略会撤掉原通知
-                    maybeShowFloatingConfirm(parsed, pendingNotifId(related.dedupKey))
+                    AppLog.i(
+                        "Page",
+                        (if (autoEntered) "filled auto entry #" else "merged page info into pending #") +
+                            "${related.pending.id} ${parsed.ruleName} ${Money.formatYuan(parsed.amountCents)}" +
+                            (if (related.sameAmount) "" else " (通知解析 ${Money.formatYuan(related.pending.amountCents)}，页面金额为准)"),
+                    )
+                    // 自动入账无需确认；待确认条目弹富化后的悬浮卡（确认/忽略会撤掉原通知）
+                    if (!autoEntered) maybeShowFloatingConfirm(parsed, pendingNotifId(related.pending.dedupKey))
+                    return@launch
+                }
+
+                // 自动入账（设置开启）：页面信息最全，直接落账
+                if (isAutoEntryEnabled() && autoEnter(
+                        type = parsed.type,
+                        amountCents = parsed.amountCents,
+                        timestamp = parsed.txTime ?: capturedAt,
+                        counterparty = parsed.counterparty,
+                        note = parsed.note,
+                        sourcePackage = packageName,
+                        dedupKey = parsed.dedupKey,
+                        ruleName = parsed.ruleName,
+                    )
+                ) {
+                    captureDao.updateMatch(rawId, parsed.ruleName, true)
+                    AppLog.i(
+                        "Page",
+                        "auto entry: ${parsed.ruleName} ${Money.formatYuan(parsed.amountCents)} 收款方=${parsed.counterparty}",
+                    )
                     return@launch
                 }
 
@@ -570,20 +646,76 @@ object CaptureCenter {
     }
 
     /**
-     * ±1 分钟容错的待确认条目查找：通知 postTime 与页面捕获/交易时间可能跨分钟。
-     * 待确认队列表很小（确认即删），全量内存比对足够。
+     * 自动入账：按推测分类/账户直接落账（跳过待确认与悬浮卡），并发「已自动入账」横幅
+     * （点击直达该笔编辑页）。条目以 AUTO 状态留在合并池里——页面通道随后捕获同笔时回填更全的信息。
+     * 返回 false = 没有可用的分类/账户或写入失败，调用方回落到待确认流程。
      */
-    private suspend fun findRelatedPending(
-        packageName: String,
+    private suspend fun autoEnter(
         type: TxType,
-        isRefund: Boolean,
         amountCents: Long,
-        minute: Long,
-    ): PendingTransactionEntity? {
-        val candidates = (minute - 1..minute + 1)
-            .map { "$packageName|$type${if (isRefund) "|R" else ""}|$amountCents|$it" }
-            .toSet()
-        return pendingDao.getAllPending().firstOrNull { it.dedupKey in candidates }
+        timestamp: Long,
+        counterparty: String,
+        note: String,
+        sourcePackage: String,
+        dedupKey: String,
+        ruleName: String,
+        isRefund: Boolean = false,
+    ): Boolean {
+        val categoryId = CaptureDefaults.categoryId(categoryDao.getAll(), type)
+        val accountId = CaptureDefaults.accountId(accountDao.getAll(), sourcePackage)
+        if (categoryId == null || accountId == null) {
+            AppLog.w("Ntf", "auto entry skipped (no category/account to use)")
+            return false
+        }
+        return try {
+            val txId = txDao.insert(
+                TransactionEntity(
+                    type = type,
+                    amountCents = amountCents,
+                    categoryId = categoryId,
+                    accountId = accountId,
+                    timestamp = timestamp,
+                    note = note.ifBlank { ruleName },
+                    counterparty = counterparty,
+                    source = TxSource.NOTIFICATION,
+                    externalId = "NTF:$dedupKey",
+                    refundMark = if (isRefund) RefundMark.REFUND_INCOME else RefundMark.NONE,
+                ),
+            )
+            pendingDao.insert(
+                PendingTransactionEntity(
+                    type = type,
+                    amountCents = amountCents,
+                    timestamp = timestamp,
+                    counterparty = counterparty,
+                    note = note,
+                    sourcePackage = sourcePackage,
+                    ruleName = ruleName,
+                    dedupKey = dedupKey,
+                    refundMark = if (isRefund) RefundMark.REFUND_INCOME else RefundMark.NONE,
+                    status = PendingStatus.AUTO,
+                ),
+            )
+            postCaptureNotification(
+                "已自动入账",
+                Money.formatYuan(amountCents) +
+                    (if (counterparty.isNotBlank()) " · $counterparty" else " · $ruleName") +
+                    " · 点击可修改",
+                "$ROUTE_EDIT_PREFIX$txId",
+                notifId = "auto|$dedupKey".hashCode(),
+            )
+            AppLog.i("Ntf", "auto entered #$txId ${Money.formatYuan(amountCents)} dedup=$dedupKey")
+            true
+        } catch (e: Exception) {
+            // externalId 唯一索引冲突 = 这笔已经入过账（重复通知/双通道），按成功处理不再入队
+            if (e.message?.contains("UNIQUE", ignoreCase = true) == true) {
+                AppLog.i("Ntf", "auto entry skipped (already recorded) dedup=$dedupKey")
+                true
+            } else {
+                AppLog.w("Ntf", "auto entry failed, fallback to pending", e)
+                false
+            }
+        }
     }
 
     // ---------- 悬浮确认窗 ----------
@@ -674,14 +806,17 @@ object CaptureCenter {
         }
     }
 
-    /** 清掉同笔交易的待确认条目：精确 dedupKey + ±1 分钟邻键 */
+    /**
+     * 清掉同笔交易的待确认条目：同包名 + 同方向 + 去重键分钟在 ±1 内。
+     * 不按完整 dedupKey 比对——页面优先合并会改写通知侧条目的金额（误解析），
+     * 键里的金额段就不再等于当前值；同包名同方向同分钟足已锁定"同一笔"。
+     */
     private suspend fun deletePendingFor(parsed: PageRules.ParsedPage) {
-        val minute = parsed.dedupKey.substringAfterLast('|').toLongOrNull() ?: return
-        val prefix = parsed.dedupKey.substringBeforeLast('|')
-        val candidates = (minute - 1..minute + 1).map { "$prefix|$it" }.toSet()
-        pendingDao.getAllPending()
-            .filter { it.dedupKey in candidates }
-            .forEach { pendingDao.deleteById(it.id) }
+        val pageKey = parseDedupKey(parsed.dedupKey) ?: return
+        pendingDao.getAllPending().forEach { row ->
+            val rowKey = parseDedupKey(row.dedupKey)
+            if (rowKey != null && samePendingFamily(pageKey, rowKey)) pendingDao.deleteById(row.id)
+        }
     }
 
     /**

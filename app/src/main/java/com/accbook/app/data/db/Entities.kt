@@ -81,8 +81,12 @@ data class TransactionEntity(
     val createdAt: Long = System.currentTimeMillis(),
 )
 
-/** 待确认条目状态（确认/丢弃后条目即删除，状态仅用于极端情况的残留清理） */
-enum class PendingStatus { PENDING, CONFIRMED, DISCARDED }
+/**
+ * 待确认条目状态（确认/丢弃后条目即删除，状态仅用于极端情况的残留清理）
+ * - AUTO：自动入账（设置开启）已直接落账的条目，不进待确认列表，
+ *   只用于页面通道随后捕获同笔时回填更全的商户/支付方式；次日清理。
+ */
+enum class PendingStatus { PENDING, CONFIRMED, DISCARDED, AUTO }
 
 /** 原始捕获日志：采集层立即落库的原始快照，不解析；兼做调试证据与"未匹配样本池"，定期清理 */
 @Entity(tableName = "captured_notifications")

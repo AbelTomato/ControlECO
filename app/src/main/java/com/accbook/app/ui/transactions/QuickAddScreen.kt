@@ -1,5 +1,7 @@
 package com.accbook.app.ui.transactions
 
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,9 +12,15 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -33,6 +41,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -48,8 +57,9 @@ import java.time.LocalTime
 import java.time.ZoneId
 
 /**
- * 快速记账：金额优先——"¥ 0" + 自绘数字键盘 + 常用分类，
+ * 快速记账：金额优先——"¥ 0" + 自绘数字键盘 + 折叠的分类条，
  * 目标动线：输入金额 → 选分类 → 记一笔；商户/账户/备注/日期收进"更多细节"。
+ * 版式紧凑（小字号 + 细节区可滚动），保证"更多细节"展开时数字键盘不会被挤出屏幕。
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -65,6 +75,7 @@ fun QuickAddScreen(vm: LedgerViewModel, onBack: () -> Unit) {
     var counterparty by remember { mutableStateOf("") }
     var note by remember { mutableStateOf("") }
     var showMore by remember { mutableStateOf(false) }
+    var categoryExpanded by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
 
     // 默认选中：第一个账户 + 当前类型的第一个分类
@@ -96,6 +107,8 @@ fun QuickAddScreen(vm: LedgerViewModel, onBack: () -> Unit) {
 
     val cents = Money.parseCents(amountText)
     val valid = cents != null && cents > 0 && categoryId != null && accountId != null
+    val catsOfType = categories.filter { it.type == type }
+    val selectedCategoryName = catsOfType.firstOrNull { it.id == categoryId }?.name
 
     Scaffold(
         topBar = {
@@ -113,16 +126,16 @@ fun QuickAddScreen(vm: LedgerViewModel, onBack: () -> Unit) {
                 .fillMaxSize()
                 .padding(horizontal = 20.dp),
         ) {
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(8.dp))
 
             // 金额主体
             Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(Money.symbol, style = MaterialTheme.typography.headlineLarge, color = MaterialTheme.colorScheme.primary)
-                    Spacer(Modifier.padding(start = 8.dp))
+                    Text(Money.symbol, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.padding(start = 6.dp))
                     Text(
                         amountText.ifEmpty { "0" },
-                        style = MaterialTheme.typography.displayMedium,
+                        style = MaterialTheme.typography.headlineMedium,
                         color = if (amountText.isEmpty()) {
                             MaterialTheme.colorScheme.onSurfaceVariant
                         } else {
@@ -133,77 +146,126 @@ fun QuickAddScreen(vm: LedgerViewModel, onBack: () -> Unit) {
             }
             Text(
                 error ?: "输入金额 → 选分类 → 记一笔",
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.labelSmall,
                 color = if (error != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
             )
 
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(12.dp))
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("分类", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.weight(1f))
                 FilterChip(
                     selected = type == TxType.EXPENSE,
                     onClick = { type = TxType.EXPENSE },
-                    label = { Text("支出") },
+                    label = { Text("支出", style = MaterialTheme.typography.labelMedium) },
                 )
-                Spacer(Modifier.padding(start = 8.dp))
+                Spacer(Modifier.padding(start = 6.dp))
                 FilterChip(
                     selected = type == TxType.INCOME,
                     onClick = { type = TxType.INCOME },
-                    label = { Text("收入") },
+                    label = { Text("收入", style = MaterialTheme.typography.labelMedium) },
                 )
             }
-            Spacer(Modifier.height(8.dp))
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                categories.filter { it.type == type }.forEach { c ->
-                    FilterChip(
-                        selected = categoryId == c.id,
-                        onClick = { categoryId = c.id },
-                        label = { Text(c.name) },
-                    )
+
+            // 分类折叠条：收起时只显示当前选中项，点击展开全部（展开后限高可滚动，不挤占键盘）
+            Spacer(Modifier.height(6.dp))
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .border(1.dp, MaterialTheme.accBook.hairline, RoundedCornerShape(10.dp))
+                    .clickable { categoryExpanded = !categoryExpanded }
+                    .padding(horizontal = 12.dp, vertical = 9.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    selectedCategoryName ?: "请选择分类",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (selectedCategoryName == null) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onBackground
+                    },
+                    modifier = Modifier.weight(1f),
+                )
+                Icon(
+                    if (categoryExpanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                    contentDescription = if (categoryExpanded) "收起分类" else "展开分类",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (categoryExpanded) {
+                FlowRow(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(top = 6.dp)
+                        .heightIn(max = 96.dp)
+                        .verticalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    catsOfType.forEach { c ->
+                        FilterChip(
+                            selected = categoryId == c.id,
+                            onClick = { categoryId = c.id; categoryExpanded = false },
+                            label = { Text(c.name, style = MaterialTheme.typography.labelMedium) },
+                        )
+                    }
                 }
             }
 
-            Spacer(Modifier.weight(1f))
+            // 细节区（可滚动）：展开"更多细节"时占用剩余空间，屏幕再矮也能滑到每个字段
+            Column(
+                Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                if (showMore) {
+                    DropdownSelector(
+                        label = "账户",
+                        options = accounts.map { it.id to it.name },
+                        selectedId = accountId,
+                        onSelect = { accountId = it },
+                    )
+                    DatePickerButton(date = date, onPick = { date = it })
+                    OutlinedTextField(
+                        value = counterparty,
+                        onValueChange = { counterparty = it },
+                        label = { Text("商户") },
+                        textStyle = MaterialTheme.typography.bodySmall,
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = note,
+                        onValueChange = { note = it },
+                        label = { Text("备注") },
+                        textStyle = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    TextButton(
+                        onClick = { showMore = false },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("收起细节", style = MaterialTheme.typography.labelMedium) }
+                }
+            }
 
-            if (showMore) {
-                DropdownSelector(
-                    label = "账户",
-                    options = accounts.map { it.id to it.name },
-                    selectedId = accountId,
-                    onSelect = { accountId = it },
-                )
-                DatePickerButton(date = date, onPick = { date = it })
-                OutlinedTextField(
-                    value = counterparty,
-                    onValueChange = { counterparty = it },
-                    label = { Text("商户") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                OutlinedTextField(
-                    value = note,
-                    onValueChange = { note = it },
-                    label = { Text("备注") },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            } else {
+            if (!showMore) {
                 TextButton(
                     onClick = { showMore = true },
                     modifier = Modifier.fillMaxWidth(),
-                ) { Text("更多细节：商户 · 账户 · 日期 · 备注") }
+                ) { Text("更多细节：商户 · 账户 · 日期 · 备注", style = MaterialTheme.typography.labelMedium) }
             }
 
-            Spacer(Modifier.height(8.dp))
             HorizontalDivider(color = MaterialTheme.accBook.hairline)
             NumberKeypad(
                 onDigit = ::appendKey,
                 onDot = { appendKey(".") },
                 onBackspace = ::backspace,
             )
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(6.dp))
             Button(
                 onClick = {
                     val amount = Money.parseCents(amountText)
@@ -227,10 +289,10 @@ fun QuickAddScreen(vm: LedgerViewModel, onBack: () -> Unit) {
                     }
                 },
                 enabled = valid,
-                modifier = Modifier.fillMaxWidth().height(52.dp),
+                modifier = Modifier.fillMaxWidth().height(44.dp),
                 shape = MaterialTheme.shapes.medium,
-            ) { Text("记一笔", style = MaterialTheme.typography.titleMedium) }
-            Spacer(Modifier.height(12.dp))
+            ) { Text("记一笔", style = MaterialTheme.typography.titleSmall) }
+            Spacer(Modifier.height(10.dp))
         }
     }
 }
@@ -261,11 +323,11 @@ private fun NumberKeypad(
                                     else -> onDigit(key)
                                 }
                             },
-                            modifier = Modifier.fillMaxWidth().height(56.dp),
+                            modifier = Modifier.fillMaxWidth().height(46.dp),
                         ) {
                             Text(
                                 key,
-                                fontSize = 24.sp,
+                                fontSize = 20.sp,
                                 color = MaterialTheme.colorScheme.onBackground,
                             )
                         }

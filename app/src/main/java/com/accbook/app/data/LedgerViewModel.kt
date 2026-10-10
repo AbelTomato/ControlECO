@@ -11,6 +11,7 @@ import com.accbook.app.AccBookApp
 import com.accbook.app.BuildConfig
 import com.accbook.app.capture.AccBookAccessibilityService
 import com.accbook.app.capture.CaptureCenter
+import com.accbook.app.capture.CaptureDefaults
 import com.accbook.app.capture.NotificationRules
 import com.accbook.app.csv.BillParsers
 import com.accbook.app.data.db.AccountBalanceRow
@@ -731,6 +732,14 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
         _captureNotifyEnabled.value = enabled
     }
 
+    private val _autoEntryEnabled = MutableStateFlow(CaptureCenter.isAutoEntryEnabled())
+    val autoEntryEnabled: StateFlow<Boolean> = _autoEntryEnabled
+
+    fun setAutoEntryEnabled(enabled: Boolean) {
+        CaptureCenter.setAutoEntryEnabled(enabled)
+        _autoEntryEnabled.value = enabled
+    }
+
     /** 通知权限（安卓 13+ 运行时） */
     fun canPostNotifications(): Boolean = CaptureCenter.canPostNotifications()
 
@@ -839,7 +848,7 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
                     type = item.type,
                     amountCents = item.amountCents,
                     categoryId = cat.id,
-                    accountId = guessAccountId(item.sourcePackage, accs) ?: return@launch,
+                    accountId = CaptureDefaults.accountId(accs, item.sourcePackage) ?: return@launch,
                     timestamp = item.timestamp,
                     note = item.note.ifBlank { item.ruleName },
                     counterparty = item.counterparty,
@@ -855,30 +864,18 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** 待确认确认弹窗的默认分类（该类型的"其他"，缺省取该类型第一个） */
-    fun guessCategoryId(type: TxType): Long? =
-        categories.value.firstOrNull { it.type == type && it.name == "其他" }?.id
-            ?: categories.value.firstOrNull { it.type == type }?.id
+    /** 待确认确认弹窗的默认分类（该类型的"其他"，缺省取该类型第一个；规则与自动入账共用） */
+    fun guessCategoryId(type: TxType): Long? = CaptureDefaults.categoryId(categories.value, type)
 
     /** 按来源包名推测账户：微信→微信零钱、支付宝→支付宝、云闪付/其他→银行卡 */
     fun guessAccountId(sourcePackage: String): Long? =
-        guessAccountId(sourcePackage, accounts.value)
+        CaptureDefaults.accountId(accounts.value, sourcePackage)
 
     fun clearCaptureLog() {
         viewModelScope.launch(Dispatchers.IO) {
             captureDao.clearAll()
             AppLog.i("Ntf", "capture log cleared")
         }
-    }
-
-    private fun guessAccountId(sourcePackage: String, accounts: List<AccountEntity>): Long? {
-        val keyword = when (sourcePackage) {
-            NotificationRules.WECHAT -> "微信"
-            NotificationRules.ALIPAY -> "支付宝"
-            else -> "银行"
-        }
-        return accounts.firstOrNull { it.name.contains(keyword) }?.id
-            ?: accounts.firstOrNull()?.id
     }
 
     private companion object {
