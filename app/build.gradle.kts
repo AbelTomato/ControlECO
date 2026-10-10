@@ -6,16 +6,16 @@ plugins {
 }
 
 android {
-    namespace = "com.accbook.app"
+    namespace = "com.controlexo.app"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.accbook.app"
+        applicationId = "com.controlexo.app"
         minSdk = 26
         targetSdk = 35
         // 每次带修改的构建把第三位 +1；beta 阶段版本名带 -beta 后缀
-        versionCode = 5
-        versionName = "0.4.2-beta"
+        versionCode = 6
+        versionName = "0.4.3-beta"
     }
 
     buildTypes {

@@ -1,4 +1,6 @@
-# AccBook
+# 我ECO（英文名 ControlECO）
+
+> 包名 `com.controlexo.app`；工程内类名（AccBookApp/AccBookDatabase 等）与数据库文件名 `accbook.db` 沿用历史命名，不影响对外标识。
 
 安卓记账应用，目标是逐步实现"自动记账"：自动捕获微信支付、支付宝、银行动账短信等交易事件生成账单。
 
@@ -8,7 +10,7 @@
 - 阶段二：**通知监听自动捕获**——授予"通知使用权"后，微信收款、支付宝收款、云闪付动账等通知自动解析进入"待确认队列"，确认后入账
 - 阶段三：**无障碍页面采集 + 悬浮确认窗 + 退款关联**——支付宝支付页自动补全收款方/支付方式；悬浮卡与横幅通知双通道提醒（双向冲突处理）；无金额退款通知→手动关联原账单；安卓 13+ 侧载受限设置与分品牌支付保护引导。微信页面通道经实测窗口不可读已关停，微信走通知通道
 - 阶段四：**UI 美化**——设计 token 体系（暖白/暖墨/暖金语义色、tnum 金额字形）；新增首页预算 HUD（剩余可用/已花进度/建议日花三态）与快速记账页（金额优先+数字键盘）；导航重构为 首页/账单/统计/设置；账单页成熟化排版；统计页结论>趋势>分类细节（自绘图表）
-- 调试支持（debug 构建）：通知与页面快照全量 Logcat 日志（tag=AccBook）+ 应用内"捕获日志"页（可记录所有应用的通知，点击复制原文）+ 20 秒延迟弹窗/通知测试
+- 调试支持（debug 构建）：通知与页面快照全量 Logcat 日志（tag=ControlECO）+ 应用内"捕获日志"页（可记录所有应用的通知，点击复制原文）+ 20 秒延迟弹窗/通知测试
 - 数据全部保存在本机（Room 数据库），无网络权限
 
 ## 开发环境
@@ -42,9 +44,9 @@ ADB="D:/AndroidSDK/platform-tools/adb.exe"
 "$ADB" devices                 # 确认设备已连接（状态 device；显示 unauthorized 要回手机重新授权）
 "$ADB" install -r app/build/outputs/apk/debug/app-debug.apk   # 装机
 "$ADB" logcat -c               # 清空旧日志
-"$ADB" logcat -v time -s AccBook            # 实时日志：本应用全部（[Ntf] 通知 / [Page] 页面）
-"$ADB" logcat -v time -s AccBook | grep Page    # 只看页面通道（页面快照/规则判定/悬浮窗原因）
-"$ADB" logcat -v time -s AccBook > accbook.log  # 边看边存文件，方便把样本发给开发会话
+"$ADB" logcat -v time -s ControlECO          # 实时日志：本应用全部（[Ntf] 通知 / [Page] 页面）
+"$ADB" logcat -v time -s ControlECO | grep Page    # 只看页面通道（页面快照/规则判定/悬浮窗原因）
+"$ADB" logcat -v time -s ControlECO > controlexo.log  # 边看边存文件，方便把样本发给开发会话
 ```
 
 5. **采样流程**（页面规则调试）：`logcat -c` 清屏 → 手机上完整走一遍支付 → 终端里 `snapshot pkg=... texts=[...]` 就是页面文本快照，复制出来对照修改 `PageRules.kt`（流程见维护指南第五节）。

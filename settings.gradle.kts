@@ -20,5 +20,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "AccBook"
+rootProject.name = "ControlECO"
 include(":app")

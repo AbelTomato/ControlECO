@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">AccBook</string>
-    <string name="a11y_service_label">AccBook 支付页面采集</string>
+    <string name="app_name">我ECO</string>
+    <string name="a11y_service_label">我ECO 支付页面采集</string>
     <string name="a11y_service_description">在微信/支付宝的支付成功页与账单详情页读取页面文字，自动提取金额、收款方与支付方式用于记账。仅在本机处理，不联网上传。</string>
 </resources>
