@@ -16,6 +16,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.accbook.app.data.budget.Budget
+import kotlin.math.pow
 
 /**
  * 阶段四设计 token 体系。
@@ -184,28 +185,128 @@ fun categoryColor(palette: List<Color>, categoryName: String): Color {
 }
 
 /**
- * 一组分类名 → 一组**互不重复**的颜色（饼图/图例这类"同屏并列"的场景用）。
+ * 圆环配色：在"互不相同"之上再要求**彼此尽量远**（饼图/图例这种同屏并列的场景用）。
  *
- * 每个分类先按名字哈希取首选位，被占则线性探测下一个空位；分配顺序按名字排序，
- * 因此结果只取决于**名字集合**（与传入顺序、金额排序无关），换月换年也不会跳色。
- * 分类数超过调色板容量时才会出现重复（16 色对普通账本足够）。
+ * 两步：
+ * 1. 调色板先"圆环化"（[ringBoost]）：饱和度下限、明度压进一个亮带——圆环上是成片的纯色块，
+ *    偏灰或偏暗的两块挨在一起就分不清；
+ * 2. 按**最远点**贪心分配：第一个分类用它名字哈希的首选位（与别处取色同位），
+ *    之后每个分类都挑"与已分配颜色的最小距离最大"的那一个。
+ *    距离用 CIELAB 的 ΔE（[colorDistance]）——比 RGB 距离更贴近人眼对"像不像"的判断。
+ *
+ * 分配顺序按名字排序，结果只取决于**名字集合**（与传入顺序、金额排序无关），换月换年不跳色；
+ * 调色板够用时不会重复，超容量时退化成"哈希首选位 + 取空位"，至少稳定且有值。
  */
-fun categoryColors(palette: List<Color>, names: List<String>): Map<String, Color> {
+fun ringColors(palette: List<Color>, names: List<String>): Map<String, Color> {
     if (palette.isEmpty()) return emptyMap()
-    val used = BooleanArray(palette.size)
+    val ringPalette = palette.map { ringBoost(it) }
     val out = LinkedHashMap<String, Color>()
+    val taken = ArrayList<Int>()
     names.filter { it.isNotEmpty() }.distinct().sorted().forEach { name ->
-        val start = preferredSlot(palette.size, name)
-        // 注意：firstOrNull 返回的是"探测步数"，槽位还得再按起点绕回去
-        val step = (0 until palette.size).firstOrNull { !used[(start + it) % palette.size] } ?: 0
-        val slot = (start + step) % palette.size
-        used[slot] = true
-        out[name] = palette[slot]
+        val pref = preferredSlot(ringPalette.size, name)
+        val free = (0 until ringPalette.size).filter { it !in taken }
+        val slot = when {
+            free.isEmpty() -> pref // 分类比调色板还多：允许重复，但取色仍稳定
+            taken.isEmpty() -> if (pref in free) pref else free.first()
+            else -> {
+                // 先用分类自己的哈希取色（与徽标/图标同色），只有它离已分配的颜色太近才换；
+                // 换的时候挑"与已分配颜色的最小 ΔE 最大"的那个 = 最远点
+                val clash = pref in taken ||
+                    taken.minOf { colorDistance(ringPalette[pref], ringPalette[it]) } < RING_MIN_DELTA
+                if (!clash) {
+                    pref
+                } else {
+                    free.maxByOrNull { candidate ->
+                        taken.minOf { colorDistance(ringPalette[candidate], ringPalette[it]) }
+                    }!!
+                }
+            }
+        }
+        taken += slot
+        out[name] = ringPalette[slot]
     }
     return out
 }
 
-/** 名字哈希 → 调色板首选位（同一名字永远从同一位开始探测） */
+/** 圆环化：饱和度至少 [RING_MIN_SATURATION]，明度压进 [RING_MIN_VALUE]..[RING_MAX_VALUE] */
+internal fun ringBoost(color: Color): Color {
+    val hsv = rgbToHsv(color.red, color.green, color.blue)
+    val rgb = hsvToRgb(hsv[0], hsv[1].coerceAtLeast(RING_MIN_SATURATION), hsv[2].coerceIn(RING_MIN_VALUE, RING_MAX_VALUE))
+    return Color(rgb[0], rgb[1], rgb[2], color.alpha)
+}
+
+/** 圆环上两个分类颜色至少要拉开这么多 ΔE，否则改用"最远点"换色 */
+internal const val RING_MIN_DELTA = 26f
+
+internal const val RING_MIN_SATURATION = 0.70f
+internal const val RING_MIN_VALUE = 0.74f
+internal const val RING_MAX_VALUE = 0.96f
+
+/** 两个颜色的 CIELAB ΔE（CIE76）：越大越"不像"，> 30 基本一眼能分 */
+internal fun colorDistance(a: Color, b: Color): Float {
+    val la = toLab(a)
+    val lb = toLab(b)
+    val dl = la[0] - lb[0]
+    val da = la[1] - lb[1]
+    val db = la[2] - lb[2]
+    return kotlin.math.sqrt(dl * dl + da * da + db * db)
+}
+
+/** sRGB → CIELAB（D65 白点），纯 Kotlin 实现（不依赖 android.graphics，可单测） */
+private fun toLab(color: Color): FloatArray {
+    val r = linearize(color.red)
+    val g = linearize(color.green)
+    val b = linearize(color.blue)
+    val x = (0.4124f * r + 0.3576f * g + 0.1805f * b) / 0.95047f
+    val y = 0.2126f * r + 0.7152f * g + 0.0722f * b
+    val z = (0.0193f * r + 0.1192f * g + 0.9505f * b) / 1.08883f
+    val fx = labF(x)
+    val fy = labF(y)
+    val fz = labF(z)
+    return floatArrayOf(116f * fy - 16f, 500f * (fx - fy), 200f * (fy - fz))
+}
+
+private fun linearize(v: Float): Float =
+    if (v <= 0.04045f) v / 12.92f else ((v + 0.055f) / 1.055f).pow(2.4f)
+
+private fun labF(t: Float): Float =
+    if (t > 0.008856f) t.pow(1f / 3f) else 7.787f * t + 16f / 116f
+
+/** RGB（0..1）→ HSV（色相 0..360，饱和度/明度 0..1） */
+internal fun rgbToHsv(r: Float, g: Float, b: Float): FloatArray {
+    val max = maxOf(r, g, b)
+    val min = minOf(r, g, b)
+    val d = max - min
+    val rawHue = when {
+        d == 0f -> 0f
+        max == r -> 60f * (((g - b) / d) % 6f)
+        max == g -> 60f * (((b - r) / d) + 2f)
+        else -> 60f * (((r - g) / d) + 4f)
+    }
+    return floatArrayOf(if (rawHue < 0f) rawHue + 360f else rawHue, if (max == 0f) 0f else d / max, max)
+}
+
+/** HSV → RGB（0..1） */
+internal fun hsvToRgb(h: Float, s: Float, v: Float): FloatArray {
+    val c = v * s
+    val hp = (((h % 360f) + 360f) % 360f) / 60f
+    val x = c * (1f - kotlin.math.abs(hp % 2f - 1f))
+    val r: Float
+    val g: Float
+    val b: Float
+    when (hp.toInt()) {
+        0 -> { r = c; g = x; b = 0f }
+        1 -> { r = x; g = c; b = 0f }
+        2 -> { r = 0f; g = c; b = x }
+        3 -> { r = 0f; g = x; b = c }
+        4 -> { r = x; g = 0f; b = c }
+        else -> { r = c; g = 0f; b = x }
+    }
+    val m = v - c
+    return floatArrayOf(r + m, g + m, b + m)
+}
+
+/** 名字哈希 → 调色板首选位（同一名字永远从同一位开始） */
 private fun preferredSlot(size: Int, name: String): Int {
     if (size <= 0) return 0
     var h = 0

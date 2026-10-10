@@ -249,7 +249,8 @@ fun ExpenseBarChart(bars: List<BarPoint>, modifier: Modifier = Modifier) {
 }
 
 /**
- * 双环饼图：外环 = 分类预算占比（55% 透明，实机上调过：42% 时多分类会糊成一片），内环 = 实际支出占比（实色）。
+ * 双环饼图：外环 = 分类预算占比（叠在底轨上 68% 不透明，实机上调过：42% 会糊成一片、
+ * 55% 仍偏灰——预算环也要一眼分得清），内环 = 实际支出占比（实色）。
  * 中心不写字，圆环左右各一列数字，**跟着选中状态走**：
  * - 未选中：左列总花费、右列总预算；
  * - 选中分类：左列该分类花费、右列该分类预算，分类名出现在左上角（花费金额上方）。
@@ -369,7 +370,7 @@ fun CategoryDonut(
                             start += sweep
                         }
                     }
-                    ring(rOuter, strokeOuter, alpha = 0.55f, value = { it.budgetCents }, total = totalBudgetRing)
+                    ring(rOuter, strokeOuter, alpha = 0.68f, value = { it.budgetCents }, total = totalBudgetRing)
                     ring(rInner, strokeInner, alpha = 1f, value = { it.actualCents }, total = totalActualRing)
                 }
                 Spacer(Modifier.width(12.dp))

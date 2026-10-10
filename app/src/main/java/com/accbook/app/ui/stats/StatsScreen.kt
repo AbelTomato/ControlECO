@@ -40,7 +40,7 @@ import com.accbook.app.ui.common.PeriodSwitch
 import com.accbook.app.ui.common.periodBalanceLabel
 import com.accbook.app.ui.common.periodScopeLabel
 import com.accbook.app.ui.theme.accBook
-import com.accbook.app.ui.theme.categoryColors
+import com.accbook.app.ui.theme.ringColors
 import com.accbook.app.util.Money
 import java.time.LocalDate
 import java.time.YearMonth
@@ -107,10 +107,10 @@ fun StatsScreen(vm: LedgerViewModel, scrollToTopTick: Int = 0) {
         }
         ChartMath.mergeSlices(actual, budget)
     }
-    // 圆环选中态与配色：配色按"分类名集合"分配（同屏不重复），选中态点空白处取消
+    // 圆环选中态与配色：配色按"分类名集合"用最远点分配（同屏不重复且彼此尽量远），选中态点空白处取消
     var selectedSlice by remember(slices) { mutableStateOf<String?>(null) }
     val palette = MaterialTheme.accBook.categoryPalette
-    val sliceColors = remember(slices, palette) { categoryColors(palette, slices.map { it.name }) }
+    val sliceColors = remember(slices, palette) { ringColors(palette, slices.map { it.name }) }
     val listState = rememberLazyListState()
     // 再次点击底部「统计」标签：回到顶部
     LaunchedEffect(scrollToTopTick) {
