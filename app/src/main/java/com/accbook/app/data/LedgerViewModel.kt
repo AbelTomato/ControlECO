@@ -241,6 +241,35 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
         .observeCategorySums(homeRange.first, homeRange.second, TxType.EXPENSE, true)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
+    /**
+     * 首页"本日剩余"用：**今日净支出** = 今日支出 − 今日收入（退款收入也算收入；退款的那笔支出照旧计入，
+     * 两者相抵≈0，与月度"现金净流出"口径一致）。可为负 = 今天净收入。
+     *
+     * 范围跟着"今天"走（[refreshToday]），跨零点或从后台回来时刷新一次，
+     * 否则零点后还会一直算昨天的账。
+     */
+    private val todayRef = MutableStateFlow(LocalDate.now(zone))
+
+    /** 首页 ON_RESUME 时调用：跨天后把"今天"的统计范围换过来 */
+    fun refreshToday() {
+        val now = LocalDate.now(zone)
+        if (now != todayRef.value) {
+            todayRef.value = now
+            AppLog.i("home", "today=$now")
+        }
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val homeTodayNetSpent: StateFlow<Long?> = todayRef.flatMapLatest { day ->
+        val start = day.atStartOfDay(zone).toInstant().toEpochMilli()
+        val end = day.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+        txDao.observeTypeTotals(start, end, true).map { totals ->
+            val expense = totals.firstOrNull { it.type == TxType.EXPENSE }?.totalCents ?: 0L
+            val income = totals.firstOrNull { it.type == TxType.INCOME }?.totalCents ?: 0L
+            expense - income
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
     // ---------- 月份 ----------
 
     private val _month = MutableStateFlow(YearMonth.now(zone))

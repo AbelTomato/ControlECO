@@ -2,6 +2,7 @@ package com.accbook.app.data.budget
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
 
@@ -102,5 +103,44 @@ class BudgetTest {
         // 超支单独成词，但颜色仍落到 LOW（红）
         assertEquals("已超支", Budget.toneLabel(-0.01f))
         assertEquals(Budget.Tone.LOW, Budget.remainingTone(-0.01f))
+    }
+
+    // ---------- 本日剩余（建议日额 − 今日净支出） ----------
+
+    @Test
+    fun `本日剩余把今天的净支出整额扣掉`() {
+        // 预算 5000、已花 2116（其中今天花了 300），10 月 6 日 → 剩 26 天
+        val base = 2_884_00L / 26
+        val s = Budget.compute(5_000_00, 2_116_00, day, todaySpentCents = 300_00)!!
+        assertEquals(base, s.suggestedDailyCents)
+        assertEquals(300_00, s.todaySpentCents)
+        assertEquals(base - 300_00, s.todayLeftCents)
+    }
+
+    @Test
+    fun `今天没花钱时本日剩余就是建议日额`() {
+        val s = Budget.compute(5_000_00, 2_116_00, day)!!
+        assertEquals(s.suggestedDailyCents, s.todayLeftCents)
+    }
+
+    @Test
+    fun `今天净收入会让本日剩余变多`() {
+        // 今日净支出为负 = 今天净收入
+        val s = Budget.compute(5_000_00, 2_116_00, day, todaySpentCents = -1_000_00)!!
+        assertEquals(2_884_00L / 26 + 1_000_00, s.todayLeftCents)
+    }
+
+    @Test
+    fun `今天花超时本日剩余为负`() {
+        val s = Budget.compute(5_000_00, 2_116_00, day, todaySpentCents = 500_00)!!
+        assertEquals(2_884_00L / 26 - 500_00, s.todayLeftCents)
+        assertTrue(s.todayLeftCents < 0L)
+    }
+
+    @Test
+    fun `本月已超支时建议日额为 0_本日剩余为负的今日净支出`() {
+        val s = Budget.compute(1_000_00, 1_200_00, day, todaySpentCents = 50_00)!!
+        assertEquals(0L, s.suggestedDailyCents)
+        assertEquals(-50_00, s.todayLeftCents)
     }
 }

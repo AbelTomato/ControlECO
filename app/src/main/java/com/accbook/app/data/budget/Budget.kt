@@ -65,11 +65,24 @@ object Budget {
         val spentRatio: Float,
         /** 建议今日消费上限（剩余 ≤ 0 时为 0） */
         val suggestedDailyCents: Long,
+        /** 今日净支出 = 今日支出 − 今日收入（退款收入也算收入），正数 = 今天净花掉的钱 */
+        val todaySpentCents: Long,
+        /**
+         * **本日剩余** = 建议日额 − 今日净支出，可为负（今天已经花超了）。
+         * 只按"剩余 ÷ 天数"算的话，今天花掉的钱只摊掉 1/N，读数几乎不动（收入更是完全不参与），
+         * 所以把今天的净支出**整额**扣掉：花一笔就能立刻看到今天还剩多少可花。
+         */
+        val todayLeftCents: Long,
         val state: State,
     )
 
     /** 预算未设置（≤ 0）返回 null，首页降级为"未设预算"引导 */
-    fun compute(budgetCents: Long, spentCents: Long, today: LocalDate): Snapshot? {
+    fun compute(
+        budgetCents: Long,
+        spentCents: Long,
+        today: LocalDate,
+        todaySpentCents: Long = 0L,
+    ): Snapshot? {
         if (budgetCents <= 0) return null
         val daysLeft = (today.lengthOfMonth() - today.dayOfMonth + 1).coerceAtLeast(1)
         val remaining = budgetCents - spentCents
@@ -90,6 +103,8 @@ object Budget {
             daysLeft = daysLeft,
             spentRatio = ratio.toFloat(),
             suggestedDailyCents = suggested,
+            todaySpentCents = todaySpentCents,
+            todayLeftCents = suggested - todaySpentCents,
             state = state,
         )
     }

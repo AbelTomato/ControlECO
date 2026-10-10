@@ -121,6 +121,7 @@ internal data class CategoryRingData(
 fun HomeScreen(vm: LedgerViewModel, onOpenPending: () -> Unit) {
     val budgetCents by vm.monthlyBudgetCents.collectAsStateWithLifecycle()
     val spentCents by vm.homeNetSpent.collectAsStateWithLifecycle()
+    val todaySpentCents by vm.homeTodayNetSpent.collectAsStateWithLifecycle()
     val pendingCount by vm.pendingCount.collectAsStateWithLifecycle()
     val categoryBudgets by vm.categoryBudgets.collectAsStateWithLifecycle()
     val categorySums by vm.homeCategorySums.collectAsStateWithLifecycle()
@@ -129,23 +130,27 @@ fun HomeScreen(vm: LedgerViewModel, onOpenPending: () -> Unit) {
 
     // 数据未到位前整页不画任何东西（避免"先空/先默认，再跳成真实数据"的闪动）
     val spentReady = spentCents
+    val todaySpentReady = todaySpentCents
     val sumsReady = categorySums
     val depositReady = totalDepositCents
-    if (spentReady == null || sumsReady == null || depositReady == null) return
+    if (spentReady == null || todaySpentReady == null || sumsReady == null || depositReady == null) return
 
     var showBudgetDialog by remember { mutableStateOf(false) }
     var todayState by remember { mutableStateOf(LocalDate.now()) }
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) todayState = LocalDate.now()
+            if (event == Lifecycle.Event.ON_RESUME) {
+                todayState = LocalDate.now()
+                vm.refreshToday() // 跨零点后"今日净支出"要换成新的一天
+            }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
     val today = todayState
-    val snapshot = remember(budgetCents, spentReady, today) {
-        Budget.compute(budgetCents, spentReady, today)
+    val snapshot = remember(budgetCents, spentReady, today, todaySpentReady) {
+        Budget.compute(budgetCents, spentReady, today, todaySpentReady)
     }
 
     // budget > 0 时 compute 必返回非空
@@ -399,9 +404,10 @@ private fun ModeRemaining(s: Budget.Snapshot, today: LocalDate) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 AutoScaledText(
-                    text = Money.formatYuanCompact(s.suggestedDailyCents),
+                    text = Money.formatYuanCompact(s.todayLeftCents),
                     style = MaterialTheme.typography.displayMedium,
-                    color = ink,
+                    // 今天已经花超：转警示色，别让人以为还能继续花
+                    color = if (s.todayLeftCents < 0L) overColor else ink,
                     maxWidth = bottomMaxWidth,
                 )
             } else {
