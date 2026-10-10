@@ -124,8 +124,9 @@ class BudgetTest {
     }
 
     @Test
-    fun `今天净收入会让本日剩余变多`() {
-        // 今日净支出为负 = 今天净收入
+    fun `今天退款到账会让本日剩余变多`() {
+        // 今日净支出为负 = 今天"钱回来了"（退款）：预算口径里退款要正常算回来
+        // 注：工资等收入不参与本日剩余（VM 侧只取 支出 − 退款到账）
         val s = Budget.compute(5_000_00, 2_116_00, day, todaySpentCents = -1_000_00)!!
         assertEquals(2_884_00L / 26 + 1_000_00, s.todayLeftCents)
     }

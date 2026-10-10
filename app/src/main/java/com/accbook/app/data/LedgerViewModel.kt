@@ -242,8 +242,10 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     /**
-     * 首页"本日剩余"用：**今日净支出** = 今日支出 − 今日收入（退款收入也算收入；退款的那笔支出照旧计入，
-     * 两者相抵≈0，与月度"现金净流出"口径一致）。可为负 = 今天净收入。
+     * 首页"本日剩余"用：**今日净支出** = 今日支出 − **今日退款到账**。
+     *
+     * 预算看的是"花了多少"，所以**工资/红包这类收入不参与**（收入进来不会让今天的额度变多），
+     * 但退款要正常算回来（钱退回来了，等于当天没花）。与月度"现金净流出"同口径，只是不看收入侧。
      *
      * 范围跟着"今天"走（[refreshToday]），跨零点或从后台回来时刷新一次，
      * 否则零点后还会一直算昨天的账。
@@ -263,10 +265,11 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
     val homeTodayNetSpent: StateFlow<Long?> = todayRef.flatMapLatest { day ->
         val start = day.atStartOfDay(zone).toInstant().toEpochMilli()
         val end = day.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
-        txDao.observeTypeTotals(start, end, true).map { totals ->
-            val expense = totals.firstOrNull { it.type == TxType.EXPENSE }?.totalCents ?: 0L
-            val income = totals.firstOrNull { it.type == TxType.INCOME }?.totalCents ?: 0L
-            expense - income
+        combine(
+            txDao.observeTypeTotals(start, end, true),
+            txDao.observeRefundIncomeTotal(start, end),
+        ) { totals, refundIncome ->
+            (totals.firstOrNull { it.type == TxType.EXPENSE }?.totalCents ?: 0L) - refundIncome
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 

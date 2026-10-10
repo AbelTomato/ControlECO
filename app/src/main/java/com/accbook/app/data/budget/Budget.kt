@@ -65,7 +65,7 @@ object Budget {
         val spentRatio: Float,
         /** 建议今日消费上限（剩余 ≤ 0 时为 0） */
         val suggestedDailyCents: Long,
-        /** 今日净支出 = 今日支出 − 今日收入（退款收入也算收入），正数 = 今天净花掉的钱 */
+        /** 今日净支出 = 今日支出 − 今日退款到账（**不含工资等收入**：预算看的是花销），正数 = 今天净花掉的钱 */
         val todaySpentCents: Long,
         /**
          * **本日剩余** = 建议日额 − 今日净支出，可为负（今天已经花超了）。
