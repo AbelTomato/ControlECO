@@ -130,11 +130,17 @@ fun importCardImage(context: Context, uri: Uri): ImportedCardImage? = runCatchin
     val file = File(context.filesDir, "card_bg_${System.currentTimeMillis()}.jpg")
     FileOutputStream(file).use { out -> bmp.compress(Bitmap.CompressFormat.JPEG, 88, out) }
     bmp.recycle()
-    // 只保留最新一张，清掉旧文件
-    context.filesDir.listFiles { f -> f.name.startsWith("card_bg") && f.name != file.name }
-        ?.forEach { it.delete() }
+    // 旧图**先不删**：编辑器里点「取消」要把上一张原样恢复，只有真正「应用」时才清旧
+    // （清理时机见 LedgerViewModel.loadCardImage / deleteOtherCardImages）
     ImportedCardImage(file.absolutePath, color, luminance)
 }.getOrNull()
+
+/** 清理旧卡面图：只保留 [keepPath]（"应用"/"取消"收尾时调用；传 null = 全删） */
+fun deleteOtherCardImages(context: Context, keepPath: String?) {
+    val keep = keepPath?.let { File(it).name }
+    context.filesDir.listFiles { f -> f.name.startsWith("card_bg") && f.name != keep }
+        ?.forEach { it.delete() }
+}
 
 private fun sampleSizeFor(width: Int, height: Int): Int {
     var sample = 1

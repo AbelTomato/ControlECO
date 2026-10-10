@@ -4,21 +4,25 @@ import android.graphics.Bitmap
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.requiredHeight
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -30,6 +34,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -126,6 +133,8 @@ fun CardImageEditorDialog(
                     Modifier
                         .fillMaxWidth()
                         .weight(1f)
+                        // 图片按比例放大会画到画布外面：裁掉，别盖住上面的「取消 / 应用」和下面的滑条
+                        .clipToBounds()
                         .onSizeChanged { canvasSize = it }
                         .pointerInput(Unit) {
                             detectTransformGestures(panZoomLock = true) { _, pan, zoom, _ ->
@@ -214,13 +223,13 @@ fun CardImageEditorDialog(
                     corner(frameLeft + frameW, frameTop + frameH, -1f, -1f)
                 }
 
-                // ---- 底部：旋转滑条 + 提示（与全屏预览同一套深色观感，不用白面板）----
+                // ---- 底部：旋转滑条（与全屏预览同一套深色观感，不用白面板）----
                 Surface(
                     shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
                     color = backdrop.copy(alpha = 0.55f),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Column(Modifier.padding(horizontal = 20.dp, vertical = 14.dp).navigationBarsPadding()) {
+                    Column(Modifier.padding(horizontal = 20.dp, vertical = 10.dp).navigationBarsPadding()) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("旋转", style = MaterialTheme.typography.labelLarge, color = overlayInk)
                             Spacer(Modifier.width(10.dp))
@@ -234,29 +243,53 @@ fun CardImageEditorDialog(
                                 Text("复位", color = overlayInk)
                             }
                         }
-                        Slider(
+                        RotationSlider(
                             value = draft.rotation,
-                            onValueChange = { draft = draft.copy(rotation = it).normalized() },
-                            valueRange = 0f..360f,
-                            colors = SliderDefaults.colors(
-                                thumbColor = overlayInk,
-                                activeTrackColor = overlayInk,
-                                inactiveTrackColor = overlayInk.copy(alpha = 0.28f),
-                                activeTickColor = Color.Transparent,
-                                inactiveTickColor = Color.Transparent,
-                            ),
+                            onChange = { draft = draft.copy(rotation = it).normalized() },
+                            ink = overlayInk,
                         )
-                        Text(
-                            "单指拖动移动　双指捏合缩放　下方滑条旋转",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = overlayInk.copy(alpha = 0.62f),
-                        )
-                        Spacer(Modifier.height(4.dp))
                     }
                 }
             }
         }
     }
+}
+
+/**
+ * 旋转滑条：细轨道 + 小圆拇指（M3 默认拇指是 4×44 的竖长条，和图片预览的观感不搭）。
+ * 轨道自己画：整条淡色打底，已选段实色，两端圆角；按下时拇指略放大，给一点触感反馈。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RotationSlider(value: Float, onChange: (Float) -> Unit, ink: Color) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val thumbSize = if (pressed) 18.dp else 14.dp
+    Slider(
+        value = value,
+        onValueChange = onChange,
+        valueRange = 0f..360f,
+        interactionSource = interaction,
+        thumb = {
+            Box(
+                Modifier
+                    .size(thumbSize)
+                    .clip(CircleShape)
+                    .background(ink),
+            )
+        },
+        track = {
+            Canvas(Modifier.fillMaxWidth().requiredHeight(2.dp)) {
+                val h = size.height
+                drawRoundRect(ink.copy(alpha = 0.26f), size = Size(size.width, h), cornerRadius = CornerRadius(h / 2f))
+                drawRoundRect(
+                    color = ink,
+                    size = Size(size.width * (value / 360f).coerceIn(0f, 1f), h),
+                    cornerRadius = CornerRadius(h / 2f),
+                )
+            }
+        },
+    )
 }
 
 /** 参考框几何：与账单卡片同尺寸（宽 = 屏宽 − 32dp、高 = 152dp），在画布里居中 */
