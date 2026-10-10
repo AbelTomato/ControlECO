@@ -13,14 +13,18 @@ android {
         applicationId = "com.accbook.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.4.0"
+        // 每次带修改的构建把第三位 +1；beta 阶段版本名带 -beta 后缀
+        versionCode = 4
+        versionName = "0.4.1-beta"
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // beta 分发用 debug 密钥签名：与侧载的 debug 包同一签名，可以直接覆盖安装、
+            // 不清数据（换成正式密钥时要先卸载，用户账本会一起没，等正式发布再换）
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
     compileOptions {

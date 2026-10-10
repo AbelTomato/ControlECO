@@ -1,5 +1,7 @@
 package com.accbook.app.ui.profile
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -34,6 +36,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.accbook.app.BuildConfig
@@ -49,8 +52,12 @@ import com.accbook.app.ui.theme.toneColor
 import com.accbook.app.util.Money
 import java.time.LocalDate
 
+/** 开源仓库（个人页底部一行，点按用系统浏览器打开） */
+private const val GITHUB_REPO_PATH = "ArrogHie/MyGcoin"
+private const val GITHUB_REPO_URL = "https://github.com/$GITHUB_REPO_PATH"
+
 /**
- * 个人页：身份卡 + 本月预算（预算总结 + 两个入口）+ 设置入口。
+ * 个人页：身份卡 + 本月预算（预算总结 + 两个入口）+ 设置入口 + 开源仓库链接。
  * 除设置跳转外只保留预算这一件事，其余全部收进设置体系。
  */
 @Composable
@@ -59,6 +66,7 @@ fun ProfileScreen(
     onOpenSettings: () -> Unit,
     onOpenCategories: () -> Unit,
 ) {
+    val context = LocalContext.current
     val budget by vm.monthlyBudgetCents.collectAsStateWithLifecycle()
     val spent by vm.homeNetSpent.collectAsStateWithLifecycle()
     val currency by vm.currencySymbol.collectAsStateWithLifecycle()
@@ -69,6 +77,11 @@ fun ProfileScreen(
     val snapshot = remember(budget, spentReady, today) { Budget.compute(budget, spentReady, today) }
     var showBudgetDialog by remember { mutableStateOf(false) }
     var showCurrencyDialog by remember { mutableStateOf(false) }
+
+    // 开源仓库链接：用系统浏览器打开（没有浏览器时静默失败，不影响其它功能）
+    val openRepo: () -> Unit = {
+        runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(GITHUB_REPO_URL))) }
+    }
 
     Column(
         Modifier
@@ -151,6 +164,17 @@ fun ProfileScreen(
                     modifier = Modifier.size(20.dp),
                 )
             }
+        }
+
+        Spacer(Modifier.height(18.dp))
+
+        // ---- 开源仓库：点按在浏览器里打开 ----
+        PaneCard {
+            InfoRow(
+                title = "GitHub 仓库",
+                trailing = GITHUB_REPO_PATH,
+                onClick = openRepo,
+            )
         }
     }
 

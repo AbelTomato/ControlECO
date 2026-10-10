@@ -14,7 +14,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.accbook.app.BuildConfig
 import com.accbook.app.data.LedgerViewModel
 import com.accbook.app.ui.common.InfoRow
 import com.accbook.app.ui.common.PaneCard
@@ -65,14 +64,13 @@ fun SettingsDeveloperScreen(
                 title = "最近捕获",
                 trailing = if (lastCaptureAt == 0L) "尚未收到" else formatTimestamp(lastCaptureAt),
             )
-            if (BuildConfig.DEBUG) {
-                RowDivider()
-                SwitchRow(
-                    title = "记录所有应用的通知（调试）",
-                    checked = debugCaptureAll,
-                    onCheckedChange = { vm.setDebugCaptureAll(it) },
-                )
-            }
+            RowDivider()
+            // release 也保留（开发者功能整体保留）：开关与捕获路径都不依赖 BuildConfig.DEBUG
+            SwitchRow(
+                title = "记录所有应用的通知（调试）",
+                checked = debugCaptureAll,
+                onCheckedChange = { vm.setDebugCaptureAll(it) },
+            )
         }
     }
 }
