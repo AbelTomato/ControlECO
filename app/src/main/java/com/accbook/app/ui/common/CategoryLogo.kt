@@ -9,6 +9,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -52,7 +53,16 @@ fun CategoryLogo(categoryName: String, icon: String, size: Dp = 40.dp) {
                 GlyphIcon(glyph = glyph, tint = tint, size = size)
             }
         }
-        else -> CategoryGlyph(categoryName, size)
+        else -> {
+            // 默认：按分类名取形。若只设了颜色（`GLYPH::RRGGBB`），形状照旧、颜色用自定义的
+            val custom = customColor
+            if (custom == null) {
+                CategoryGlyph(categoryName, size)
+            } else {
+                val glyph = remember(categoryName) { glyphForName(categoryName) }
+                GlyphIcon(glyph = glyph, tint = Color(custom or 0xFF000000.toInt()), size = size)
+            }
+        }
     }
 }
 

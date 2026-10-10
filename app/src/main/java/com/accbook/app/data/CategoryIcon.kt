@@ -39,8 +39,16 @@ object CategoryIcon {
     /** 内置图形规格；[colorRgb] 为 null 时按分类名自动取色 */
     fun glyph(name: String, colorRgb: Int? = null): String {
         val base = GLYPH_PREFIX + name
-        return if (colorRgb == null) base else base + ":" + "%06X".format(colorRgb and 0xFFFFFF)
+        return if (colorRgb == null) base else base + ":" + hex(colorRgb)
     }
+
+    /**
+     * **只改颜色**：形状仍按分类名自动取（对应 `GLYPH::RRGGBB`，名字留空）。
+     * 分类没选过内置图形时也能自定义配色，不必先固定一个形状。
+     */
+    fun glyphColorOnly(colorRgb: Int): String = GLYPH_PREFIX + ":" + hex(colorRgb)
+
+    private fun hex(rgb: Int): String = "%06X".format(rgb and 0xFFFFFF)
 
     fun image(fileName: String) = IMAGE_PREFIX + fileName
 

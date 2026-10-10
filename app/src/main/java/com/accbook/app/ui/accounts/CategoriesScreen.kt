@@ -65,6 +65,7 @@ import com.accbook.app.ui.common.CategoryLogo
 import com.accbook.app.ui.common.Glyph
 import com.accbook.app.ui.common.GlyphIcon
 import com.accbook.app.ui.common.glyphByName
+import com.accbook.app.ui.common.glyphForName
 import com.accbook.app.ui.common.glyphTint
 import com.accbook.app.ui.theme.accBook
 import com.accbook.app.util.Money
@@ -323,6 +324,73 @@ private fun CategoryEditorDialog(
                     }
                 }
 
+                // ---- 图形颜色：emoji / 相册图片之外都能改（默认图形也能只换颜色）----
+                val glyphName = CategoryIcon.glyphOf(icon)
+                if (glyphName != null || icon.isBlank()) {
+                    val currentColor = CategoryIcon.glyphColorOf(icon)
+                    // 当前（或将要用的）形状：选中色块上叠它，让"选色"和"选形状"看得见关联
+                    val previewGlyph = glyphName?.let { glyphByName(it) } ?: glyphForName(name.ifBlank { "默认" })
+                    Text("图形颜色", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        // 默认：按分类名自动取色（等于清除自定义颜色）
+                        Box(
+                            Modifier
+                                .size(28.dp)
+                                .clip(RoundedCornerShape(9.dp))
+                                .background(MaterialTheme.colorScheme.surfaceContainer)
+                                .clickable {
+                                    // 只改过颜色的回到"全自动"；已固定形状的保留形状
+                                    onIconChange(if (glyphName == null) "" else CategoryIcon.glyph(glyphName))
+                                },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                "默认",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (currentColor == null) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                            )
+                        }
+                        palette.forEach { c ->
+                            val rgb = c.toArgb() and 0xFFFFFF
+                            val selected = currentColor == rgb
+                            Box(
+                                Modifier
+                                    .size(28.dp)
+                                    .clip(RoundedCornerShape(9.dp))
+                                    .background(if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer)
+                                    .clickable {
+                                        // 没固定形状时只存颜色（形状继续按分类名取），固定过形状则连形状一起存
+                                        onIconChange(
+                                            if (glyphName == null) {
+                                                CategoryIcon.glyphColorOnly(rgb)
+                                            } else {
+                                                CategoryIcon.glyph(glyphName, rgb)
+                                            },
+                                        )
+                                    },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Box(
+                                    Modifier
+                                        .size(if (selected) 20.dp else 18.dp)
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(c),
+                                )
+                                if (selected) {
+                                    GlyphIcon(glyph = previewGlyph, tint = MaterialTheme.colorScheme.onPrimaryContainer, size = 22.dp)
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // ---- emoji：快捷选择 + 任意输入 ----
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -374,6 +442,8 @@ private fun CategoryEditorDialog(
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     val currentGlyph = CategoryIcon.glyphOf(icon)
+                    // 自定义了颜色就整排按这个颜色预览：一眼看清"换成这个形状会是什么样"
+                    val customColor = CategoryIcon.glyphColorOf(icon)
                     Glyph.entries.forEach { g ->
                         val selected = currentGlyph == g.name
                         Box(
@@ -389,70 +459,17 @@ private fun CategoryEditorDialog(
                                 )
                                 .clickable {
                                     emojiText = ""
-                                    // 换图形时保留已选的颜色
-                                    onIconChange(CategoryIcon.glyph(g.name, CategoryIcon.glyphColorOf(icon)))
+                                    // 换图形时保留已选的颜色（没选颜色就按分类名自动取）
+                                    onIconChange(CategoryIcon.glyph(g.name, customColor))
                                 },
                             contentAlignment = Alignment.Center,
                         ) {
                             GlyphIcon(
                                 glyph = g,
-                                tint = glyphSwatchTint(g, name.ifBlank { "默认" }, currentGlyph, icon),
+                                tint = customColor?.let { Color(it or 0xFF000000.toInt()) }
+                                    ?: glyphTint(g, name.ifBlank { "默认" }),
                                 size = 32.dp,
                             )
-                        }
-                    }
-                }
-
-                // ---- 内置图形的颜色（默认=按分类名自动取色）----
-                val glyphName = CategoryIcon.glyphOf(icon)
-                if (glyphName != null) {
-                    val glyph = glyphByName(glyphName)
-                    val currentColor = CategoryIcon.glyphColorOf(icon)
-                    Text("图形颜色", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        // 默认：按分类名取色（等于清除自定义颜色）
-                        Box(
-                            Modifier
-                                .size(28.dp)
-                                .clip(RoundedCornerShape(9.dp))
-                                .background(MaterialTheme.colorScheme.surfaceContainer)
-                                .clickable { onIconChange(CategoryIcon.glyph(glyphName)) },
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                "默认",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (currentColor == null) {
-                                    MaterialTheme.colorScheme.primary
-                                } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                },
-                            )
-                        }
-                        palette.forEach { c ->
-                            val rgb = c.toArgb() and 0xFFFFFF
-                            val selected = currentColor == rgb
-                            Box(
-                                Modifier
-                                    .size(28.dp)
-                                    .clip(RoundedCornerShape(9.dp))
-                                    .background(if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer)
-                                    .clickable { onIconChange(CategoryIcon.glyph(glyphName, rgb)) },
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Box(
-                                    Modifier
-                                        .size(if (selected) 20.dp else 18.dp)
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .background(c),
-                                )
-                                if (glyph != null && selected) {
-                                    GlyphIcon(glyph = glyph, tint = MaterialTheme.colorScheme.onPrimaryContainer, size = 22.dp)
-                                }
-                            }
                         }
                     }
                 }
@@ -496,18 +513,11 @@ private fun CategoryEditorDialog(
     )
 }
 
-/** 图标选择网格里某格的用色：正在编辑的图形用已选颜色，其它格子按各自名字取色 */
-@Composable
-private fun glyphSwatchTint(glyph: Glyph, categoryName: String, currentGlyph: String?, icon: String): Color {
-    val custom = CategoryIcon.glyphColorOf(icon)
-    if (custom != null && currentGlyph == glyph.name) return Color(custom or 0xFF000000.toInt())
-    return glyphTint(glyph, categoryName)
-}
-
 /** 图标来源的说明文案 */
 private fun iconLabel(icon: String): String = when {
     CategoryIcon.emojiOf(icon) != null -> "emoji 图标"
     CategoryIcon.glyphOf(icon) != null -> "内置图形"
+    CategoryIcon.glyphColorOf(icon) != null -> "内置图形（自定颜色）"
     CategoryIcon.imageOf(icon) != null -> "相册图片"
     else -> "默认：按分类名自动取形"
 }

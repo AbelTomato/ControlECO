@@ -34,6 +34,24 @@ class CategoryIconSpecTest {
     }
 
     @Test
+    fun `只改颜色时图形名留空_形状仍按分类名自动取`() {
+        val spec = CategoryIcon.glyphColorOnly(0xEF4444)
+        assertEquals("GLYPH::EF4444", spec)
+        // 名字为空 = 没指定形状（渲染端回落到按分类名取形），颜色照常解析出来
+        assertNull(CategoryIcon.glyphOf(spec))
+        assertEquals(0xEF4444, CategoryIcon.glyphColorOf(spec))
+    }
+
+    @Test
+    fun `只改颜色后再选形状_颜色继续保留`() {
+        val colored = CategoryIcon.glyphColorOnly(0xEF4444)
+        val withShape = CategoryIcon.glyph("BURGER", CategoryIcon.glyphColorOf(colored))
+        assertEquals("GLYPH:BURGER:EF4444", withShape)
+        assertEquals("BURGER", CategoryIcon.glyphOf(withShape))
+        assertEquals(0xEF4444, CategoryIcon.glyphColorOf(withShape))
+    }
+
+    @Test
     fun `其它规格不受影响`() {
         assertNull(CategoryIcon.glyphOf("EMOJI:🍜"))
         assertNull(CategoryIcon.glyphColorOf("EMOJI:🍜"))
