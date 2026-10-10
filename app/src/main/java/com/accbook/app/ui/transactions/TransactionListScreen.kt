@@ -6,6 +6,7 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -17,21 +18,21 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListLayoutInfo
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -42,29 +43,33 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.accbook.app.data.CardTransform
+import com.accbook.app.data.PeriodMode
 import com.accbook.app.data.importCardImage
 import com.accbook.app.data.LedgerViewModel
 import com.accbook.app.data.db.RefundMark
@@ -82,9 +87,11 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.YearMonth
 import java.time.ZoneId
+import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
-import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -98,8 +105,13 @@ private enum class TxFilter(val label: String) {
     INCOME("收入"),
 }
 
-/** 折叠状态下默认展示的最近天数；超出部分用页脚「查看全部」展开 */
-private const val RECENT_DAYS = 3
+/** 分页：首屏先给这么多条，滑到底再追加一页（年账单几千条不会一次性排完） */
+private const val FIRST_PAGE_ROWS = 30
+private const val PAGE_ROWS = 30
+
+/** 滑动条拇指长度占比的上下限：太短不好抓，太长看着不像滑动条 */
+private const val MIN_THUMB_FRACTION = 0.12f
+private const val MAX_THUMB_FRACTION = 0.9f
 
 private val timeFormatter = DateTimeFormatter.ofPattern("HH:mm")
 
@@ -118,6 +130,51 @@ internal fun billRowText(counterparty: String, categoryName: String, time: Strin
     } else {
         BillRowText(title = categoryName, subLine1 = time, note = note)
     }
+}
+
+/**
+ * 分页取天（纯函数，`BillPagingTest` 覆盖）：从最近的一天开始往回取，累计到 [limit] 条为止；
+ * **整天推进**（不切开某一天），至少给一天。返回实际显示的天与条数。
+ */
+internal fun pageDays(
+    days: List<LocalDate>,
+    grouped: Map<LocalDate, List<TransactionRow>>,
+    limit: Int,
+): Pair<List<LocalDate>, Int> {
+    if (days.isEmpty()) return emptyList<LocalDate>() to 0
+    val out = ArrayList<LocalDate>(minOf(days.size, 16))
+    var rows = 0
+    for (d in days) {
+        out += d
+        rows += grouped[d]?.size ?: 0
+        if (rows >= limit) break
+    }
+    return out to rows
+}
+
+/** 要显示到 [day] 那天，至少得加载多少条（这天不在列表里时返回全部条数 = 全加载） */
+internal fun rowsUpToDay(
+    days: List<LocalDate>,
+    grouped: Map<LocalDate, List<TransactionRow>>,
+    day: LocalDate,
+): Int {
+    var acc = 0
+    for (d in days) {
+        acc += grouped[d]?.size ?: 0
+        if (d == day) return acc
+    }
+    return acc
+}
+
+/** 第 [index] 天的日期头在列表里的位置（每天 = 1 个日期头 + 当天的账单行） */
+internal fun headerIndexForDay(
+    days: List<LocalDate>,
+    grouped: Map<LocalDate, List<TransactionRow>>,
+    index: Int,
+): Int {
+    var acc = 0
+    for (i in 0 until index) acc += 1 + (grouped[days[i]]?.size ?: 0)
+    return acc
 }
 
 /**
@@ -155,17 +212,21 @@ fun TransactionListScreen(
     val income = totalsReady.firstOrNull { it.type == TxType.INCOME }?.totalCents ?: 0L
 
     var filter by remember { mutableStateOf(TxFilter.ALL) }
-    var showAllDays by remember { mutableStateOf(false) }
+    var loadedLimit by remember { mutableIntStateOf(FIRST_PAGE_ROWS) }  // 已排到多少条（滑到底自动加一页）
+    var jumpTarget by remember { mutableStateOf<LocalDate?>(null) }     // 点日期头 → 挑日期跳过去
+    var pendingJump by remember { mutableStateOf<LocalDate?>(null) }    // 选好日期，等这天排出来再滚
     var showPicker by remember { mutableStateOf(false) }
     var showImageDialog by remember { mutableStateOf(false) }
     var showImageEditor by remember { mutableStateOf(false) }
+    // 本次选图还没「应用」：取消时要把上一张卡面原样放回去（图片文件在应用前不会删）
+    var pendingImage by remember { mutableStateOf<String?>(null) }
+    var imageSnapshot by remember { mutableStateOf<CardImageSnapshot?>(null) }
     var selecting by remember { mutableStateOf(false) }
     var selected by remember { mutableStateOf(emptySet<Long>()) }
     var confirm by remember { mutableStateOf<DeleteConfirm?>(null) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val listState = rememberLazyListState()
-
     // 相册选图 → 持久化读取权限，重启后仍能显示
     // 系统照片选择器（相册 UI，不是文件管理）：选完立刻拷进应用内部存储
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
@@ -173,6 +234,9 @@ fun TransactionListScreen(
             scope.launch {
                 val saved = withContext(Dispatchers.IO) { importCardImage(context, uri) }
                 if (saved != null) {
+                    // 先把当前卡面记下来：编辑器里点「取消」要回到选图前，而不是把新图留在卡上
+                    imageSnapshot = CardImageSnapshot(cardImageUri, cardImageColor, cardImageLuminance, cardTransform)
+                    pendingImage = saved.path
                     vm.setCardImage(saved.path)
                     vm.setCardImageStats(saved.colorArgb, saved.luminance)
                     vm.setCardTransform(CardTransform.DEFAULT)
@@ -189,11 +253,17 @@ fun TransactionListScreen(
         if (scrollToTopTick > 0) listState.animateScrollToItem(0)
     }
 
-    // 切周期（月/年切换或换月换年）即退出多选、回到"最近几天"并从顶部看起
+    // 切周期（月/年切换或换月换年）即退出多选、回到第一页并从顶部看起
     LaunchedEffect(month, mode) {
         selecting = false
         selected = emptySet()
-        showAllDays = false
+        loadedLimit = FIRST_PAGE_ROWS
+        listState.scrollToItem(0)
+    }
+
+    // 换筛选：列表内容整体换了一批，同样回到第一页顶部
+    LaunchedEffect(filter) {
+        loadedLimit = FIRST_PAGE_ROWS
         listState.scrollToItem(0)
     }
 
@@ -245,9 +315,43 @@ fun TransactionListScreen(
         filtered.groupBy { Instant.ofEpochMilli(it.timestamp).atZone(ZoneId.systemDefault()).toLocalDate() }
     }
     val allDays = grouped.keys.toList()
-    val shownDays = if (showAllDays || selecting) allDays else allDays.take(RECENT_DAYS)
-    val shownCount = shownDays.sumOf { grouped[it]?.size ?: 0 }
-    val hiddenDays = allDays.size - shownDays.size
+    // 分页：先排一页，滑到底自动追加（整天推进，不把某一天切成两半）
+    val (shownDays, shownCount) = remember(allDays, grouped, loadedLimit) {
+        pageDays(allDays, grouped, loadedLimit)
+    }
+    val hasMoreDays = shownDays.size < allDays.size
+
+    // 滑到离底部 3 项以内就再排一页（替代原来底部的「查看全部账单」按钮）
+    val loadMore by rememberUpdatedState(hasMoreDays)
+    LaunchedEffect(listState, filtered) {
+        snapshotFlow {
+            val info = listState.layoutInfo
+            (info.visibleItemsInfo.lastOrNull()?.index ?: -1) to info.totalItemsCount
+        }
+            .distinctUntilChanged()
+            .collect { (lastVisible, totalItems) ->
+                if (loadMore && totalItems > 0 && lastVisible >= totalItems - 3) {
+                    loadedLimit += PAGE_ROWS
+                }
+            }
+    }
+
+    // 选完日期：先保证这天已经排出来，再滚到它的日期头
+    LaunchedEffect(pendingJump, shownDays) {
+        val target = pendingJump ?: return@LaunchedEffect
+        if (allDays.isEmpty()) return@LaunchedEffect
+        // 那天没有记录时退到"它之前最近的一天"：能看到这天该在的位置，而不是没反应
+        val day = allDays.firstOrNull { it <= target } ?: allDays.last()
+        val index = shownDays.indexOf(day)
+        if (index < 0) {
+            loadedLimit = maxOf(loadedLimit, rowsUpToDay(allDays, grouped, day))
+            return@LaunchedEffect
+        }
+        val headerIndex = headerIndexForDay(shownDays, grouped, index)
+        snapshotFlow { listState.layoutInfo.totalItemsCount }.first { it > headerIndex }
+        listState.scrollToItem(headerIndex)
+        pendingJump = null
+    }
 
     Column(Modifier.fillMaxSize()) {
         // ---- 悬浮结余卡（取代页眉与汇总行）----
@@ -324,7 +428,7 @@ fun TransactionListScreen(
             Text(
                 when {
                     rowsReady.isEmpty() -> "${periodScopeLabel(mode)}暂无记录"
-                    hiddenDays > 0 -> "最近 $RECENT_DAYS 天 $shownCount 笔"
+                    hasMoreDays -> "已显示 $shownCount / ${filtered.size} 笔"
                     else -> "${periodScopeLabel(mode)} $shownCount 笔"
                 },
                 style = MaterialTheme.typography.labelSmall,
@@ -389,10 +493,10 @@ fun TransactionListScreen(
                         contentPadding = PaddingValues(bottom = 96.dp, end = 8.dp),
                     ) {
                         shownDays.forEach { day ->
-                            stickyHeader(key = "d${day.toEpochDay()}") {
-                                DayHeader(day = day, dayRows = grouped[day].orEmpty())
-                            }
                             val dayRows = grouped[day].orEmpty()
+                            stickyHeader(key = "d${day.toEpochDay()}") {
+                                DayHeader(day = day, dayRows = dayRows, onClickDay = { jumpTarget = day })
+                            }
                             items(dayRows, key = { it.id }) { row ->
                                 BillRow(
                                     row = row,
@@ -413,20 +517,6 @@ fun TransactionListScreen(
                                     },
                                 )
                                 HorizontalDivider(color = ab.hairline, modifier = Modifier.padding(start = 64.dp))
-                            }
-                        }
-                        if (hiddenDays > 0) {
-                            item(key = "expandAll") {
-                                TextButton(
-                                    onClick = { showAllDays = true },
-                                    modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
-                                ) {
-                                    Text(
-                                        "查看${periodScopeLabel(mode)}全部账单（还有 $hiddenDays 天）",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
                             }
                         }
                     }
@@ -496,9 +586,45 @@ fun TransactionListScreen(
             initial = cardTransform,
             onApply = {
                 vm.setCardTransform(it)
+                // 真正落地了才收尾：清掉这回选图留下的其它图片文件
+                vm.pruneCardImages()
+                pendingImage = null
+                imageSnapshot = null
                 showImageEditor = false
             },
-            onDismiss = { showImageEditor = false },
+            onDismiss = {
+                // 「取消」= 这次选图整条作废：卡面回到选图前（含位移/缩放/旋转），新图删掉
+                val snapshot = imageSnapshot
+                if (pendingImage != null && snapshot != null) {
+                    vm.setCardImage(snapshot.path)
+                    if (snapshot.path != null && snapshot.colorArgb != null && snapshot.luminance != null) {
+                        vm.setCardImageStats(snapshot.colorArgb, snapshot.luminance)
+                    }
+                    vm.setCardTransform(snapshot.transform)
+                    vm.pruneCardImages()
+                }
+                pendingImage = null
+                imageSnapshot = null
+                showImageEditor = false
+            },
+        )
+    }
+
+    jumpTarget?.let { day ->
+        DayJumpDialog(
+            current = day,
+            onPick = { picked ->
+                // 挑到别的月/年：先把周期切过去（数据到位后由 pendingJump 负责滚过去）
+                when {
+                    mode == PeriodMode.MONTH && YearMonth.from(picked) != month ->
+                        vm.setMonth(YearMonth.from(picked))
+                    mode == PeriodMode.YEAR && picked.year != month.year ->
+                        vm.setMonth(YearMonth.of(picked.year, month.monthValue))
+                }
+                pendingJump = picked
+                jumpTarget = null
+            },
+            onDismiss = { jumpTarget = null },
         )
     }
 
@@ -530,106 +656,135 @@ fun TransactionListScreen(
  * 2. **高度按 index 缓存**：见过的是实测值，没见过的按已测平均补；没测到任何一项时
  *    干脆先不画拇指（硬猜平均高度会画出一根长度离谱的拇指，下一帧又跳回正常 = 闪动）。
  * 3. **拖动比例按下时定死**：拖动中列表在滚、比例若每帧重算，拇指就追不上手指。
+ *
+ * 卡顿排查（实机 gfxinfo 对比）：位置 / 长度原来是**每帧**把全部条目高度加一遍，
+ * 年账单上千条时就是每帧 O(n) 的装箱哈希查找；现在高度表 → 前缀和只在"测到新高度"时
+ * 重算一次（见 [buildScrollMetrics]），滚动帧全部落在 draw 阶段做 O(1) 查表——
+ * 滚列表不再触发这个组件的重组与重新布局。
  */
 @Composable
 private fun ListScrollbar(state: LazyListState, modifier: Modifier = Modifier) {
     val idleColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.28f)
     val activeColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.58f)
-    var trackHeightPx by remember { mutableIntStateOf(0) }
     var dragging by remember { mutableStateOf(false) }
+    val density = LocalDensity.current
+    val thumbWidthPx = with(density) { 6.dp.toPx() }
 
-    val info = state.layoutInfo
-    val total = info.totalItemsCount
-    val viewport = (info.viewportEndOffset - info.viewportStartOffset).coerceAtLeast(1)
-    val visible = info.visibleItemsInfo
-
-    // 实测高度缓存：按 index 记（组合期间只读，写入放到 SideEffect）。
-    // 键绑总条目数：换月/展开/筛选后条目集合变了，旧高度不能复用
-    val seen = remember(total) { HashMap<Int, Int>() }
-    // 首帧还没测到任何项时拇指不画；SideEffect 补上高度后靠版本号触发一次重组把拇指补出来
-    // （否则"静止在列表顶部"时永远等不到下一次重组，拇指干脆不见了）
-    var measuredVersion by remember(total) { mutableIntStateOf(0) }
-    SideEffect {
-        var changed = false
-        state.layoutInfo.visibleItemsInfo.forEach { item ->
-            if (seen[item.index] != item.size) {
-                seen[item.index] = item.size
-                changed = true
+    // 高度表 + 前缀和：只在"测到新条目高度"时更新一次（组合/绘制期间不写状态）
+    var metrics by remember(state) { mutableStateOf<ScrollMetrics?>(null) }
+    LaunchedEffect(state) {
+        var heights = HashMap<Int, Int>()
+        var knownTotal = -1
+        snapshotFlow { state.layoutInfo }.collect { info ->
+            if (info.totalItemsCount != knownTotal) {
+                // 换周期 / 换筛选 / 追加分页后条目集合变了，旧高度不能复用
+                heights = HashMap()
+                knownTotal = info.totalItemsCount
             }
+            var changed = false
+            info.visibleItemsInfo.forEach { item ->
+                if (heights[item.index] != item.size) {
+                    heights[item.index] = item.size
+                    changed = true
+                }
+            }
+            if (changed || metrics == null) metrics = buildScrollMetrics(heights, knownTotal)
         }
-        if (changed) measuredVersion++
-    }
-    val avg = remember(measuredVersion) {
-        if (seen.isEmpty()) 0f else seen.values.sum().toFloat() / seen.size
     }
 
-    /** 已测到的用实测高度，没测到的按已测平均补：跑几帧就逼近真值，拇指长度不会再变 */
-    fun approxHeight(index: Int): Float = (seen[index] ?: avg).toFloat()
-
-    fun sumHeights(before: Int): Float {
-        var acc = 0f
-        for (i in 0 until before) acc += approxHeight(i)
-        return acc
-    }
-
-    val measured = avg > 0f
-    val contentPx = (if (measured) sumHeights(total) else 0f).coerceAtLeast(viewport.toFloat())
-    val scrollablePx = (contentPx - viewport).coerceAtLeast(1f)
-    // 从最后一个可见项倒推滚动量：它上面所有项的高度和 − 它在视口内的偏移
-    val last = visible.lastOrNull()
-    val scrolledPx = if (measured && last != null) {
-        (sumHeights(last.index) - last.offset).coerceIn(0f, scrollablePx)
-    } else {
-        0f
-    }
-    val progress = (scrolledPx / scrollablePx).coerceIn(0f, 1f)
-    val thumbFraction = (viewport / contentPx).coerceIn(0.12f, 0.9f)
-    val travelPx = (trackHeightPx * (1f - thumbFraction)).coerceAtLeast(1f)
-    val thumbHeight = with(LocalDensity.current) { (trackHeightPx * thumbFraction).toDp() }
-    // 拖动 1px → 内容滚多少：按"内容可滚量 / 拇指可走距离"换算，保底 0.2 让轻微溢出也能拖动
-    val ratioNow = (scrollablePx / travelPx).coerceAtLeast(0.2f)
-    val latestRatio by rememberUpdatedState(ratioNow)
-    val canScroll = state.canScrollForward || state.canScrollBackward
-
-    // 测量用的 onSizeChanged 必须挂在始终存在的节点上（提前 return 会让轨道高度永远是 0）
     Box(
         modifier
-            .onSizeChanged { trackHeightPx = it.height }
-            .pointerInput(canScroll, total) {
-                if (canScroll) {
-                    var dragRatio = 1f
-                    detectVerticalDragGestures(
-                        onDragStart = {
-                            dragging = true
-                            // 按下时定死比例：整个手势都用它，拇指才会贴着手指走
-                            dragRatio = latestRatio
-                        },
-                        onDragEnd = { dragging = false },
-                        onDragCancel = { dragging = false },
-                    ) { change, dragAmount ->
+            .pointerInput(state) {
+                var dragRatio = 1f
+                var active = false
+                detectVerticalDragGestures(
+                    onDragStart = {
+                        active = metrics != null && (state.canScrollForward || state.canScrollBackward)
+                        dragging = active
+                        // 按下时定死比例：整个手势都用它，拇指才会贴着手指走
+                        val m = metrics
+                        if (active && m != null) {
+                            val ratio = scrollbarGeometry(state.layoutInfo, m, size.height.toFloat())
+                            dragRatio = (ratio.scrollablePx / ratio.travelPx).coerceAtLeast(0.2f)
+                        }
+                    },
+                    onDragEnd = { dragging = false },
+                    onDragCancel = { dragging = false },
+                ) { change, dragAmount ->
+                    if (active) {
                         change.consume()
                         state.dispatchRawDelta(dragAmount * dragRatio)
                     }
                 }
+            }
+            // 拇指的位移/长度都在 draw 阶段算：滚动帧只需要重画，不用重组
+            .drawBehind {
+                val m = metrics ?: return@drawBehind
+                val info = state.layoutInfo
+                val last = info.visibleItemsInfo.lastOrNull() ?: return@drawBehind
+                val geo = scrollbarGeometry(info, m, size.height)
+                if (geo.scrollablePx <= 0f) return@drawBehind
+                // 从最后一个可见项倒推滚动量（上面第 1 条）
+                val scrolled = (m.offsetOf(last.index) - last.offset).coerceIn(0f, geo.scrollablePx)
+                val thumbHeight = size.height * geo.thumbFraction
+                val top = (scrolled / geo.scrollablePx) * (size.height - thumbHeight)
+                drawRoundRect(
+                    color = if (dragging) activeColor else idleColor,
+                    topLeft = Offset((size.width - thumbWidthPx) / 2f, top),
+                    size = Size(thumbWidthPx, thumbHeight),
+                    cornerRadius = CornerRadius(thumbWidthPx / 2f),
+                )
             },
-        contentAlignment = Alignment.TopCenter,
-    ) {
-        if (canScroll && measured && trackHeightPx > 0) {
-            Box(
-                Modifier
-                    .offset { IntOffset(0, (progress * travelPx).roundToInt()) }
-                    .width(6.dp)
-                    .height(thumbHeight)
-                    .clip(CircleShape)
-                    .background(if (dragging) activeColor else idleColor),
-            )
-        }
-    }
+    )
 }
 
-/** 日期分组头：**统一样式**（浅蓝底、日期在前，今天/昨天/周几在后，不用描边框住）+ 当天结余（+ 绿 / − 红） */
+/** 滑动条几何：内容高 / 可滚量 / 拇指占比 / 拇指可走距离 */
+private class ScrollbarGeometry(
+    val scrollablePx: Float,
+    val thumbFraction: Float,
+    val travelPx: Float,
+)
+
+private fun scrollbarGeometry(info: LazyListLayoutInfo, m: ScrollMetrics, trackHeight: Float): ScrollbarGeometry {
+    val viewport = (info.viewportEndOffset - info.viewportStartOffset).coerceAtLeast(1)
+    val content = m.contentPx.coerceAtLeast(viewport.toFloat())
+    val fraction = (viewport / content).coerceIn(MIN_THUMB_FRACTION, MAX_THUMB_FRACTION)
+    return ScrollbarGeometry(
+        scrollablePx = content - viewport,
+        thumbFraction = fraction,
+        travelPx = ((trackHeight * (1f - fraction)).coerceAtLeast(1f)),
+    )
+}
+
+/**
+ * 高度表 → 前缀和（未测到的按"已测平均"补）+ 内容总高。
+ * 只在测到新高度时构建一次；滚动帧用 [ScrollMetrics.offsetOf] 做 O(1) 查表。
+ */
+private class ScrollMetrics(val prefix: LongArray, val contentPx: Float) {
+    fun offsetOf(index: Int): Float = prefix[index.coerceIn(0, prefix.lastIndex)].toFloat()
+}
+
+private fun buildScrollMetrics(heights: HashMap<Int, Int>, total: Int): ScrollMetrics {
+    var measuredSum = 0L
+    var measuredCount = 0
+    heights.forEach { (index, h) ->
+        if (index in 0 until total) {
+            measuredSum += h
+            measuredCount++
+        }
+    }
+    val avg = if (measuredCount == 0) 0f else measuredSum.toFloat() / measuredCount
+    val prefix = LongArray(total + 1)
+    for (i in 0 until total) {
+        prefix[i + 1] = prefix[i] + (heights[i] ?: avg.toInt()).toLong()
+    }
+    return ScrollMetrics(prefix, prefix[total].toFloat())
+}
+
+/** 日期分组头：**统一样式**（浅蓝底、日期在前，今天/昨天/周几在后，不用描边框住）+ 当天结余（+ 绿 / − 红）；
+ *  点日期胶囊可以挑日期直接跳过去看（见 [DayJumpDialog]） */
 @Composable
-private fun DayHeader(day: LocalDate, dayRows: List<TransactionRow>) {
+private fun DayHeader(day: LocalDate, dayRows: List<TransactionRow>, onClickDay: () -> Unit) {
     val ab = MaterialTheme.accBook
     val today = LocalDate.now()
     val relative = when (day) {
@@ -653,6 +808,7 @@ private fun DayHeader(day: LocalDate, dayRows: List<TransactionRow>) {
         Surface(
             shape = RoundedCornerShape(8.dp),
             color = MaterialTheme.colorScheme.primaryContainer,
+            modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onClickDay),
         ) {
             Text(
                 label,
@@ -668,6 +824,36 @@ private fun DayHeader(day: LocalDate, dayRows: List<TransactionRow>) {
         )
     }
 }
+
+/** 从日期头跳转：选一天（支持跨月/跨年），落到那天的账 */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DayJumpDialog(current: LocalDate, onPick: (LocalDate) -> Unit, onDismiss: () -> Unit) {
+    val state = rememberDatePickerState(
+        initialSelectedDateMillis = current.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli(),
+    )
+    DatePickerDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = {
+                state.selectedDateMillis?.let { ms ->
+                    onPick(Instant.ofEpochMilli(ms).atZone(ZoneOffset.UTC).toLocalDate())
+                }
+            }) { Text("跳转") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    ) {
+        DatePicker(state = state)
+    }
+}
+
+/** 选图前的卡面状态：编辑器点「取消」时按这份快照恢复 */
+private data class CardImageSnapshot(
+    val path: String?,
+    val colorArgb: Int?,
+    val luminance: Float?,
+    val transform: CardTransform,
+)
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
