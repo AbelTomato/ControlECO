@@ -61,6 +61,10 @@ import com.accbook.app.data.LedgerViewModel
 import com.accbook.app.data.db.CategoryEntity
 import com.accbook.app.data.db.TxType
 import com.accbook.app.ui.common.CategoryLogo
+import com.accbook.app.ui.common.ColorWheelDialog
+import com.accbook.app.ui.common.hueWheelBrush
+import com.accbook.app.ui.common.rgbOf
+import com.accbook.app.ui.common.solidBrush
 import com.accbook.app.ui.common.Glyph
 import com.accbook.app.ui.common.GlyphIcon
 import com.accbook.app.ui.common.glyphByName
@@ -232,6 +236,13 @@ private fun CategoryEditorDialog(
     }
     var emojiText by remember { mutableStateOf(CategoryIcon.emojiOf(icon) ?: "") }
     var error by remember { mutableStateOf<String?>(null) }
+    var showColorWheel by remember { mutableStateOf(false) }
+    // 图形颜色：图标不是 emoji / 相册图片时都有"颜色"可谈（默认图形也能只换颜色）
+    val glyphName = CategoryIcon.glyphOf(icon)
+    val isGlyphBased = CategoryIcon.emojiOf(icon) == null && CategoryIcon.imageOf(icon) == null
+    val currentColor = if (isGlyphBased) CategoryIcon.glyphColorOf(icon) else null
+    // 当前（或将要用的）形状：选中色块上叠它，让"选色"和"选形状"看得见关联
+    val previewGlyph = glyphName?.let { glyphByName(it) } ?: glyphForName(name.ifBlank { "默认" })
 
     val emojiInvalid = emojiText.isNotBlank() && !CategoryIcon.isEmojiInput(emojiText)
     val palette = MaterialTheme.accBook.categoryPalette
@@ -319,11 +330,6 @@ private fun CategoryEditorDialog(
                 }
 
                 // ---- 图形颜色：**常驻**（emoji / 相册图片也能一键切到"自定颜色的图形"）----
-                val glyphName = CategoryIcon.glyphOf(icon)
-                val isGlyphBased = CategoryIcon.emojiOf(icon) == null && CategoryIcon.imageOf(icon) == null
-                val currentColor = if (isGlyphBased) CategoryIcon.glyphColorOf(icon) else null
-                // 当前（或将要用的）形状：选中色块上叠它，让"选色"和"选形状"看得见关联
-                val previewGlyph = glyphName?.let { glyphByName(it) } ?: glyphForName(name.ifBlank { "默认" })
                 Text("图形颜色", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -382,6 +388,37 @@ private fun CategoryEditorDialog(
                             if (selected) {
                                 GlyphIcon(glyph = previewGlyph, tint = MaterialTheme.colorScheme.onPrimaryContainer, size = 22.dp)
                             }
+                        }
+                    }
+
+                    // 自定义：色环里挑任意颜色（色环里也能直接输十六进制 / RGB）
+                    val paletteRgb = palette.map { it.toArgb() and 0xFFFFFF }.toSet()
+                    val customSelected = currentColor != null && currentColor !in paletteRgb
+                    Box(
+                        Modifier
+                            .size(28.dp)
+                            .clip(RoundedCornerShape(9.dp))
+                            .background(if (customSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer)
+                            .clickable {
+                                emojiText = ""
+                                showColorWheel = true
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Box(
+                            Modifier
+                                .size(if (customSelected) 20.dp else 18.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(
+                                    if (customSelected) {
+                                        solidBrush(Color(currentColor!! or 0xFF000000.toInt()))
+                                    } else {
+                                        hueWheelBrush()
+                                    },
+                                ),
+                        )
+                        if (customSelected) {
+                            GlyphIcon(glyph = previewGlyph, tint = MaterialTheme.colorScheme.onPrimaryContainer, size = 22.dp)
                         }
                     }
                 }
@@ -480,6 +517,28 @@ private fun CategoryEditorDialog(
         },
         dismissButton = { TextButton(onClick = onClose) { Text("取消") } },
     )
+
+    if (showColorWheel) {
+        // 从当前颜色起步（没自定义过就从"这个分类的自动取色"起步），确定后连形状一起写入
+        val initialColor = currentColor?.let { Color(it or 0xFF000000.toInt()) }
+            ?: glyphTint(previewGlyph, name.ifBlank { "默认" })
+        ColorWheelDialog(
+            initial = initialColor,
+            onConfirm = { picked ->
+                val rgb = rgbOf(picked)
+                emojiText = ""
+                onIconChange(
+                    if (glyphName == null) {
+                        CategoryIcon.glyphColorOnly(rgb)
+                    } else {
+                        CategoryIcon.glyph(glyphName, rgb)
+                    },
+                )
+                showColorWheel = false
+            },
+            onDismiss = { showColorWheel = false },
+        )
+    }
 }
 
 /** 图标来源的说明文案 */
