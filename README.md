@@ -1,6 +1,6 @@
 # 我ECO（英文名 ControlECO）
 
-> 包名 `com.controlexo.app`；工程内类名（AccBookApp/AccBookDatabase 等）与数据库文件名 `accbook.db` 沿用历史命名，不影响对外标识。
+> 包名 `com.controleco.app`；工程内类名（AccBookApp/AccBookDatabase 等）与数据库文件名 `accbook.db` 沿用历史命名，不影响对外标识。
 
 安卓记账应用，目标是逐步实现"自动记账"：自动捕获微信支付、支付宝、银行动账短信等交易事件生成账单。
 
@@ -46,7 +46,7 @@ ADB="D:/AndroidSDK/platform-tools/adb.exe"
 "$ADB" logcat -c               # 清空旧日志
 "$ADB" logcat -v time -s ControlECO          # 实时日志：本应用全部（[Ntf] 通知 / [Page] 页面）
 "$ADB" logcat -v time -s ControlECO | grep Page    # 只看页面通道（页面快照/规则判定/悬浮窗原因）
-"$ADB" logcat -v time -s ControlECO > controlexo.log  # 边看边存文件，方便把样本发给开发会话
+"$ADB" logcat -v time -s ControlECO > controleco.log  # 边看边存文件，方便把样本发给开发会话
 ```
 
 5. **采样流程**（页面规则调试）：`logcat -c` 清屏 → 手机上完整走一遍支付 → 终端里 `snapshot pkg=... texts=[...]` 就是页面文本快照，复制出来对照修改 `PageRules.kt`（流程见维护指南第五节）。

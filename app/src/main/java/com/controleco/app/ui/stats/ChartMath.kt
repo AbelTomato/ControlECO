@@ -1,0 +1,160 @@
+package com.controleco.app.ui.stats
+
+import com.controleco.app.data.db.TransactionRow
+import com.controleco.app.data.db.TxType
+import com.controleco.app.util.Money
+import java.math.BigDecimal
+import java.math.RoundingMode
+import java.time.Instant
+import java.time.YearMonth
+import java.time.ZoneId
+import kotlin.math.floor
+import kotlin.math.log10
+import kotlin.math.pow
+
+/** 柱状图一根柱子的数据（纯数据，Canvas 绘制与单测共用） */
+data class BarPoint(
+    /** 金额（分），零支出柱为 0 */
+    val cents: Long,
+    /** 该柱内的支出笔数 */
+    val count: Int,
+    /** x 轴刻度数字（null = 这一根不标数字） */
+    val axisLabel: String?,
+    /** 点按 / 滑动时的读数：日期　金额　笔数（用空白间隔，不用「·」） */
+    val tip: String,
+)
+
+/** 分类切片：实际支出 + 该分类的预算（年视角时预算按 12 个月合计） */
+data class CategorySlice(
+    val name: String,
+    val actualCents: Long,
+    val budgetCents: Long,
+)
+
+/**
+ * 统计图表的纯计算：柱子聚合、坐标轴取整与刻度文字、分类切片合并。
+ * 不依赖 Compose，全部可单测（`ChartMathTest`）。
+ */
+object ChartMath {
+
+    /** 月视角：每日一根柱（含零支出日，保持横轴时间连续） */
+    fun monthBars(
+        rows: List<TransactionRow>,
+        month: YearMonth,
+        zone: ZoneId = ZoneId.systemDefault(),
+    ): List<BarPoint> {
+        val days = month.lengthOfMonth()
+        val cents = LongArray(days)
+        val counts = IntArray(days)
+        rows.filter { it.type == TxType.EXPENSE }.forEach { r ->
+            val d = Instant.ofEpochMilli(r.timestamp).atZone(zone).toLocalDate()
+            if (d.year == month.year && d.month == month.month) {
+                val i = d.dayOfMonth - 1
+                cents[i] += r.amountCents
+                counts[i]++
+            }
+        }
+        return (1..days).map { day ->
+            val c = cents[day - 1]
+            val n = counts[day - 1]
+            BarPoint(
+                cents = c,
+                count = n,
+                // 每 5 天标一个数字；月末补一格，但离上一个刻度太近（如 31 距 30）就跳过，避免数字挤在一起
+                axisLabel = if (day % 5 == 0 || (day == days && day % 5 >= 3)) "$day" else null,
+                tip = if (c > 0) {
+                    "${month.monthValue}月${day}日  ${Money.formatYuanGrouped(c)}  $n 笔"
+                } else {
+                    "${month.monthValue}月${day}日  无支出"
+                },
+            )
+        }
+    }
+
+    /** 年视角：每月一根柱，横轴标 1–12 月 */
+    fun yearBars(
+        rows: List<TransactionRow>,
+        month: YearMonth,
+        zone: ZoneId = ZoneId.systemDefault(),
+    ): List<BarPoint> {
+        val cents = LongArray(12)
+        val counts = IntArray(12)
+        rows.filter { it.type == TxType.EXPENSE }.forEach { r ->
+            val d = Instant.ofEpochMilli(r.timestamp).atZone(zone).toLocalDate()
+            if (d.year == month.year) {
+                val i = d.monthValue - 1
+                cents[i] += r.amountCents
+                counts[i]++
+            }
+        }
+        return (1..12).map { m ->
+            val c = cents[m - 1]
+            val n = counts[m - 1]
+            BarPoint(
+                cents = c,
+                count = n,
+                axisLabel = "$m",
+                tip = if (c > 0) "${m}月  ${Money.formatYuanGrouped(c)}  $n 笔" else "${m}月  无支出",
+            )
+        }
+    }
+
+    /**
+     * 纵轴上限取整到 1 / 2 / 2.5 / 5 × 10^n（输入 ≤ 0 时回落到 1，保证仍有刻度）。
+     */
+    fun niceCeil(value: Float): Float {
+        if (value <= 0f || !value.isFinite()) return 1f
+        val exp = floor(log10(value.toDouble())).toInt()
+        val base = 10.0.pow(exp).toFloat()
+        val m = value / base
+        val mult = when {
+            m <= 1f -> 1f
+            m <= 2f -> 2f
+            m <= 2.5f -> 2.5f
+            m <= 5f -> 5f
+            else -> 10f
+        }
+        return mult * base
+    }
+
+    /** 纵轴刻度文字：简单数字，无货币符号（0 / 25 / 1,250 / 12.5K / 1.5M） */
+    fun axisAmount(yuan: Float): String = when {
+        yuan <= 0f -> "0"
+        yuan >= 1_000_000f -> trim1(yuan / 1_000_000f) + "M"
+        yuan >= 10_000f -> trim1(yuan / 1_000f) + "K"
+        else -> java.text.DecimalFormat("#,##0.#").format(yuan.toDouble())
+    }
+
+    private fun trim1(v: Float): String = BigDecimal.valueOf(v.toDouble())
+        .setScale(1, RoundingMode.HALF_UP)
+        .stripTrailingZeros()
+        .toPlainString()
+
+    /**
+     * 合并「实际支出」与「分类预算」为图例切片：并集去重、按实际支出降序，
+     * 没有实际支出但设了预算的分类排在后面（点名"预算没用上"）。
+     */
+    fun mergeSlices(
+        actual: List<Pair<String, Long>>,
+        budgets: List<Pair<String, Long>>,
+    ): List<CategorySlice> {
+        val byName = LinkedHashMap<String, CategorySlice>()
+        actual.forEach { (name, cents) ->
+            if (name.isNotBlank()) {
+                byName[name] = CategorySlice(name, cents, budgets.firstOrNull { it.first == name }?.second ?: 0L)
+            }
+        }
+        budgets.forEach { (name, cents) ->
+            if (name.isNotBlank() && cents > 0 && byName[name] == null) {
+                byName[name] = CategorySlice(name, 0L, cents)
+            }
+        }
+        return byName.values
+            .filter { it.actualCents > 0 || it.budgetCents > 0 }
+            .sortedWith(compareByDescending<CategorySlice> { it.actualCents }.thenByDescending { it.budgetCents })
+    }
+
+    /** 占比（0..100）；分母 ≤ 0 时返回 0 */
+    fun sharePercent(part: Long, total: Long): Float =
+        if (total <= 0L) 0f else part * 100f / total
+}

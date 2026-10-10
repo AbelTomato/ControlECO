@@ -6,16 +6,16 @@ plugins {
 }
 
 android {
-    namespace = "com.controlexo.app"
+    namespace = "com.controleco.app"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.controlexo.app"
+        applicationId = "com.controleco.app"
         minSdk = 26
         targetSdk = 35
         // 每次带修改的构建把第三位 +1；beta 阶段版本名带 -beta 后缀
-        versionCode = 7
-        versionName = "0.4.4-beta"
+        versionCode = 8
+        versionName = "0.4.5-beta"
     }
 
     buildTypes {
