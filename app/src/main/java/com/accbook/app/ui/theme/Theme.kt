@@ -84,26 +84,18 @@ internal fun lightAccBookColors() = AccBookColors(
         pillSelected = Color(0xFFFFFFFF),
         pillSelectedContent = Color(0xFF16202B),
     ),
-    // 分类调色板：高饱和 + 16 色（暖→绿→青→蓝→紫→玫红），色相之外再拉开明度，
-    // 让同一张饼图里的分类尽量不撞色也不近似；配色表在 Theme 内集中维护。
-    // 明度整体取"中亮"档（比首版提亮一档）：圆环上是成片的纯色块，偏暗会显脏。
+    // 分类调色板：8 色（红→橙→黄→绿→青绿→蓝→紫→玫红），色相大致等间隔、明度都在"中亮"档。
+    // 16 色时相邻两色的 ΔE 最小只有 ~23（肉眼要对比才分得清）；收到 8 色后最小 ΔE ≈ 35，
+    // 差别一眼可见——想要更细的区分就用「自定义」色环自己挑（见 ColorWheelDialog）。
     categoryPalette = listOf(
         Color(0xFFEF4444), // 红
         Color(0xFFF97316), // 橙
-        Color(0xFFEAB308), // 琥珀
-        Color(0xFFCA8A04), // 棕黄
-        Color(0xFF84CC16), // 黄绿
+        Color(0xFFEAB308), // 黄
         Color(0xFF22C55E), // 绿
-        Color(0xFF16A34A), // 深绿
-        Color(0xFF14B8A6), // 深青绿
-        Color(0xFF06B6D4), // 青
+        Color(0xFF14B8A6), // 青绿
         Color(0xFF3B82F6), // 蓝
-        Color(0xFF2563EB), // 深蓝
-        Color(0xFF6366F1), // 靛蓝
-        Color(0xFF8B5CF6), // 紫罗兰
-        Color(0xFFD946EF), // 紫
+        Color(0xFF8B5CF6), // 紫
         Color(0xFFEC4899), // 玫红
-        Color(0xFFF43F5E), // 深玫红
     ),
 )
 
@@ -140,20 +132,12 @@ internal fun darkAccBookColors() = AccBookColors(
     categoryPalette = listOf(
         Color(0xFFF87171), // 红
         Color(0xFFFB923C), // 橙
-        Color(0xFFFCD34D), // 琥珀
-        Color(0xFFCA8A04), // 棕黄
-        Color(0xFFA3E635), // 黄绿
+        Color(0xFFFCD34D), // 黄
         Color(0xFF4ADE80), // 绿
-        Color(0xFF22C55E), // 深绿
-        Color(0xFF2DD4BF), // 深青绿
-        Color(0xFF22D3EE), // 青
+        Color(0xFF2DD4BF), // 青绿
         Color(0xFF60A5FA), // 蓝
-        Color(0xFF3B82F6), // 深蓝
-        Color(0xFF818CF8), // 靛蓝
-        Color(0xFFA78BFA), // 紫罗兰
-        Color(0xFFE879F9), // 紫
+        Color(0xFFA78BFA), // 紫
         Color(0xFFF472B6), // 玫红
-        Color(0xFFFB7185), // 深玫红
     ),
 )
 
@@ -185,62 +169,32 @@ fun categoryColor(palette: List<Color>, categoryName: String): Color {
 }
 
 /**
- * 圆环配色：在"互不相同"之上再要求**彼此尽量远**（饼图/图例这种同屏并列的场景用）。
+ * 圆环/图例配色：先摆"颜色已经定好"的分类（[fixed]，一般是**与图标同色**——见 `sliceColorsOf`），
+ * 再给 [names] 里的分类（图标是 emoji / 相册图片，本来就没有"颜色"）从调色板里挑一个
+ * **离所有已用颜色最远**的（最远点贪心，距离用 CIELAB ΔE）。
  *
- * 两步：
- * 1. 调色板先"圆环化"（[ringBoost]）：饱和度下限、明度压进一个亮带——圆环上是成片的纯色块，
- *    偏灰或偏暗的两块挨在一起就分不清；
- * 2. 按**最远点**贪心分配：第一个分类用它名字哈希的首选位（与别处取色同位），
- *    之后每个分类都挑"与已分配颜色的最小距离最大"的那一个。
- *    距离用 CIELAB 的 ΔE（[colorDistance]）——比 RGB 距离更贴近人眼对"像不像"的判断。
- *
- * 分配顺序按名字排序，结果只取决于**名字集合**（与传入顺序、金额排序无关），换月换年不跳色；
- * 调色板够用时不会重复，超容量时退化成"哈希首选位 + 取空位"，至少稳定且有值。
+ * 分配顺序按名字排序，结果只取决于名字集合与 [fixed]，换月换年不跳色；
+ * 挑不到够远的颜色时（分类比调色板还多）也保证每个名字都有值。
  */
-fun ringColors(palette: List<Color>, names: List<String>): Map<String, Color> {
-    if (palette.isEmpty()) return emptyMap()
-    val ringPalette = palette.map { ringBoost(it) }
-    val out = LinkedHashMap<String, Color>()
-    val taken = ArrayList<Int>()
+fun ringColors(palette: List<Color>, fixed: Map<String, Color>, names: List<String>): Map<String, Color> {
+    val out = LinkedHashMap<String, Color>(fixed)
+    if (names.isEmpty()) return out
+    if (palette.isEmpty()) return out
+    val used = ArrayList<Color>(fixed.values)
     names.filter { it.isNotEmpty() }.distinct().sorted().forEach { name ->
-        val pref = preferredSlot(ringPalette.size, name)
-        val free = (0 until ringPalette.size).filter { it !in taken }
-        val slot = when {
-            free.isEmpty() -> pref // 分类比调色板还多：允许重复，但取色仍稳定
-            taken.isEmpty() -> if (pref in free) pref else free.first()
-            else -> {
-                // 先用分类自己的哈希取色（与徽标/图标同色），只有它离已分配的颜色太近才换；
-                // 换的时候挑"与已分配颜色的最小 ΔE 最大"的那个 = 最远点
-                val clash = pref in taken ||
-                    taken.minOf { colorDistance(ringPalette[pref], ringPalette[it]) } < RING_MIN_DELTA
-                if (!clash) {
-                    pref
-                } else {
-                    free.maxByOrNull { candidate ->
-                        taken.minOf { colorDistance(ringPalette[candidate], ringPalette[it]) }
-                    }!!
-                }
-            }
-        }
-        taken += slot
-        out[name] = ringPalette[slot]
+        if (out.containsKey(name)) return@forEach
+        val slot = palette.indices.maxByOrNull { candidate ->
+            // 与"已经用掉的颜色"的最小 ΔE 最大 = 最远点
+            if (used.isEmpty()) 0f else used.minOf { colorDistance(palette[candidate], it) }
+        } ?: 0
+        out[name] = palette[slot]
+        used += palette[slot]
     }
     return out
 }
 
-/** 圆环化：饱和度至少 [RING_MIN_SATURATION]，明度压进 [RING_MIN_VALUE]..[RING_MAX_VALUE] */
-internal fun ringBoost(color: Color): Color {
-    val hsv = rgbToHsv(color.red, color.green, color.blue)
-    val rgb = hsvToRgb(hsv[0], hsv[1].coerceAtLeast(RING_MIN_SATURATION), hsv[2].coerceIn(RING_MIN_VALUE, RING_MAX_VALUE))
-    return Color(rgb[0], rgb[1], rgb[2], color.alpha)
-}
-
-/** 圆环上两个分类颜色至少要拉开这么多 ΔE，否则改用"最远点"换色 */
+/** 圆环上两个分类颜色至少要拉开这么多 ΔE，自动分配时才算是"够远" */
 internal const val RING_MIN_DELTA = 26f
-
-internal const val RING_MIN_SATURATION = 0.70f
-internal const val RING_MIN_VALUE = 0.74f
-internal const val RING_MAX_VALUE = 0.96f
 
 /** 两个颜色的 CIELAB ΔE（CIE76）：越大越"不像"，> 30 基本一眼能分 */
 internal fun colorDistance(a: Color, b: Color): Float {

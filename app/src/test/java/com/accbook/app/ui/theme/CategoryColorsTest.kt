@@ -2,14 +2,14 @@ package com.accbook.app.ui.theme
 
 import androidx.compose.ui.graphics.Color
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.abs
 
 /**
- * 圆环配色：**同屏不重复** + **彼此尽量远**（最远点贪心）+ 与传入顺序无关 + 超容量不崩。
- * 距离用 CIELAB ΔE；圆环化会把饱和度抬到下限、明度压进亮带（纯色块互相好分辨）。
+ * 圆环/图例配色：**已经定好颜色的分类原样使用**（与图标同色），
+ * 只有"图标没有颜色"的分类（emoji / 相册图片）才由 [ringColors] 从调色板里
+ * 挑"离已用色最远"的一个；与传入顺序无关，超容量不崩。
  */
 class CategoryColorsTest {
 
@@ -19,108 +19,84 @@ class CategoryColorsTest {
     private val eightNames = listOf("餐饮", "交通", "购物", "日用", "娱乐", "医疗", "居住", "其他")
 
     @Test
-    fun `内置调色板 16 色明暗两套都不重复`() {
+    fun `内置调色板 8 色明暗两套都不重复`() {
         listOf(lightAccBookColors(), darkAccBookColors()).forEach { colors ->
             val p = colors.categoryPalette
-            assertEquals(16, p.size)
-            assertEquals("调色板内不应有重复颜色", 16, p.toSet().size)
+            assertEquals(8, p.size)
+            assertEquals("调色板内不应有重复颜色", 8, p.toSet().size)
+        }
+    }
+
+    @Test
+    fun `调色板任意两色的 ΔE 都够大`() {
+        var min = Float.MAX_VALUE
+        for (i in palette.indices) {
+            for (j in i + 1 until palette.size) min = minOf(min, colorDistance(palette[i], palette[j]))
+        }
+        // 8 色版把最小 ΔE 从 16 色时的 ~23 拉到 30 以上：一眼能分
+        assertTrue("调色板最小色差过小：$min", min >= 30f)
+    }
+
+    @Test
+    fun `已定好颜色的分类原样使用_不打乱`() {
+        val fixed = mapOf("餐饮" to Color(0xFF123456), "交通" to Color(0xFF00FF00))
+        val colors = ringColors(palette, fixed, emptyList())
+        assertEquals(Color(0xFF123456), colors["餐饮"])
+        assertEquals(Color(0xFF00FF00), colors["交通"])
+    }
+
+    @Test
+    fun `没有颜色的分类分到离已用色最远的一个`() {
+        val fixed = mapOf("餐饮" to Color(0xFFEF4444), "交通" to Color(0xFF3B82F6))
+        val colors = ringColors(palette, fixed, listOf("外卖", "网购"))
+        assertEquals(4, colors.size)
+        colors.filterKeys { it == "外卖" || it == "网购" }.values.forEach { c ->
+            val nearest = fixed.values.minOf { colorDistance(c, it) }
+            assertTrue("自动分配的颜色离已用色太近：$nearest", nearest >= RING_MIN_DELTA)
         }
     }
 
     @Test
     fun `同屏分类取色互不重复`() {
-        val names = eightNames + listOf("通讯", "学习", "旅行", "人情", "宠物", "运动", "数码", "美妆")
-        val colors = ringColors(palette, names)
-        assertEquals(names.size, colors.size)
-        assertEquals("同屏取色不应重复", names.size, colors.values.toSet().size)
+        val colors = ringColors(palette, emptyMap(), eightNames)
+        assertEquals(eightNames.size, colors.size)
+        assertEquals("同屏取色不应重复", eightNames.size, colors.values.toSet().size)
     }
 
     @Test
     fun `取色与传入顺序无关`() {
-        val a = ringColors(palette, eightNames)
-        val b = ringColors(palette, eightNames.reversed())
+        val a = ringColors(palette, emptyMap(), eightNames)
+        val b = ringColors(palette, emptyMap(), eightNames.reversed())
         eightNames.forEach { assertEquals(a[it], b[it]) }
     }
 
     @Test
-    fun `分配结果彼此尽量远_任意两色的 ΔE 都够大`() {
-        val list = ringColors(palette, eightNames).values.toList()
-        val minDelta = minPairDistance(list)
-        // 圆环化 + 撞色就换"最远点"：最差的一对也应该能一眼分开
-        assertTrue("最小色差过小：$minDelta", minDelta >= RING_MIN_DELTA - 0.5f)
-    }
-
-    @Test
-    fun `与徽标同色优先_撞色才换`() {
-        val ringPalette = palette.map { ringBoost(it) }
-        val assigned = ringColors(palette, eightNames)
-        // 至少有一半分类保留了自己的哈希取色（与账单列表的图标/徽标同色）
-        val kept = eightNames.count { name ->
-            assigned[name] == ringPalette[Math.floorMod(nameHash(name), ringPalette.size)]
-        }
-        assertTrue("保住哈希色的分类数：$kept/${eightNames.size}", kept >= eightNames.size / 2)
-        // 无论怎么换，最小色差都不低于阈值
-        assertTrue(minPairDistance(assigned.values.toList()) >= RING_MIN_DELTA - 0.5f)
-    }
-
-    @Test
-    fun `圆环化把饱和度与明度抬进可分辨区间_色相不变`() {
-        palette.forEach { c ->
-            val before = rgbToHsv(c.red, c.green, c.blue)
-            val boosted = ringBoost(c)
-            val after = rgbToHsv(boosted.red, boosted.green, boosted.blue)
-            val dump = "color=${c.value.toString(16)} before=${before.toList()} after=${after.toList()}"
-            // 容差 0.005：HSV→RGB→HSV 往返 + Color 通道量化会掉千分之几
-            assertTrue("饱和度应不低于下限 $dump", after[1] >= RING_MIN_SATURATION - 0.005f)
-            assertTrue("饱和度不应下降", after[1] >= before[1] - 0.005f)
-            assertTrue("明度应进入亮带", after[2] >= RING_MIN_VALUE - 0.001f && after[2] <= RING_MAX_VALUE + 0.001f)
-            assertTrue("色相应保持", abs(before[0] - after[0]) < 1.5f)
-            assertEquals(c.alpha, boosted.alpha, 0.001f)
-        }
-    }
-
-    @Test
-    fun `重复名字不会拿到两个颜色`() {
-        val colors = ringColors(palette, listOf("餐饮", "餐饮", "交通"))
-        assertEquals(2, colors.size)
+    fun `空名字被跳过_空调色板不打乱已定颜色`() {
+        assertTrue(ringColors(palette, emptyMap(), listOf("", "")).isEmpty())
+        val fixed = mapOf("餐饮" to Color(0xFFEF4444))
+        assertEquals(fixed, ringColors(emptyList(), fixed, listOf("交通")))
     }
 
     @Test
     fun `分类数超过调色板容量时仍全部有值`() {
         val names = List(20) { "分类$it" }
-        val colors = ringColors(palette, names)
+        val colors = ringColors(palette, emptyMap(), names)
         assertEquals(names.size, colors.size)
-        val ringPalette = palette.map { ringBoost(it) }
-        assertTrue(colors.values.all { it in ringPalette })
+        assertTrue(colors.values.all { it in palette })
     }
 
     @Test
-    fun `空名字被跳过_空调色板返回空表`() {
-        assertTrue(ringColors(palette, listOf("", "")).isEmpty())
-        assertTrue(ringColors(emptyList(), listOf("餐饮", "交通")).isEmpty())
-    }
-
-    @Test
-    fun `单名字取色与 categoryColor 落在同一槽位`() {
-        // 单个分类时用哈希首选位（与徽标/图标取色同位），只是圆环化后更艳
-        val single = ringColors(palette, listOf("餐饮"))["餐饮"]!!
-        // 同一槽位（同一色相族），只是圆环化后更艳
-        assertEquals(ringBoost(categoryColor(palette, "餐饮")), single)
-        assertNotEquals(Color.Unspecified, single)
-        assertTrue(single in palette.map { ringBoost(it) })
-    }
-
-    private fun nameHash(name: String): Int {
-        var h = 0
-        for (ch in name) h = (h * 31 + ch.code) and 0x7FFFFFFF
-        return h
-    }
-
-    private fun minPairDistance(colors: List<Color>): Float {
-        var min = Float.MAX_VALUE
-        for (i in colors.indices) {
-            for (j in i + 1 until colors.size) min = minOf(min, colorDistance(colors[i], colors[j]))
+    fun `色差函数与 HSV 往返可用`() {
+        // 同色 0、红绿之间很远（自动分配的判据依赖它）
+        assertEquals(0f, colorDistance(palette[0], palette[0]), 0.001f)
+        assertTrue(colorDistance(palette[0], palette[3]) > 50f)
+        // 色环弹窗依赖 HSV 往返：RGB → HSV → RGB 应回到原色（±1/255）
+        palette.forEach { c ->
+            val hsv = rgbToHsv(c.red, c.green, c.blue)
+            val back = hsvToRgb(hsv[0], hsv[1], hsv[2])
+            assertTrue(abs(back[0] - c.red) < 0.005f)
+            assertTrue(abs(back[1] - c.green) < 0.005f)
+            assertTrue(abs(back[2] - c.blue) < 0.005f)
         }
-        return min
     }
 }
