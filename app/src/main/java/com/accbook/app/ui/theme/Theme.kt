@@ -85,23 +85,24 @@ internal fun lightAccBookColors() = AccBookColors(
     ),
     // 分类调色板：高饱和 + 16 色（暖→绿→青→蓝→紫→玫红），色相之外再拉开明度，
     // 让同一张饼图里的分类尽量不撞色也不近似；配色表在 Theme 内集中维护。
+    // 明度整体取"中亮"档（比首版提亮一档）：圆环上是成片的纯色块，偏暗会显脏。
     categoryPalette = listOf(
-        Color(0xFFDC2626), // 红
-        Color(0xFFEA580C), // 橙
-        Color(0xFFCA8A04), // 琥珀
-        Color(0xFFA16207), // 棕黄
-        Color(0xFF65A30D), // 黄绿
-        Color(0xFF16A34A), // 绿
-        Color(0xFF166534), // 深绿
-        Color(0xFF0F766E), // 深青绿
-        Color(0xFF0891B2), // 青
-        Color(0xFF2563EB), // 蓝
-        Color(0xFF1E3A8A), // 深蓝
-        Color(0xFF4F46E5), // 靛蓝
-        Color(0xFF7C3AED), // 紫罗兰
-        Color(0xFFA21CAF), // 紫
-        Color(0xFFDB2777), // 玫红
-        Color(0xFF9F1239), // 深玫红
+        Color(0xFFEF4444), // 红
+        Color(0xFFF97316), // 橙
+        Color(0xFFEAB308), // 琥珀
+        Color(0xFFCA8A04), // 棕黄
+        Color(0xFF84CC16), // 黄绿
+        Color(0xFF22C55E), // 绿
+        Color(0xFF16A34A), // 深绿
+        Color(0xFF14B8A6), // 深青绿
+        Color(0xFF06B6D4), // 青
+        Color(0xFF3B82F6), // 蓝
+        Color(0xFF2563EB), // 深蓝
+        Color(0xFF6366F1), // 靛蓝
+        Color(0xFF8B5CF6), // 紫罗兰
+        Color(0xFFD946EF), // 紫
+        Color(0xFFEC4899), // 玫红
+        Color(0xFFF43F5E), // 深玫红
     ),
 )
 
@@ -142,16 +143,16 @@ internal fun darkAccBookColors() = AccBookColors(
         Color(0xFFCA8A04), // 棕黄
         Color(0xFFA3E635), // 黄绿
         Color(0xFF4ADE80), // 绿
-        Color(0xFF15803D), // 深绿
+        Color(0xFF22C55E), // 深绿
         Color(0xFF2DD4BF), // 深青绿
         Color(0xFF22D3EE), // 青
         Color(0xFF60A5FA), // 蓝
-        Color(0xFF1D4ED8), // 深蓝
+        Color(0xFF3B82F6), // 深蓝
         Color(0xFF818CF8), // 靛蓝
         Color(0xFFA78BFA), // 紫罗兰
         Color(0xFFE879F9), // 紫
         Color(0xFFF472B6), // 玫红
-        Color(0xFFBE123C), // 深玫红
+        Color(0xFFFB7185), // 深玫红
     ),
 )
 

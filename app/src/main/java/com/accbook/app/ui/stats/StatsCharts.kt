@@ -35,6 +35,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
@@ -343,6 +344,10 @@ fun CategoryDonut(
 
                     fun ring(radius: Float, width: Float, alpha: Float, value: (CategorySlice) -> Long, total: Long) {
                         if (total <= 0L) return
+                        // 相邻切片之间**不留缝**：每片两端各多画 0.25°，后画的盖住接缝；
+                        // 颜色先按 alpha 与底轨混成实色再画——半透明叠加会在重叠处加深出深色细线。
+                        val arcs = slices.count { value(it) > 0L }
+                        val bleed = if (arcs > 1) 0.5f else 0f
                         var start = -90f
                         slices.forEach { s ->
                             val v = value(s)
@@ -350,11 +355,11 @@ fun CategoryDonut(
                             if (v > 0L) {
                                 val dim = selected != null && selected != s.name
                                 val color = colors[s.name] ?: categoryColor(palette, s.name)
-                                val pad = min(1.2f, sweep * 0.06f)
+                                val blend = if (dim) alpha * 0.22f else alpha
                                 drawArc(
-                                    color = color.copy(alpha = if (dim) alpha * 0.22f else alpha),
-                                    startAngle = start + pad,
-                                    sweepAngle = (sweep - pad * 2).coerceAtLeast(0.8f),
+                                    color = lerp(ab.ringTrack, color, blend),
+                                    startAngle = start - bleed / 2f,
+                                    sweepAngle = sweep + bleed,
                                     useCenter = false,
                                     topLeft = Offset(c.x - radius, c.y - radius),
                                     size = Size(radius * 2, radius * 2),
