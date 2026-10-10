@@ -118,7 +118,7 @@ fun QuickAddScreen(vm: LedgerViewModel, onBack: () -> Unit) {
             // 金额主体
             Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("¥", style = MaterialTheme.typography.headlineLarge, color = MaterialTheme.colorScheme.primary)
+                    Text(Money.symbol, style = MaterialTheme.typography.headlineLarge, color = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.padding(start = 8.dp))
                     Text(
                         amountText.ifEmpty { "0" },

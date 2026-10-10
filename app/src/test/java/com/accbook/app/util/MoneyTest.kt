@@ -113,4 +113,34 @@ class MoneyTest {
         assertEquals("+9,999,999,999.99", Money.formatSignedPlain(999_999_999_999L))
         assertEquals("+92,233,720,368,547,758.07", Money.formatSignedPlain(Long.MAX_VALUE))
     }
+
+    @Test
+    fun `currency symbol is switchable and used by every symbol-carrying format`() {
+        try {
+            Money.symbol = "$"
+            assertEquals("$1234.56", Money.formatYuan(123_456))
+            assertEquals("-$12.34", Money.formatYuan(-1_234))
+            assertEquals("$1,000", Money.formatYuanGrouped(100_000))
+            assertEquals("$3,480.00", Money.formatYuanGroupedFixed(348_000))
+            assertEquals("$32.31K", Money.formatYuanCompact(3_231_232))
+            assertEquals("-$32.31K", Money.formatYuanCompact(-3_231_232))
+            // 解析：当前符号与人民币符号都能吃
+            assertEquals(123_456L, Money.parseCents("$1,234.56"))
+            assertEquals(123_456L, Money.parseCents("¥1,234.56"))
+            // 不带符号的格式化不受影响（账单行金额列）
+            assertEquals("+12,000.00", Money.formatSignedPlain(1_200_000))
+        } finally {
+            Money.symbol = Money.DEFAULT_SYMBOL // 全局状态：改完还原，别污染其它用例
+        }
+    }
+
+    @Test
+    fun `blank symbol falls back to default`() {
+        try {
+            Money.symbol = "   "
+            assertEquals(Money.DEFAULT_SYMBOL, Money.symbol)
+        } finally {
+            Money.symbol = Money.DEFAULT_SYMBOL
+        }
+    }
 }

@@ -131,9 +131,9 @@ fun EditTransactionScreen(vm: LedgerViewModel, txId: Long, onBack: () -> Unit) {
             OutlinedTextField(
                 value = amountText,
                 onValueChange = { amountText = it },
-                prefix = { Text("¥", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary) },
+                prefix = { Text(Money.symbol, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary) },
                 textStyle = MaterialTheme.typography.headlineLarge.copy(textAlign = TextAlign.Start),
-                label = { Text("金额（元）") },
+                label = { Text("金额") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),

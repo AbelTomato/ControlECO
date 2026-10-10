@@ -1,11 +1,44 @@
 package com.accbook.app.util
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import java.math.BigDecimal
 
 /**
  * 金额工具：内部一律以“分”（Long）存储，避免浮点误差。
+ *
+ * 货币符号可在个人页「本月预算」里调整（见 [symbol] / [CURRENCIES]），
+ * 只改符号、不做换算；所有带符号的格式化都从这里取，别处不要再写死「¥」。
  */
 object Money {
+
+    /** 可选货币（符号 → 名称），保持常见、够用，不做汇率换算 */
+    val CURRENCIES: List<Pair<String, String>> = listOf(
+        "¥" to "人民币",
+        "$" to "美元",
+        "€" to "欧元",
+        "JP¥" to "日元",
+        "£" to "英镑",
+        "₩" to "韩元",
+        "₹" to "印度卢比",
+        "HK$" to "港币",
+        "NT$" to "新台币",
+    )
+
+    const val DEFAULT_SYMBOL = "¥"
+
+    private var currentSymbol by mutableStateOf(DEFAULT_SYMBOL)
+
+    /**
+     * 当前货币符号。用 Compose 快照状态存：改符号后**所有显示金额的地方都会自动重画**，
+     * 不用逐页刷新，也不会把符号变更限制在某一个页面里。
+     */
+    var symbol: String
+        get() = currentSymbol
+        set(value) {
+            currentSymbol = value.ifBlank { DEFAULT_SYMBOL }
+        }
 
     private val pattern = Regex("""^-?\d+(\.\d{1,2})?$""")
 
@@ -16,6 +49,8 @@ object Money {
      */
     fun parseCents(text: String): Long? {
         var cleaned = text.replace("¥", "").replace("￥", "").replace(" ", "").trim()
+        // 当前货币符号（$ / € / JP¥ …）也一并去掉，粘进来也能解析
+        if (currentSymbol != DEFAULT_SYMBOL) cleaned = cleaned.replace(currentSymbol, "")
         if (cleaned.contains(',')) {
             val thousandSeparated = Regex("""^-?\d{1,3}(,\d{3})+(\.\d{1,2})?$""")
             cleaned = if (thousandSeparated.matches(cleaned)) cleaned.replace(",", "") else cleaned
@@ -36,7 +71,7 @@ object Money {
     /** 分 → "¥1234.56"（负数形如 -¥12.34） */
     fun formatYuan(cents: Long): String {
         val negative = cents < 0
-        return (if (negative) "-" else "") + "¥" + formatCents(if (negative) -cents else cents)
+        return (if (negative) "-" else "") + symbol + formatCents(if (negative) -cents else cents)
     }
 
     /**
@@ -48,7 +83,7 @@ object Money {
         val abs = if (negative) -cents else cents
         val frac = abs % 100
         val body = if (frac == 0L) grouped(abs) else grouped(abs) + "." + frac.toString().padStart(2, '0')
-        return (if (negative) "-" else "") + "¥" + body
+        return (if (negative) "-" else "") + symbol + body
     }
 
     /**
@@ -60,7 +95,7 @@ object Money {
     fun formatYuanCompact(cents: Long): String {
         val negative = cents < 0
         val abs = if (negative) -cents else cents
-        val sign = if (negative) "-¥" else "¥"
+        val sign = if (negative) "-$symbol" else symbol
         var value = abs / 100.0
         if (value < 10_000.0) return formatYuanGrouped(cents)
         for (i in COMPACT_UNITS.indices) {
@@ -85,7 +120,7 @@ object Money {
         val negative = cents < 0
         val abs = if (negative) -cents else cents
         val body = grouped(abs) + "." + (abs % 100).toString().padStart(2, '0')
-        return (if (negative) "-" else "") + "¥" + body
+        return (if (negative) "-" else "") + symbol + body
     }
 
     /**

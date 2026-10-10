@@ -218,7 +218,7 @@ fun BudgetEditDialog(currentCents: Long, onSave: (Long) -> Unit, onDismiss: () -
                 OutlinedTextField(
                     value = text,
                     onValueChange = { text = it },
-                    label = { Text("预算金额（元）") },
+                    label = { Text("预算金额") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true,
                 )

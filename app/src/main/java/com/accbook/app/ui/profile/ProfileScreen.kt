@@ -17,8 +17,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -31,6 +33,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.accbook.app.BuildConfig
@@ -58,12 +61,14 @@ fun ProfileScreen(
 ) {
     val budget by vm.monthlyBudgetCents.collectAsStateWithLifecycle()
     val spent by vm.homeNetSpent.collectAsStateWithLifecycle()
+    val currency by vm.currencySymbol.collectAsStateWithLifecycle()
 
     // 与首页同口径：本月净支出未到位前整页不画（避免预算卡先显示 0 再跳数）
     val spentReady = spent ?: return
     val today = LocalDate.now()
     val snapshot = remember(budget, spentReady, today) { Budget.compute(budget, spentReady, today) }
     var showBudgetDialog by remember { mutableStateOf(false) }
+    var showCurrencyDialog by remember { mutableStateOf(false) }
 
     Column(
         Modifier
@@ -103,6 +108,13 @@ fun ProfileScreen(
             InfoRow(title = "每月总预算", onClick = { showBudgetDialog = true })
             RowDivider()
             InfoRow(title = "分类预算", onClick = onOpenCategories)
+            RowDivider()
+            // 货币符号：只改显示符号，不做汇率换算（金额本身不动）
+            InfoRow(
+                title = "货币符号",
+                trailing = "$currency  ${currencyName(currency)}",
+                onClick = { showCurrencyDialog = true },
+            )
         }
 
         Spacer(Modifier.height(18.dp))
@@ -149,6 +161,77 @@ fun ProfileScreen(
             onDismiss = { showBudgetDialog = false },
         )
     }
+
+    if (showCurrencyDialog) {
+        CurrencyDialog(
+            current = currency,
+            onPick = { vm.setCurrencySymbol(it); showCurrencyDialog = false },
+            onDismiss = { showCurrencyDialog = false },
+        )
+    }
+}
+
+/** 货币名称（找不到时只显示符号本身） */
+private fun currencyName(symbol: String): String =
+    Money.CURRENCIES.firstOrNull { it.first == symbol }?.second ?: ""
+
+/**
+ * 货币符号选择：列出常见货币（符号 + 名称），点一下即生效（不改金额、不做换算）。
+ */
+@Composable
+private fun CurrencyDialog(current: String, onPick: (String) -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("货币符号") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                Money.CURRENCIES.forEach { (symbol, name) ->
+                    val selected = symbol == current
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(
+                                if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+                            )
+                            .clickable { onPick(symbol) }
+                            .padding(horizontal = 10.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            symbol,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = if (selected) {
+                                MaterialTheme.colorScheme.onPrimaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.onSurface
+                            },
+                            modifier = Modifier.width(52.dp),
+                        )
+                        Text(
+                            name,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (selected) {
+                                MaterialTheme.colorScheme.onPrimaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (selected) {
+                            Icon(
+                                Icons.Filled.Check,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("完成") } },
+    )
 }
 
 /** 预算总结卡：左侧本月预算大字，右侧档位 + 已花 + 剩余 */

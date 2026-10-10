@@ -94,9 +94,19 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
             prefs.edit().remove(KEY_CARD_COLOR).remove(KEY_CARD_LUMINANCE).apply()
             _cardImageColor.value = null
             _cardImageLuminance.value = null
+            pruneCardImages() // 恢复默认背景：图片文件也一并清掉
         }
         loadCardImage(uri)
         AppLog.i("settings", "cardImage=${uri ?: "default"}")
+    }
+
+    /**
+     * 清掉不再使用的卡面图（只留当前这张）。
+     * 选图时**不**清：编辑器里点「取消」要把上一张原样恢复，得等真正「应用」时才收尾。
+     */
+    fun pruneCardImages() {
+        val keep = _cardImageUri.value
+        viewModelScope.launch(Dispatchers.IO) { deleteOtherCardImages(getApplication(), keep) }
     }
 
     /**
@@ -173,6 +183,8 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
         }
         // 卡面图片同样在启动时就开始解码（先缩略图再全尺寸）
         loadCardImage(_cardImageUri.value)
+        // 顺手清一次历史遗留图片（编辑器里没走完流程就退出的那几张）
+        pruneCardImages()
     }
 
     fun setCardTransform(transform: CardTransform) {
@@ -189,6 +201,22 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
         prefs.edit().putLong(KEY_MONTHLY_BUDGET, cents).apply()
         _monthlyBudget.value = cents
         AppLog.i("settings", "monthlyBudget=${Money.formatYuan(cents)}")
+    }
+
+    // ---------- 设置：货币符号（人民币 / 美元 / 欧元 …；只改符号，不做换算） ----------
+
+    private val _currencySymbol = MutableStateFlow(
+        (prefs.getString(KEY_CURRENCY_SYMBOL, Money.DEFAULT_SYMBOL) ?: Money.DEFAULT_SYMBOL)
+            .also { Money.symbol = it },
+    )
+    val currencySymbol: StateFlow<String> = _currencySymbol
+
+    fun setCurrencySymbol(symbol: String) {
+        val value = symbol.ifBlank { Money.DEFAULT_SYMBOL }
+        prefs.edit().putString(KEY_CURRENCY_SYMBOL, value).apply()
+        _currencySymbol.value = value
+        Money.symbol = value
+        AppLog.i("settings", "currencySymbol=$value")
     }
 
     private val homeMonth = YearMonth.now(zone)
@@ -829,6 +857,7 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
         const val KEY_CARD_COLOR = "card_image_color"
         const val KEY_CARD_LUMINANCE = "card_image_luminance"
         const val KEY_MONTHLY_BUDGET = "monthly_budget_cents"
+        const val KEY_CURRENCY_SYMBOL = "currency_symbol"
         const val KEY_CAT_BUDGET_PREFIX = "category_budget_"
     }
 }
