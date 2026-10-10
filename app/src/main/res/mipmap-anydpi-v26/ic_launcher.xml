@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- 全幅图案铺在背景层（启动器遮罩裁角），前景保持透明：
-         背景层不参与启动器的视差/缩放，图案不会被挪动露出底色 -->
-    <background android:drawable="@drawable/ic_launcher_art" />
-    <foreground android:drawable="@drawable/ic_launcher_foreground" />
+    <!-- 底色 = 图案外圈同一深绿；图案放前景层。
+         注意：前景层不能留空——空的 vector 会让 AdaptiveIconDrawable 在部分 ROM（MIUI 实测）
+         抛 Resources.NotFoundException，图标回落成系统默认图。 -->
+    <background android:drawable="@color/ic_launcher_background" />
+    <foreground android:drawable="@drawable/ic_launcher_art" />
 </adaptive-icon>
