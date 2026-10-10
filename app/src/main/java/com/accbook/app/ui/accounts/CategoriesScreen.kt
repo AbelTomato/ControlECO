@@ -55,7 +55,6 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.accbook.app.data.CategoryIcon
 import com.accbook.app.data.LedgerViewModel
@@ -72,11 +71,6 @@ import com.accbook.app.util.Money
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-
-/** emoji 快捷选择（不够用可以在下面的输入框里贴任意 emoji） */
-private val PRESET_EMOJIS = listOf(
-    "🍜", "🍔", "☕", "🍎", "🛒", "👕", "🚌", "🚗", "🏠", "💊", "🎮", "📱", "✈️", "🎁",
-)
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -324,108 +318,83 @@ private fun CategoryEditorDialog(
                     }
                 }
 
-                // ---- 图形颜色：emoji / 相册图片之外都能改（默认图形也能只换颜色）----
+                // ---- 图形颜色：**常驻**（emoji / 相册图片也能一键切到"自定颜色的图形"）----
                 val glyphName = CategoryIcon.glyphOf(icon)
-                if (glyphName != null || icon.isBlank()) {
-                    val currentColor = CategoryIcon.glyphColorOf(icon)
-                    // 当前（或将要用的）形状：选中色块上叠它，让"选色"和"选形状"看得见关联
-                    val previewGlyph = glyphName?.let { glyphByName(it) } ?: glyphForName(name.ifBlank { "默认" })
-                    Text("图形颜色", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                val isGlyphBased = CategoryIcon.emojiOf(icon) == null && CategoryIcon.imageOf(icon) == null
+                val currentColor = if (isGlyphBased) CategoryIcon.glyphColorOf(icon) else null
+                // 当前（或将要用的）形状：选中色块上叠它，让"选色"和"选形状"看得见关联
+                val previewGlyph = glyphName?.let { glyphByName(it) } ?: glyphForName(name.ifBlank { "默认" })
+                Text("图形颜色", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    // 默认：按分类名自动取色（等于清除自定义颜色）
+                    Box(
+                        Modifier
+                            .size(28.dp)
+                            .clip(RoundedCornerShape(9.dp))
+                            .background(MaterialTheme.colorScheme.surfaceContainer)
+                            .clickable {
+                                // 只改过颜色的回到"全自动"；已固定形状的保留形状
+                                onIconChange(if (glyphName == null) "" else CategoryIcon.glyph(glyphName))
+                            },
+                        contentAlignment = Alignment.Center,
                     ) {
-                        // 默认：按分类名自动取色（等于清除自定义颜色）
+                        Text(
+                            "默认",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (currentColor == null) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
+                    }
+                    palette.forEach { c ->
+                        val rgb = c.toArgb() and 0xFFFFFF
+                        val selected = currentColor == rgb
                         Box(
                             Modifier
                                 .size(28.dp)
                                 .clip(RoundedCornerShape(9.dp))
-                                .background(MaterialTheme.colorScheme.surfaceContainer)
+                                .background(if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer)
                                 .clickable {
-                                    // 只改过颜色的回到"全自动"；已固定形状的保留形状
-                                    onIconChange(if (glyphName == null) "" else CategoryIcon.glyph(glyphName))
+                                    // 固定过形状就保留形状；否则只存颜色（形状按分类名取）——
+                                    // 当前是 emoji / 图片时也走这条路：等于"换成这个颜色的图形"
+                                    emojiText = ""
+                                    onIconChange(
+                                        if (glyphName == null) {
+                                            CategoryIcon.glyphColorOnly(rgb)
+                                        } else {
+                                            CategoryIcon.glyph(glyphName, rgb)
+                                        },
+                                    )
                                 },
                             contentAlignment = Alignment.Center,
                         ) {
-                            Text(
-                                "默认",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (currentColor == null) {
-                                    MaterialTheme.colorScheme.primary
-                                } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                },
-                            )
-                        }
-                        palette.forEach { c ->
-                            val rgb = c.toArgb() and 0xFFFFFF
-                            val selected = currentColor == rgb
                             Box(
                                 Modifier
-                                    .size(28.dp)
-                                    .clip(RoundedCornerShape(9.dp))
-                                    .background(if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer)
-                                    .clickable {
-                                        // 没固定形状时只存颜色（形状继续按分类名取），固定过形状则连形状一起存
-                                        onIconChange(
-                                            if (glyphName == null) {
-                                                CategoryIcon.glyphColorOnly(rgb)
-                                            } else {
-                                                CategoryIcon.glyph(glyphName, rgb)
-                                            },
-                                        )
-                                    },
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Box(
-                                    Modifier
-                                        .size(if (selected) 20.dp else 18.dp)
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .background(c),
-                                )
-                                if (selected) {
-                                    GlyphIcon(glyph = previewGlyph, tint = MaterialTheme.colorScheme.onPrimaryContainer, size = 22.dp)
-                                }
+                                    .size(if (selected) 20.dp else 18.dp)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(c),
+                            )
+                            if (selected) {
+                                GlyphIcon(glyph = previewGlyph, tint = MaterialTheme.colorScheme.onPrimaryContainer, size = 22.dp)
                             }
                         }
                     }
                 }
 
-                // ---- emoji：快捷选择 + 任意输入 ----
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    PRESET_EMOJIS.forEach { e ->
-                        val selected = icon == CategoryIcon.emoji(e)
-                        Box(
-                            Modifier
-                                .size(34.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(
-                                    if (selected) {
-                                        MaterialTheme.colorScheme.primaryContainer
-                                    } else {
-                                        MaterialTheme.colorScheme.surfaceContainer
-                                    },
-                                )
-                                .clickable {
-                                    emojiText = e
-                                    onIconChange(CategoryIcon.emoji(e))
-                                },
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(e, fontSize = 17.sp)
-                        }
-                    }
-                }
+                // ---- emoji：只留一个输入框，列一堆预设反而干扰选择 ----
                 OutlinedTextField(
                     value = emojiText,
                     onValueChange = { input ->
                         emojiText = input
                         if (CategoryIcon.isEmojiInput(input)) onIconChange(CategoryIcon.emoji(input))
                     },
-                    label = { Text("其他 emoji（可粘贴）") },
+                    label = { Text("在此输入emoji作为图标") },
+                    placeholder = { Text("在此输入emoji作为图标") },
                     singleLine = true,
                     isError = emojiInvalid,
                     supportingText = if (emojiInvalid) {
