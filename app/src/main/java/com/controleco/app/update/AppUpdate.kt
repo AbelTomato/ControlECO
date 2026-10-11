@@ -53,6 +53,10 @@ object AppUpdate {
     /** APK 合理性下限：小到离谱的"APK"一定是错误页/残片 */
     private const val MIN_APK_BYTES = 1_000_000L
 
+    /** 路径测速：单次超时与取样字节数（读满 64KB = 建连 + 首段吞吐的粗测） */
+    private const val PROBE_TIMEOUT_MS = 5_000
+    private const val PROBE_BYTES = 64 * 1024
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -213,9 +217,15 @@ object AppUpdate {
             if (release.apkUrlMirror.isNotBlank()) add(release.apkUrlMirror)
         }
         if (urls.isEmpty()) error("该 release 没有可下载的 APK 资产")
+        // 下载前并行测速直连与镜像，网络环境更好的路径先试；中途失败仍按序回退另一条
+        val ordered =
+            if (urls.size < 2) urls
+            else orderedByProbe(urls, probeUrls(urls)).also {
+                AppLog.i("Update", "download path order: ${it.map { u -> if (u == urls[0]) "direct" else "mirror" }}")
+            }
         val tmp = File(dir, target.name + ".part")
         var lastError: Exception? = null
-        for (url in urls) {
+        for (url in ordered) {
             try {
                 tmp.delete()
                 downloadToFile(url, tmp, onProgress)
@@ -232,6 +242,51 @@ object AppUpdate {
             }
         }
         throw IllegalStateException("下载失败：直连与镜像都未成功", lastError)
+    }
+
+    /**
+     * 并行测速各候选路径：范围 GET 实际读前 64KB（与真实下载同路径、含重定向），
+     * 耗时 = 建连 + 首段吞吐，能区分"能连但很慢"的路径；失败记 null。
+     */
+    private fun probeUrls(urls: List<String>): List<Long?> {
+        val rtts = arrayOfNulls<Long>(urls.size)
+        val threads = urls.mapIndexed { i, url ->
+            Thread({ rtts[i] = runCatching { probeUrl(url) }.getOrNull() }, "update-probe-$i").apply { start() }
+        }
+        threads.forEach { it.join() } // 单线程内已有 socket 超时兜底，join 不会无限等
+        return rtts.toList()
+    }
+
+    /** 纯函数：按测速结果排序（失败排最后；平局/都失败保持原顺序，直连优先） */
+    internal fun orderedByProbe(urls: List<String>, rtts: List<Long?>): List<String> =
+        urls.indices
+            .sortedWith(compareBy({ rtts.getOrNull(it) == null }, { rtts.getOrNull(it) ?: Long.MAX_VALUE }))
+            .map { urls[it] }
+
+    private fun probeUrl(url: String): Long {
+        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+            connectTimeout = PROBE_TIMEOUT_MS
+            readTimeout = PROBE_TIMEOUT_MS
+            setRequestProperty("Range", "bytes=0-${PROBE_BYTES - 1}")
+            setRequestProperty("User-Agent", "ControlECO-App")
+        }
+        try {
+            val start = System.nanoTime()
+            val code = conn.responseCode
+            if (code !in 200..299) throw IllegalStateException("HTTP $code")
+            conn.inputStream.use { input ->
+                val buf = ByteArray(16 * 1024)
+                var read = 0
+                while (read < PROBE_BYTES) {
+                    val n = input.read(buf, 0, minOf(buf.size, PROBE_BYTES - read))
+                    if (n < 0) break
+                    read += n
+                }
+            }
+            return (System.nanoTime() - start) / 1_000_000
+        } finally {
+            conn.disconnect()
+        }
     }
 
     private fun downloadToFile(url: String, target: File, onProgress: (Int) -> Unit) {

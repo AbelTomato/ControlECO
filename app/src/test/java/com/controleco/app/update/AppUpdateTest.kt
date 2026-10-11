@@ -129,4 +129,47 @@ class AppUpdateTest {
         assertTrue(AppUpdate.isNewerVersion("v1", "0.4.5-beta"))
         assertTrue(AppUpdate.isNewerVersion("0.10.0", "0.9.9"))
     }
+
+    // ---------- 下载路径测速排序 ----------
+
+    private val direct = "https://github.com/ArrogHie/ControlECO/releases/download/v0.4.12-beta/x.apk"
+    private val mirror = "https://gh-proxy.com/$direct"
+
+    @Test
+    fun `faster path goes first`() {
+        // 镜像更快 → 镜像先行；直连更快 → 直连先行
+        assertEquals(
+            listOf(mirror, direct),
+            AppUpdate.orderedByProbe(listOf(direct, mirror), listOf(320L, 90L)),
+        )
+        assertEquals(
+            listOf(direct, mirror),
+            AppUpdate.orderedByProbe(listOf(direct, mirror), listOf(80L, 400L)),
+        )
+    }
+
+    @Test
+    fun `failed probe sorts last`() {
+        assertEquals(
+            listOf(direct, mirror),
+            AppUpdate.orderedByProbe(listOf(direct, mirror), listOf(300L, null)),
+        )
+        assertEquals(
+            listOf(mirror, direct),
+            AppUpdate.orderedByProbe(listOf(direct, mirror), listOf(null, 100L)),
+        )
+    }
+
+    @Test
+    fun `both failed or tie keeps original order`() {
+        // 都探测失败 / 耗时相同：保持原顺序（直连优先）
+        assertEquals(
+            listOf(direct, mirror),
+            AppUpdate.orderedByProbe(listOf(direct, mirror), listOf(null, null)),
+        )
+        assertEquals(
+            listOf(direct, mirror),
+            AppUpdate.orderedByProbe(listOf(direct, mirror), listOf(150L, 150L)),
+        )
+    }
 }
