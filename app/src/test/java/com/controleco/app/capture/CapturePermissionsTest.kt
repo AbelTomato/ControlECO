@@ -18,7 +18,6 @@ class CapturePermissionsTest {
         val ready = mapOf(
             CapturePermission.LISTENER to true,
             CapturePermission.A11Y to false,
-            CapturePermission.OVERLAY to true,
             CapturePermission.NOTIFY to false,
         )
         assertEquals(
@@ -33,7 +32,6 @@ class CapturePermissionsTest {
         val ready = mapOf(
             CapturePermission.LISTENER to false,
             CapturePermission.A11Y to true,
-            CapturePermission.OVERLAY to true,
             CapturePermission.NOTIFY to true,
         )
         assertEquals(listOf(CapturePermission.LISTENER), missingPermissions(ready))
@@ -48,7 +46,6 @@ class CapturePermissionsTest {
     fun `权限项短标签`() {
         assertEquals("通知监听", CapturePermission.LISTENER.label)
         assertEquals("无障碍", CapturePermission.A11Y.label)
-        assertEquals("悬浮窗", CapturePermission.OVERLAY.label)
         assertEquals("通知权限", CapturePermission.NOTIFY.label)
     }
 }

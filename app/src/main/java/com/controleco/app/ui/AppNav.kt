@@ -1,7 +1,6 @@
 package com.controleco.app.ui
 
 import android.content.Intent
-import android.net.Uri
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -110,19 +109,8 @@ fun AccBookNav(
         }
         Unit
     }
-    val openOverlayPermission: () -> Unit = {
-        runCatching {
-            context.startActivity(
-                Intent(
-                    android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    Uri.parse("package:${context.packageName}"),
-                ),
-            )
-        }
-        Unit
-    }
 
-    // 悬浮卡/系统通知点击跳转（MainActivity 传入 route 事件；既有路由名是捕获层的对外契约，勿改）
+    // 系统通知点击跳转（MainActivity 传入 route 事件；既有路由名是捕获层的对外契约，勿改）
     LaunchedEffect(navEvent.first) {
         val route = navEvent.second
         when {
@@ -202,7 +190,6 @@ fun AccBookNav(
                 onBack = { navController.popBackStack() },
                 onOpenNotificationAccess = openNotificationAccess,
                 onOpenAccessibilitySettings = openAccessibilitySettings,
-                onOpenOverlayPermission = openOverlayPermission,
             )
         }
         composable("settings/developer") {

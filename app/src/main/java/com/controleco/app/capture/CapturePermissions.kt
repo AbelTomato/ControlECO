@@ -2,14 +2,12 @@ package com.controleco.app.capture
 
 import android.content.Context
 import android.os.Build
-import android.provider.Settings
 import androidx.core.app.NotificationManagerCompat
 
 /** 自动记账依赖的权限项（顺序 = 提醒弹窗的展示顺序） */
 enum class CapturePermission(val label: String) {
     LISTENER("通知监听"),
     A11Y("无障碍"),
-    OVERLAY("悬浮窗"),
     NOTIFY("通知权限"),
 }
 
@@ -32,8 +30,6 @@ object CapturePermissions {
                     ready(CaptureCenter.isCaptureEnabled(), hasListenerAccess(app)),
                 CapturePermission.A11Y to
                     ready(CaptureCenter.isA11yCaptureEnabled(), AccBookAccessibilityService.isEnabled(app)),
-                CapturePermission.OVERLAY to
-                    ready(CaptureCenter.isIslandEnabled(), Settings.canDrawOverlays(app)),
                 CapturePermission.NOTIFY to
                     ready(CaptureCenter.isCaptureNotifyEnabled(), canPostNotifications(app)),
             ),

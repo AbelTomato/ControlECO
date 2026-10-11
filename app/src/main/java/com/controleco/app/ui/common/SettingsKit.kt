@@ -208,14 +208,6 @@ fun a11yPathFor(brand: Brand): String = when (brand) {
     else -> "或：系统设置中搜索「无障碍」→ 已下载的服务/应用 → 我ECO 支付页面采集"
 }
 
-/** 分品牌的悬浮窗权限路径 */
-fun overlayPathFor(brand: Brand): String = when (brand) {
-    Brand.XIAOMI -> "或：设置 → 应用设置 → 应用管理 → 我ECO → 权限管理 → 「显示悬浮窗」允许"
-    Brand.HUAWEI, Brand.HONOR -> "或：设置 → 应用和服务 → 应用管理 → 我ECO → 权限 → 「悬浮窗」允许"
-    Brand.OPPO, Brand.ONEPLUS, Brand.REALME -> "或：手机管家 → 权限与隐私 → 悬浮窗管理，允许 我ECO"
-    else -> "或：系统设置 → 应用 → 我ECO → 权限 → 「显示在其他应用上层」允许"
-}
-
 /**
  * 设置子页骨架：返回箭头 + 标题 + 可滚动内容列（页面底色沿用全局浅蓝）。
  * 各设置页统一用它，保证页头、间距、底部留白完全一致。

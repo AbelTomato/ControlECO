@@ -696,14 +696,6 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
         _a11yCaptureEnabled.value = enabled
     }
 
-    private val _islandEnabled = MutableStateFlow(CaptureCenter.isIslandEnabled())
-    val islandEnabled: StateFlow<Boolean> = _islandEnabled
-
-    fun setIslandEnabled(enabled: Boolean) {
-        CaptureCenter.setIslandEnabled(enabled)
-        _islandEnabled.value = enabled
-    }
-
     private val _debugCaptureAll = MutableStateFlow(CaptureCenter.isDebugCaptureAll(BuildConfig.DEBUG))
     val debugCaptureAll: StateFlow<Boolean> = _debugCaptureAll
 
@@ -763,9 +755,6 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
     /** 通知权限（安卓 13+ 运行时） */
     fun canPostNotifications(): Boolean = CaptureCenter.canPostNotifications()
 
-    /** debug：20 秒后弹测试灵动岛（切到支付页验证是否被拦截） */
-    fun scheduleIslandTest(onResult: (String) -> Unit) = CaptureCenter.scheduleIslandTest(onResult)
-
     /** debug：20 秒后发测试捕获通知 */
     fun scheduleNotifyTest(onResult: (String) -> Unit) = CaptureCenter.scheduleNotifyTest(onResult)
 
@@ -818,12 +807,6 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 系统无障碍设置中是否已开启采集服务 */
     fun isA11yEnabled(): Boolean = AccBookAccessibilityService.isEnabled(getApplication())
-
-    /** 悬浮窗授权（灵动岛提醒的前置） */
-    fun isOverlayGranted(): Boolean = Settings.canDrawOverlays(getApplication())
-
-    /** debug：手动弹出测试灵动岛（区分窗口层故障与页面未捕获） */
-    fun showIslandTest(onResult: (String) -> Unit) = CaptureCenter.showIslandTest(onResult)
 
     fun discardPending(id: Long) {
         viewModelScope.launch(Dispatchers.IO) {

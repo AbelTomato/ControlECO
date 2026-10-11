@@ -4,9 +4,6 @@
     <!-- 保活引导：申请忽略电池优化（Doze 白名单） -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
-    <!-- 悬浮确认窗：支付页上方弹出预填确认卡片（用户在设置中单独授权） -->
-    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
-
     <!-- 捕获通知：检测到动账/退款时发系统通知提醒确认（安卓 13+ 运行时申请） -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 

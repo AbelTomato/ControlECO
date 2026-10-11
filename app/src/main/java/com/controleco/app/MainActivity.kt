@@ -36,7 +36,7 @@ import com.controleco.app.update.AppUpdate
 
 class MainActivity : ComponentActivity() {
 
-    /** 悬浮卡/通知点击跳转：route + 自增序号（同路由重复点击也能触发导航） */
+    /** 通知点击跳转：route + 自增序号（同路由重复点击也能触发导航） */
     private var navEvent by mutableStateOf(0L to null as String?)
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -64,20 +64,8 @@ class MainActivity : ComponentActivity() {
         consumeRoute(intent)
     }
 
-    override fun onResume() {
-        super.onResume()
-        CaptureCenter.setAppForeground(true)
-    }
-
-    override fun onPause() {
-        super.onPause()
-        CaptureCenter.setAppForeground(false)
-    }
-
     private fun consumeRoute(intent: Intent?) {
         val route = intent?.getStringExtra(CaptureCenter.EXTRA_ROUTE) ?: return
-        // 点击通知进 App 时关闭悬浮卡（冲突处理：两通道只留一个待处理入口）
-        CaptureCenter.onRouteOpened(route)
         navEvent = (navEvent.first + 1) to route
     }
 }

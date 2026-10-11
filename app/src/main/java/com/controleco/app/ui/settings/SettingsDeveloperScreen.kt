@@ -46,10 +46,6 @@ fun SettingsDeveloperScreen(
     SettingsPage(title = "开发者功能", onBack = onBack) {
         SectionTitle("手动启动")
         PaneCard {
-            ActionRow("灵动岛（立即）") { vm.showIslandTest(toast()) }
-            RowDivider()
-            ActionRow("灵动岛（延迟 20 秒）") { vm.scheduleIslandTest(toast()) }
-            RowDivider()
             ActionRow("动账通知（延迟 20 秒）") { vm.scheduleNotifyTest(toast()) }
         }
 

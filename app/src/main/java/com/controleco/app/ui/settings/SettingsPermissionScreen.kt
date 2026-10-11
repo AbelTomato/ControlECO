@@ -5,9 +5,7 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -35,11 +33,10 @@ import com.controleco.app.ui.common.SectionTitle
 import com.controleco.app.ui.common.SettingsPage
 import com.controleco.app.ui.common.SwitchRow
 import com.controleco.app.ui.common.a11yPathFor
-import com.controleco.app.ui.common.overlayPathFor
 import com.controleco.app.ui.theme.accBook
 
 /**
- * 设置 → 权限：三块权限（通知监听 / 无障碍 / 悬浮窗）的状态、开关与开启教程都在这一页。
+ * 设置 → 权限：两块权限（通知监听 / 无障碍）的状态、开关与开启教程都在这一页。
  * 行上只留标题与开关；授权状态用右侧短标签表达（未授权时附「去开启」）。
  */
 @Composable
@@ -48,7 +45,6 @@ fun SettingsPermissionScreen(
     onBack: () -> Unit,
     onOpenNotificationAccess: () -> Unit,
     onOpenAccessibilitySettings: () -> Unit,
-    onOpenOverlayPermission: () -> Unit,
 ) {
     // 从系统设置页返回时重新探测授权状态
     var resumeTick by remember { mutableIntStateOf(0) }
@@ -64,7 +60,6 @@ fun SettingsPermissionScreen(
     SettingsPage(title = "权限", onBack = onBack) {
         NotificationSection(vm, resumeTick, onOpenNotificationAccess)
         A11ySection(vm, resumeTick, onOpenAccessibilitySettings)
-        OverlaySection(vm, resumeTick, onOpenOverlayPermission)
     }
 }
 
@@ -145,7 +140,6 @@ private fun NotificationSection(vm: LedgerViewModel, resumeTick: Int, onOpenNoti
 @Composable
 private fun CaptureNotifySetting(vm: LedgerViewModel, resumeTick: Int) {
     val enabled by vm.captureNotifyEnabled.collectAsStateWithLifecycle()
-    val islandOn by vm.islandEnabled.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val notifGranted = remember(resumeTick) { vm.canPostNotifications() }
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -165,30 +159,18 @@ private fun CaptureNotifySetting(vm: LedgerViewModel, resumeTick: Int) {
         Text(
             "动账通知提醒",
             style = MaterialTheme.typography.bodyLarge,
-            color = if (islandOn) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.weight(1f),
         )
-        if (islandOn) {
-            // 灵动岛接管：开关保留原值但不生效，关闭灵动岛后自动恢复原状态
-            Text(
-                "灵动岛已接管",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.width(10.dp))
-            Switch(checked = enabled, onCheckedChange = null)
+        if (!notifGranted) {
+            TextButton(onClick = {
+                if (Build.VERSION.SDK_INT >= 33) {
+                    permissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                }
+            }) { Text("权限") }
         } else {
-            if (!notifGranted) {
-                TextButton(onClick = {
-                    if (Build.VERSION.SDK_INT >= 33) {
-                        permissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
-                    }
-                }) { Text("权限") }
-            } else {
-                TextButton(onClick = { openCaptureChannelSettings(context) }) { Text("横幅") }
-            }
-            Switch(checked = enabled, onCheckedChange = { vm.setCaptureNotifyEnabled(it) })
+            TextButton(onClick = { openCaptureChannelSettings(context) }) { Text("横幅") }
         }
+        Switch(checked = enabled, onCheckedChange = { vm.setCaptureNotifyEnabled(it) })
     }
 }
 
@@ -222,43 +204,6 @@ private fun A11ySection(vm: LedgerViewModel, resumeTick: Int, onOpenAccessibilit
                 a11yPathFor(Brand.current()),
                 "打开「我ECO 支付页面采集」开关；系统弹 10 秒倒计时确认属正常（小米十秒盾）。",
                 "回到本页状态应显示「已连接」；付款后在捕获日志的「页面」通道能看到页面快照。",
-            ),
-        )
-    }
-}
-
-@Composable
-private fun OverlaySection(vm: LedgerViewModel, resumeTick: Int, onOpenOverlayPermission: () -> Unit) {
-    val granted = remember(resumeTick) { vm.isOverlayGranted() }
-    val islandOn by vm.islandEnabled.collectAsStateWithLifecycle()
-
-    SectionTitle("灵动岛")
-    PaneCard {
-        PermissionStatusRow(
-            title = "灵动岛提醒",
-            granted = granted,
-            grantedText = "已授权",
-            ungrantedText = "未授权",
-            actionText = "去授权",
-            onAction = onOpenOverlayPermission,
-        )
-        RowDivider()
-        SwitchRow(
-            title = "灵动岛提醒入账",
-            checked = islandOn,
-            onCheckedChange = { vm.setIslandEnabled(it) },
-        )
-        RowDivider()
-        PermissionTutorial(
-            "悬浮窗授权教程",
-            listOf(
-                "灵动岛在屏幕顶部弹出胶囊提醒入账，悬浮窗权限是它的前提。",
-                "推荐：点上方「去授权」，直达「显示在其他应用上层 / 悬浮窗」开关，打开即可。",
-                overlayPathFor(Brand.current()),
-                "若开关为灰色不可开：安卓 13+ 需先做「允许受限制的设置」（见通知监听教程第 1 步）。",
-                "授权后用「开发者功能 → 手动启动」里的测试入口验证；" +
-                    "支付时若 Logcat 有 island shown 但看不到，" +
-                    "是支付保护中心/支付保险箱拦截，见保活设置。",
             ),
         )
     }
