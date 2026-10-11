@@ -1,8 +1,10 @@
 package com.controleco.app.ui.settings
 
+import android.widget.Toast
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.controleco.app.data.LedgerViewModel
 import com.controleco.app.ui.common.InfoRow
@@ -30,6 +32,7 @@ fun SettingsScreen(
 ) {
     LaunchedEffect(Unit) { AppLog.i("settings", "hub opened") }
 
+    val context = LocalContext.current
     val autoEntry by vm.autoEntryEnabled.collectAsStateWithLifecycle()
     val autoUpdate by vm.autoUpdateEnabled.collectAsStateWithLifecycle()
 
@@ -57,9 +60,18 @@ fun SettingsScreen(
         PaneCard {
             SwitchRow(
                 title = "自动更新",
-                subtitle = "启动时检查新版本：先走 GitHub 直连，超时自动改走镜像",
                 checked = autoUpdate,
                 onCheckedChange = { vm.setAutoUpdateEnabled(it) },
+            )
+            RowDivider()
+            InfoRow(
+                title = "检查更新",
+                onClick = {
+                    Toast.makeText(context, "正在检查更新…", Toast.LENGTH_SHORT).show()
+                    vm.checkUpdateNow { message ->
+                        message?.let { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
+                    }
+                },
             )
             RowDivider()
             InfoRow(title = "开发者功能", onClick = onOpenDeveloper)

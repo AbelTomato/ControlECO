@@ -749,6 +749,9 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
         _autoUpdateEnabled.value = enabled
     }
 
+    /** 手动检查更新（设置页「检查更新」）：无视开关与间隔；发现新版本走全局弹窗，无更新/失败经回调提示 */
+    fun checkUpdateNow(onResult: (String?) -> Unit) = AppUpdate.checkNow(getApplication(), onResult)
+
     /** 通知权限（安卓 13+ 运行时） */
     fun canPostNotifications(): Boolean = CaptureCenter.canPostNotifications()
 

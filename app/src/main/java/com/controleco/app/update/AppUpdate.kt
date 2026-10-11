@@ -1,6 +1,8 @@
 package com.controleco.app.update
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import com.controleco.app.BuildConfig
 import com.controleco.app.util.AppLog
 import java.net.HttpURLConnection
@@ -13,10 +15,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
 /**
- * 应用内自动更新（beta 分发走 GitHub Release）：
- * 启动时后台查一次最新 release——先直连 GitHub API，超时/失败改走镜像（gh-proxy.com 代理 api.github.com
+ * 应用内更新检查（beta 分发走 GitHub Release，release 以正式发布形式上传、仅版本号带 -beta）：
+ * 自动更新开着时启动查一次——先直连 GitHub API，超时/失败改走镜像（gh-proxy.com 代理 api.github.com
  * 与 release 下载，实测可用；ghfast.top 不支持 API 前缀）。
- * 发现新版本只弹一次应用内对话框（不打断启动，点下载交给系统浏览器），查不到/无更新全程静默。
+ * 发现新版本只做**弹窗提醒**，下载与否由用户决定（交给系统浏览器），不会自主拉取安装；
+ * 设置页另有「检查更新」手动入口（无视开关与间隔）。查不到/无更新全程静默。
  *
  * 网络是本应用唯一的联网用途：只读 GitHub 的 releases 接口，不上传任何数据。
  */
@@ -25,8 +28,9 @@ object AppUpdate {
     private const val REPO = "ArrogHie/ControlECO"
 
     /**
-     * 用 releases 列表接口而不是 releases/latest：**latest 不含预发布（prerelease）**，
-     * beta 分发全是 prerelease，latest 会永远 404；列表接口（未认证）返回全部已发布 release（新→旧）。
+     * 用 releases 列表接口而不是 releases/latest：latest 不返回预发布（prerelease），
+     * 历史上 beta 曾以 prerelease 发布导致它 404；列表接口（未认证）对正式版与预发布都返回
+     * 全部已发布 release（新→旧），草稿未认证不可见、不会误取。
      */
     private const val API_URL = "https://api.github.com/repos/$REPO/releases?per_page=5"
     /** 镜像：前缀拼接代理（API 查询与 APK 下载都支持） */
@@ -42,6 +46,7 @@ object AppUpdate {
     private const val TIMEOUT_MS = 6_000
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     private val _updateAvailable = MutableStateFlow<ReleaseInfo?>(null)
 
@@ -98,6 +103,32 @@ object AppUpdate {
     /** 对话框处理完（下载/忽略）后清掉，避免旋转屏幕重弹 */
     fun consumeUpdate() {
         _updateAvailable.value = null
+    }
+
+    /**
+     * 手动检查（设置页「检查更新」）：无视开关与最小间隔，查一次并刷新节流时间戳。
+     * 发现新版本 → 进 [updateAvailable] 弹窗（onResult 收到 null，页面不用再提示）；
+     * 其余结果经 onResult 在主线程回调（无更新/失败，供页面 Toast 提示）。
+     */
+    fun checkNow(context: Context, onResult: (String?) -> Unit) {
+        val app = context.applicationContext
+        prefs(app).edit().putLong(KEY_LAST_CHECK_AT, System.currentTimeMillis()).apply()
+        scope.launch {
+            val release = runCatching { fetchLatestRelease() }
+                .onFailure { AppLog.w("Update", "manual check failed", it) }
+                .getOrNull()
+            val message = when {
+                release == null -> "检查失败：直连与镜像都未成功，请稍后再试"
+                !isNewerVersion(release.tagName, BuildConfig.VERSION_NAME) ->
+                    "已是最新版本（${BuildConfig.VERSION_NAME}）"
+                else -> null
+            }
+            if (message == null && release != null) {
+                AppLog.i("Update", "manual check: new version ${release.tagName}")
+                _updateAvailable.value = release
+            }
+            mainHandler.post { onResult(message) }
+        }
     }
 
     /** 直连 → 失败（除"仓库还没有 release"外）→ 镜像 */
