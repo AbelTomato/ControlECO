@@ -95,8 +95,8 @@ class AccBookAccessibilityService : AccessibilityService() {
         if (event == null) return
         val pkg = event.packageName?.toString() ?: return
         // 包名过滤（config 不限包名，运行时判断）：只收微信/支付宝，
-        // 「捕获所有页面（调试）」开启时放行全部应用（采样其他应用的支付页）
-        val debugAllPages = CaptureCenter.isDebugCaptureAllPages(BuildConfig.DEBUG)
+        // 「捕获所有页面（调试）」开启时放行其他应用（采样支付页）；本应用自己的页面不采
+        val debugAllPages = CaptureCenter.isDebugCaptureAllPages(BuildConfig.DEBUG) && pkg != packageName
         if (pkg !in NotificationRules.knownPackages && !debugAllPages) return
         // 抓取开关全关时不白耗控件树遍历
         if (!CaptureCenter.isA11yCaptureEnabled() && !debugAllPages) return
