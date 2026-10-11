@@ -13,24 +13,40 @@ import org.junit.Test
 class AppUpdateTest {
 
     private val releaseJson = """
-        {
-          "url": "https://api.github.com/repos/ArrogHie/ControlECO/releases/1",
-          "tag_name": "v0.4.6-beta",
-          "name": "v0.4.6-beta",
-          "body": "### 修复\n\n- 通知金额误取营销数字\r\n- 商户显示",
-          "draft": false,
-          "prerelease": true,
-          "assets": [
-            {
-              "name": "ControlECO-0.4.6-beta.apk",
-              "browser_download_url": "https://github.com/ArrogHie/ControlECO/releases/download/v0.4.6-beta/ControlECO-0.4.6-beta.apk"
-            },
-            {
-              "name": "sources.zip",
-              "browser_download_url": "https://github.com/ArrogHie/ControlECO/releases/download/v0.4.6-beta/sources.zip"
-            }
-          ]
-        }
+        [
+          {
+            "url": "https://api.github.com/repos/ArrogHie/ControlECO/releases/2",
+            "tag_name": "v0.4.6-beta",
+            "name": "v0.4.6-beta",
+            "body": "### 修复\n\n- 通知金额误取营销数字\r\n- 商户显示",
+            "draft": false,
+            "prerelease": true,
+            "assets": [
+              {
+                "name": "ControlECO-0.4.6-beta.apk",
+                "browser_download_url": "https://github.com/ArrogHie/ControlECO/releases/download/v0.4.6-beta/ControlECO-0.4.6-beta.apk"
+              },
+              {
+                "name": "sources.zip",
+                "browser_download_url": "https://github.com/ArrogHie/ControlECO/releases/download/v0.4.6-beta/sources.zip"
+              }
+            ]
+          },
+          {
+            "url": "https://api.github.com/repos/ArrogHie/ControlECO/releases/1",
+            "tag_name": "v0.4.5-beta",
+            "name": "v0.4.5-beta",
+            "body": "旧版本",
+            "draft": false,
+            "prerelease": true,
+            "assets": [
+              {
+                "name": "ControlECO-0.4.5-beta.apk",
+                "browser_download_url": "https://github.com/ArrogHie/ControlECO/releases/download/v0.4.5-beta/ControlECO-0.4.5-beta.apk"
+              }
+            ]
+          }
+        ]
     """.trimIndent()
 
     @Test
@@ -52,11 +68,27 @@ class AppUpdateTest {
 
     @Test
     fun `parse release json without apk asset keeps empty urls`() {
-        val json = """{"tag_name": "v0.5.0", "body": "仅源码"}"""
+        val json = """[{"tag_name": "v0.5.0", "body": "仅源码"}]"""
         val r = AppUpdate.parseReleaseJson(json)!!
         assertEquals("v0.5.0", r.tagName)
         assertEquals("", r.apkUrl)
         assertEquals("", r.apkUrlMirror)
+    }
+
+    @Test
+    fun `apk url scoped to newest release when older ones have assets`() {
+        // 列表接口新→旧：最新 release 没挂 APK 时不能错配到旧版本的资产
+        val json = """
+            [
+              {"tag_name": "v0.5.0", "assets": []},
+              {"tag_name": "v0.4.6-beta", "assets": [
+                {"browser_download_url": "https://github.com/ArrogHie/ControlECO/releases/download/v0.4.6-beta/x.apk"}
+              ]}
+            ]
+        """.trimIndent()
+        val r = AppUpdate.parseReleaseJson(json)!!
+        assertEquals("v0.5.0", r.tagName)
+        assertEquals("", r.apkUrl)
     }
 
     @Test

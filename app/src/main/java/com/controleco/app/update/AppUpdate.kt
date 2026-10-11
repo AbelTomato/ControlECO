@@ -23,7 +23,12 @@ import kotlinx.coroutines.launch
 object AppUpdate {
 
     private const val REPO = "ArrogHie/ControlECO"
-    private const val API_URL = "https://api.github.com/repos/$REPO/releases/latest"
+
+    /**
+     * 用 releases 列表接口而不是 releases/latest：**latest 不含预发布（prerelease）**，
+     * beta 分发全是 prerelease，latest 会永远 404；列表接口（未认证）返回全部已发布 release（新→旧）。
+     */
+    private const val API_URL = "https://api.github.com/repos/$REPO/releases?per_page=5"
     /** 镜像：前缀拼接代理（API 查询与 APK 下载都支持） */
     private const val MIRROR_PREFIX = "https://gh-proxy.com/"
 
@@ -126,15 +131,19 @@ object AppUpdate {
     }
 
     /**
-     * 从 releases/latest 的 JSON 里取 tag、首个 .apk 资产与说明。
+     * 从 releases 列表的 JSON 里取最新 release 的 tag、首个 .apk 资产与说明。
      * 用正则而非 org.json：字段位置固定、结构简单，且纯函数可直接 JVM 单测。
+     * 列表是新→旧排序：tag/资产/说明只取**第一个** release 对象（截到第二个 tag_name 为止），
+     * 防止最新 release 没挂 APK 时错配到旧版本的资产。
      */
     internal fun parseReleaseJson(json: String): ReleaseInfo? {
-        val tag = Regex("""\"tag_name\"\s*:\s*\"([^\"]+)\"""").find(json)?.groupValues?.get(1) ?: return null
-        val apkUrl = Regex("""\"browser_download_url\"\s*:\s*\"(https:[^\"]+\.apk)\"""").find(json)?.groupValues?.get(1)
-        val rawBody = Regex("""\"body\"\s*:\s*\"((?:\\.|[^\"\\])*)\"""").find(json)?.groupValues?.get(1)
+        val tagMatch = Regex("""\"tag_name\"\s*:\s*\"([^\"]+)\"""").find(json) ?: return null
+        val nextTag = Regex("""\"tag_name\"""").find(json, tagMatch.range.last + 1)
+        val scope = if (nextTag != null) json.substring(0, nextTag.range.first) else json
+        val apkUrl = Regex("""\"browser_download_url\"\s*:\s*\"(https:[^\"]+\.apk)\"""").find(scope)?.groupValues?.get(1)
+        val rawBody = Regex("""\"body\"\s*:\s*\"((?:\\.|[^\"\\])*)\"""").find(scope)?.groupValues?.get(1)
         return ReleaseInfo(
-            tagName = tag,
+            tagName = tagMatch.groupValues[1],
             apkUrl = apkUrl.orEmpty(),
             apkUrlMirror = apkUrl?.let { MIRROR_PREFIX + it }.orEmpty(),
             notes = rawBody?.let { unescapeJson(it) }?.take(300).orEmpty(),
