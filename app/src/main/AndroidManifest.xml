@@ -10,8 +10,11 @@
     <!-- 捕获通知：检测到动账/退款时发系统通知提醒确认（安卓 13+ 运行时申请） -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- 自动更新：启动时查 GitHub Release 最新版（唯一联网用途，只读不上传） -->
+    <!-- 自动更新：启动时查 GitHub Release 最新版；确认更新后应用内下载 APK 并拉起系统安装（只读不上传） -->
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- 应用内更新：确认后由应用下载 APK 并调起系统安装器（安装前系统会再弹确认，用户可拒） -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <!-- 各品牌自启动/安全中心页面包可见性（Android 11+ 显式跳转其他应用组件需要声明） -->
     <queries>
@@ -45,6 +48,17 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- 应用内更新：把下载的 APK 通过 content:// 交给系统安装器（不导出、按需授权） -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
 
         <!-- 阶段二：通知监听采集（用户在系统设置授予"通知使用权"后由系统绑定） -->
         <service

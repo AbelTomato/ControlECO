@@ -1,10 +1,15 @@
 package com.controleco.app.update
 
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
+import androidx.core.content.FileProvider
 import com.controleco.app.BuildConfig
 import com.controleco.app.util.AppLog
+import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import kotlinx.coroutines.CoroutineScope
@@ -18,10 +23,10 @@ import kotlinx.coroutines.launch
  * 应用内更新检查（beta 分发走 GitHub Release，release 以正式发布形式上传、仅版本号带 -beta）：
  * 自动更新开着时启动查一次——先直连 GitHub API，超时/失败改走镜像（gh-proxy.com 代理 api.github.com
  * 与 release 下载，实测可用；ghfast.top 不支持 API 前缀）。
- * 发现新版本只做**弹窗提醒**，下载与否由用户决定（交给系统浏览器），不会自主拉取安装；
- * 设置页另有「检查更新」手动入口（无视开关与间隔）。查不到/无更新全程静默。
+ * 发现新版本只做**弹窗提醒**；用户点「立即更新」确认后，应用内下载 APK（直连失败自动改走镜像）
+ * 并拉起系统安装器完成安装，全程不需要用户手动下载。自动更新开关只控制"要不要自动检查"。
  *
- * 网络是本应用唯一的联网用途：只读 GitHub 的 releases 接口，不上传任何数据。
+ * 网络是本应用唯一的联网用途：只访问 GitHub 的 releases 接口与 release APK 下载，不上传任何数据。
  */
 object AppUpdate {
 
@@ -44,6 +49,9 @@ object AppUpdate {
     private const val MIN_CHECK_INTERVAL_MS = 2 * 3_600_000L
     /** 直连超时给短一些，失败尽快切镜像；镜像同值 */
     private const val TIMEOUT_MS = 6_000
+
+    /** APK 合理性下限：小到离谱的"APK"一定是错误页/残片 */
+    private const val MIN_APK_BYTES = 1_000_000L
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -129,6 +137,134 @@ object AppUpdate {
             }
             mainHandler.post { onResult(message) }
         }
+    }
+
+    // ---------- 确认更新：应用内下载 + 拉起系统安装 ----------
+
+    /**
+     * 安装前置检查：未授权「安装未知应用」时跳转授权页并返回引导文案（用户授权后回来再点一次即可）；
+     * 已授权返回 null，可以直接下载。
+     */
+    fun installGate(context: Context): String? {
+        if (context.packageManager.canRequestPackageInstalls()) return null
+        runCatching {
+            context.startActivity(
+                Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}"))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+        }.onFailure { AppLog.w("Update", "open install-permission settings failed", it) }
+        return "请在接下来的页面允许「安装未知应用」，回来后再点「立即更新」"
+    }
+
+    /**
+     * 应用内下载 APK：直连 → 失败自动改走镜像（与检查同一套路）。
+     * 进度百分比经 onProgress 回调（主线程；-1 = 总大小未知，进度条转圈）。
+     * 完成经 onDone 回调（主线程）：success(File) = APK 已就绪，failure = 下载失败（两条路都没成）。
+     * 已有同版本完整 APK（上次下过但安装被打断）时直接复用，不重复下载。
+     */
+    fun downloadApk(
+        context: Context,
+        release: ReleaseInfo,
+        onProgress: (Int) -> Unit,
+        onDone: (Result<File>) -> Unit,
+    ) {
+        val progressMain = { pct: Int ->
+            mainHandler.post { onProgress(pct) }
+            Unit
+        }
+        scope.launch {
+            val result = runCatching { downloadApkBlocking(context, release, progressMain) }
+            mainHandler.post { onDone(result) }
+        }
+    }
+
+    /** 下载完成（或复用旧文件）后拉起系统安装器；异常情况返回提示文案，正常返回 null */
+    fun startInstaller(context: Context, apkFile: File): String? {
+        if (!context.packageManager.canRequestPackageInstalls()) return installGate(context)
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", apkFile)
+        val intent = Intent(Intent.ACTION_VIEW)
+            .setDataAndType(uri, "application/vnd.android.package-archive")
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        return runCatching {
+            context.startActivity(intent)
+            AppLog.i("Update", "installer launched: ${apkFile.name}")
+            null
+        }.getOrElse {
+            AppLog.w("Update", "launch installer failed", it)
+            "无法启动安装，请稍后再试"
+        }
+    }
+
+    private fun downloadApkBlocking(
+        context: Context,
+        release: ReleaseInfo,
+        onProgress: (Int) -> Unit,
+    ): File {
+        val dir = File(context.getExternalFilesDir(null) ?: context.filesDir, "update").apply { mkdirs() }
+        // 只保留当前这次要装的包：清掉旧版本与残片
+        dir.listFiles()?.forEach { if (it.name != "ControlECO-${release.tagName}.apk") it.delete() }
+        val target = File(dir, "ControlECO-${release.tagName}.apk")
+        if (target.exists() && target.length() > MIN_APK_BYTES) {
+            AppLog.i("Update", "reuse downloaded ${target.name}")
+            return target
+        }
+        val urls = buildList {
+            if (release.apkUrl.isNotBlank()) add(release.apkUrl)
+            if (release.apkUrlMirror.isNotBlank()) add(release.apkUrlMirror)
+        }
+        if (urls.isEmpty()) error("该 release 没有可下载的 APK 资产")
+        val tmp = File(dir, target.name + ".part")
+        var lastError: Exception? = null
+        for (url in urls) {
+            try {
+                tmp.delete()
+                downloadToFile(url, tmp, onProgress)
+                if (!tmp.renameTo(target)) {
+                    tmp.copyTo(target, overwrite = true)
+                    tmp.delete()
+                }
+                AppLog.i("Update", "apk downloaded from ${if (url == urls[0]) "direct" else "mirror"}: ${target.length()} bytes")
+                return target
+            } catch (e: Exception) {
+                AppLog.w("Update", "download failed url=$url: ${e.message}")
+                lastError = e
+                tmp.delete()
+            }
+        }
+        throw IllegalStateException("下载失败：直连与镜像都未成功", lastError)
+    }
+
+    private fun downloadToFile(url: String, target: File, onProgress: (Int) -> Unit) {
+        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+            connectTimeout = TIMEOUT_MS
+            readTimeout = 30_000
+            setRequestProperty("User-Agent", "ControlECO-App")
+        }
+        val code = conn.responseCode
+        if (code !in 200..299) throw IllegalStateException("HTTP $code")
+        val total = conn.contentLengthLong
+        conn.inputStream.use { input ->
+            target.outputStream().use { out ->
+                val buf = ByteArray(64 * 1024)
+                var read = 0L
+                var lastPct = -1
+                while (true) {
+                    val n = input.read(buf)
+                    if (n < 0) break
+                    out.write(buf, 0, n)
+                    read += n
+                    if (total > 0) {
+                        val pct = (read * 100 / total).toInt()
+                        if (pct != lastPct) {
+                            lastPct = pct
+                            onProgress(pct)
+                        }
+                    }
+                }
+            }
+        }
+        if (total > 0 && target.length() != total) throw IllegalStateException("下载不完整")
+        if (target.length() < MIN_APK_BYTES) throw IllegalStateException("文件过小，疑似非 APK")
     }
 
     /** 直连 → 失败（除"仓库还没有 release"外）→ 镜像 */
