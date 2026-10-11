@@ -39,6 +39,7 @@ fun SettingsDeveloperScreen(
     val context = LocalContext.current
     val lastCaptureAt by vm.lastCaptureAt.collectAsStateWithLifecycle()
     val debugCaptureAll by vm.debugCaptureAll.collectAsStateWithLifecycle()
+    val debugCaptureAllPages by vm.debugCaptureAllPages.collectAsStateWithLifecycle()
 
     fun toast() = { msg: String -> Toast.makeText(context, msg, Toast.LENGTH_LONG).show() }
 
@@ -70,6 +71,12 @@ fun SettingsDeveloperScreen(
                 title = "记录所有应用的通知（调试）",
                 checked = debugCaptureAll,
                 onCheckedChange = { vm.setDebugCaptureAll(it) },
+            )
+            RowDivider()
+            SwitchRow(
+                title = "捕获所有页面（调试）",
+                checked = debugCaptureAllPages,
+                onCheckedChange = { vm.setDebugCaptureAllPages(it) },
             )
         }
     }

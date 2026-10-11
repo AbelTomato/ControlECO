@@ -50,6 +50,7 @@ object CaptureCenter {
     private const val KEY_CAPTURE_NOTIFY_ENABLED = "capture_notify_enabled"
     private const val KEY_AUTO_ENTRY_ENABLED = "auto_entry_enabled"
     private const val KEY_DEBUG_CAPTURE_ALL = "debug_capture_all"
+    private const val KEY_DEBUG_CAPTURE_ALL_PAGES = "debug_capture_all_pages"
 
     /** 点击通知/悬浮卡跳转的路由（MainActivity intent extra） */
     const val EXTRA_ROUTE = "controleco.route"
@@ -307,6 +308,18 @@ object CaptureCenter {
         AppLog.i("Ntf", "debugCaptureAll=$enabled")
     }
 
+    /**
+     * 捕获所有页面（调试，默认关）：开启后无障碍通道记录**所有应用**的页面快照
+     * （配置已不限包名，由服务内运行时判断放行），用于采样新应用的支付页扩规则。
+     */
+    fun isDebugCaptureAllPages(isDebugBuild: Boolean): Boolean =
+        prefs().getBoolean(KEY_DEBUG_CAPTURE_ALL_PAGES, false)
+
+    fun setDebugCaptureAllPages(enabled: Boolean) {
+        prefs().edit().putBoolean(KEY_DEBUG_CAPTURE_ALL_PAGES, enabled).apply()
+        AppLog.i("Page", "debugCaptureAllPages=$enabled")
+    }
+
     private fun cleanup() {
         scope.launch {
             captureDao.deleteOlderThan(System.currentTimeMillis() - KEEP_DAYS * 24 * 3_600_000)
@@ -506,7 +519,7 @@ object CaptureCenter {
         _lastEventAt.value = System.currentTimeMillis()
 
         if (!initialized || texts.isEmpty()) return
-        val captureAll = isDebugCaptureAll(isDebugBuild)
+        val captureAll = isDebugCaptureAllPages(isDebugBuild)
         if (!isA11yCaptureEnabled() && !captureAll) {
             AppLog.d("Page", "skip (a11y capture disabled) pkg=$packageName")
             return
@@ -661,7 +674,7 @@ object CaptureCenter {
         ruleName: String,
         isRefund: Boolean = false,
     ): Boolean {
-        val categoryId = CaptureDefaults.categoryId(categoryDao.getAll(), type)
+        val categoryId = CaptureDefaults.categoryId(categoryDao.getAll(), type, counterparty.ifBlank { note })
         val accountId = CaptureDefaults.accountId(accountDao.getAll(), sourcePackage)
         if (categoryId == null || accountId == null) {
             AppLog.w("Ntf", "auto entry skipped (no category/account to use)")
@@ -739,6 +752,9 @@ object CaptureCenter {
             AppLog.w("Page", "floating confirm skipped (no categories/accounts to prefill)")
             return
         }
+        val suggestedCategoryId = CaptureDefaults.categoryId(
+            categories, parsed.type, parsed.counterparty.ifBlank { parsed.note },
+        )
         // 页面捕获发生在支付成功页停留期（约 1 秒后），此刻弹窗必被支付保护拦截——
         // 延迟到用户大概率已离开支付页时再弹（横幅通知先行兜底）
         mainHandler.postDelayed({
@@ -751,6 +767,7 @@ object CaptureCenter {
                 parsed,
                 categories,
                 accounts,
+                suggestedCategoryId = suggestedCategoryId,
                 onConfirm = { categoryId, accountId ->
                     // 冲突处理：悬浮窗操作 → 撤掉同笔通知
                     if (notifId != null) cancelCaptureNotification(notifId)

@@ -94,10 +94,12 @@ class AccBookAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
         val pkg = event.packageName?.toString() ?: return
-        // config 已限包名，这里再挡一层，防配置失效或系统行为差异
-        if (pkg !in NotificationRules.knownPackages) return
+        // 包名过滤（config 不限包名，运行时判断）：只收微信/支付宝，
+        // 「捕获所有页面（调试）」开启时放行全部应用（采样其他应用的支付页）
+        val debugAllPages = CaptureCenter.isDebugCaptureAllPages(BuildConfig.DEBUG)
+        if (pkg !in NotificationRules.knownPackages && !debugAllPages) return
         // 抓取开关全关时不白耗控件树遍历
-        if (!CaptureCenter.isA11yCaptureEnabled() && !CaptureCenter.isDebugCaptureAll(BuildConfig.DEBUG)) return
+        if (!CaptureCenter.isA11yCaptureEnabled() && !debugAllPages) return
 
         // 事件到达诊断（2s 节流，INFO 级——华为默认隐藏 DEBUG 级日志）：微信页面没捕获时，先看这行有没有出现
         val now = SystemClock.elapsedRealtime()

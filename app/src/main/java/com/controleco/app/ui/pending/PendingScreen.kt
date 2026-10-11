@@ -101,7 +101,7 @@ fun PendingScreen(vm: LedgerViewModel, onBack: () -> Unit) {
             item = p,
             accounts = accounts,
             categories = categories,
-            defaultCategoryId = vm.guessCategoryId(p.type),
+            defaultCategoryId = vm.guessCategoryId(p.type, p.counterparty.ifBlank { p.note }),
             defaultAccountId = vm.guessAccountId(p.sourcePackage),
             onConfirm = { categoryId, accountId, counterparty ->
                 vm.confirmPending(p, categoryId, accountId, counterparty)

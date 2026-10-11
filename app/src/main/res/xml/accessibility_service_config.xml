@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  无障碍采集配置：只看支付宝（微信支付页经真机实测窗口内容不可读，其记账走通知通道），
-  只订阅窗口变化事件，只读窗口内容。刻意不申请手势/按键等能力（最小化权限）；
+  无障碍采集配置：不限包名（「捕获所有页面（调试）」需要采样其他应用），
+  服务内按运行时开关过滤——只收微信/支付宝，「捕获所有页面」开启时放行全部应用。
+  只订阅窗口变化事件，只读窗口内容；刻意不申请手势/按键等能力（最小化权限）；
   notificationTimeout 做系统级事件节流第一道闸。
 -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
@@ -10,5 +11,4 @@
     android:accessibilityFlags="flagDefault"
     android:canRetrieveWindowContent="true"
     android:description="@string/a11y_service_description"
-    android:notificationTimeout="300"
-    android:packageNames="com.eg.android.AlipayGphone" />
+    android:notificationTimeout="300" />

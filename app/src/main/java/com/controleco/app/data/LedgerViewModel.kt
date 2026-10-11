@@ -712,6 +712,14 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
         _debugCaptureAll.value = enabled
     }
 
+    private val _debugCaptureAllPages = MutableStateFlow(CaptureCenter.isDebugCaptureAllPages(BuildConfig.DEBUG))
+    val debugCaptureAllPages: StateFlow<Boolean> = _debugCaptureAllPages
+
+    fun setDebugCaptureAllPages(enabled: Boolean) {
+        CaptureCenter.setDebugCaptureAllPages(enabled)
+        _debugCaptureAllPages.value = enabled
+    }
+
     fun isListenerGranted(): Boolean {
         val app = getApplication<AccBookApp>()
         return NotificationManagerCompat.getEnabledListenerPackages(app).contains(app.packageName)
@@ -858,8 +866,9 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
             val cats = categoryDao.getAll()
             val accs = accountDao.getAll()
             val entities = items.map { item ->
-                val cat = cats.firstOrNull { it.type == item.type && it.name == "其他" }
-                    ?: cats.firstOrNull { it.type == item.type }
+                val cat = cats.firstOrNull {
+                    it.id == CaptureDefaults.categoryId(cats, item.type, item.counterparty.ifBlank { item.note })
+                }
                     ?: return@launch
                 TransactionEntity(
                     type = item.type,
@@ -882,7 +891,8 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** 待确认确认弹窗的默认分类（该类型的"其他"，缺省取该类型第一个；规则与自动入账共用） */
-    fun guessCategoryId(type: TxType): Long? = CaptureDefaults.categoryId(categories.value, type)
+    fun guessCategoryId(type: TxType, merchantHint: String = ""): Long? =
+        CaptureDefaults.categoryId(categories.value, type, merchantHint)
 
     /** 按来源包名推测账户：微信→微信零钱、支付宝→支付宝、云闪付/其他→银行卡 */
     fun guessAccountId(sourcePackage: String): Long? =

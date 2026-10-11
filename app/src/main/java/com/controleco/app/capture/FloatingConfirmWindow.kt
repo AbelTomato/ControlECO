@@ -46,6 +46,7 @@ object FloatingConfirmWindow {
         parsed: PageRules.ParsedPage,
         categories: List<CategoryEntity>,
         accounts: List<AccountEntity>,
+        suggestedCategoryId: Long? = null,
         onConfirm: (categoryId: Long, accountId: Long) -> Unit,
         onIgnore: () -> Unit,
     ) {
@@ -54,7 +55,7 @@ object FloatingConfirmWindow {
         val density = context.resources.displayMetrics.density
         val dp: (Int) -> Int = { v -> (v * density + 0.5f).toInt() }
 
-        var catIndex = 0
+        var catIndex = suggestedCategoryId?.let { id -> categories.indexOfFirst { it.id == id } }?.takeIf { it >= 0 } ?: 0
         var accIndex = 0
 
         val root = LinearLayout(context).apply {

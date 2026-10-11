@@ -19,6 +19,8 @@ class CaptureDefaultsTest {
         cat(3, "其他", TxType.EXPENSE),
         cat(4, "工资", TxType.INCOME),
         cat(5, "其他", TxType.INCOME),
+        cat(6, "交通", TxType.EXPENSE),
+        cat(7, "医疗", TxType.EXPENSE),
     )
 
     private val accounts = listOf(
@@ -45,6 +47,26 @@ class CaptureDefaultsTest {
     fun `没有可用分类返回空`() {
         assertNull(CaptureDefaults.categoryId(emptyList(), TxType.EXPENSE))
         assertNull(CaptureDefaults.categoryId(listOf(cat(1, "工资", TxType.INCOME)), TxType.EXPENSE))
+    }
+
+    @Test
+    fun `商户关键词命中优先于其他`() {
+        // 捕获的商户/备注能按关键词猜分类（用户指定：出行打车类→交通、医院类→医疗）
+        assertEquals(6L, CaptureDefaults.categoryId(categories, TxType.EXPENSE, "滴滴出行"))
+        assertEquals(6L, CaptureDefaults.categoryId(categories, TxType.EXPENSE, "高德打车"))
+        assertEquals(7L, CaptureDefaults.categoryId(categories, TxType.EXPENSE, "市第一人民医院"))
+        assertEquals(7L, CaptureDefaults.categoryId(categories, TxType.EXPENSE, "校医务室"))
+        // 备注兜底：通知通道没有商户，用通知原文猜
+        assertEquals(6L, CaptureDefaults.categoryId(categories, TxType.EXPENSE, "你在滴滴出行有一笔14.90元的支出"))
+    }
+
+    @Test
+    fun `猜中分类与方向不匹配时回退其他`() {
+        // 工资/理财是收入侧分类，支出方向命中也不采用
+        assertEquals(3L, CaptureDefaults.categoryId(categories, TxType.EXPENSE, "余额宝-收益发放"))
+        // 关键词没命中 → 其他
+        assertEquals(3L, CaptureDefaults.categoryId(categories, TxType.EXPENSE, "某个完全不认识的商户"))
+        assertEquals(3L, CaptureDefaults.categoryId(categories, TxType.EXPENSE, ""))
     }
 
     @Test
