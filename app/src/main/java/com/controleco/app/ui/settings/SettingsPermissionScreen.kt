@@ -5,7 +5,9 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -143,6 +145,7 @@ private fun NotificationSection(vm: LedgerViewModel, resumeTick: Int, onOpenNoti
 @Composable
 private fun CaptureNotifySetting(vm: LedgerViewModel, resumeTick: Int) {
     val enabled by vm.captureNotifyEnabled.collectAsStateWithLifecycle()
+    val islandOn by vm.islandEnabled.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val notifGranted = remember(resumeTick) { vm.canPostNotifications() }
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -162,18 +165,30 @@ private fun CaptureNotifySetting(vm: LedgerViewModel, resumeTick: Int) {
         Text(
             "动账通知提醒",
             style = MaterialTheme.typography.bodyLarge,
+            color = if (islandOn) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.weight(1f),
         )
-        if (!notifGranted) {
-            TextButton(onClick = {
-                if (Build.VERSION.SDK_INT >= 33) {
-                    permissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
-                }
-            }) { Text("权限") }
+        if (islandOn) {
+            // 灵动岛接管：开关保留原值但不生效，关闭灵动岛后自动恢复原状态
+            Text(
+                "灵动岛已接管",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.width(10.dp))
+            Switch(checked = enabled, onCheckedChange = null)
         } else {
-            TextButton(onClick = { openCaptureChannelSettings(context) }) { Text("横幅") }
+            if (!notifGranted) {
+                TextButton(onClick = {
+                    if (Build.VERSION.SDK_INT >= 33) {
+                        permissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                    }
+                }) { Text("权限") }
+            } else {
+                TextButton(onClick = { openCaptureChannelSettings(context) }) { Text("横幅") }
+            }
+            Switch(checked = enabled, onCheckedChange = { vm.setCaptureNotifyEnabled(it) })
         }
-        Switch(checked = enabled, onCheckedChange = { vm.setCaptureNotifyEnabled(it) })
     }
 }
 
@@ -215,12 +230,12 @@ private fun A11ySection(vm: LedgerViewModel, resumeTick: Int, onOpenAccessibilit
 @Composable
 private fun OverlaySection(vm: LedgerViewModel, resumeTick: Int, onOpenOverlayPermission: () -> Unit) {
     val granted = remember(resumeTick) { vm.isOverlayGranted() }
-    val floatingOn by vm.floatingConfirmEnabled.collectAsStateWithLifecycle()
+    val islandOn by vm.islandEnabled.collectAsStateWithLifecycle()
 
-    SectionTitle("悬浮窗")
+    SectionTitle("灵动岛")
     PaneCard {
         PermissionStatusRow(
-            title = "悬浮确认窗",
+            title = "灵动岛提醒",
             granted = granted,
             grantedText = "已授权",
             ungrantedText = "未授权",
@@ -229,19 +244,20 @@ private fun OverlaySection(vm: LedgerViewModel, resumeTick: Int, onOpenOverlayPe
         )
         RowDivider()
         SwitchRow(
-            title = "支付完成弹出悬浮窗",
-            checked = floatingOn,
-            onCheckedChange = { vm.setFloatingConfirmEnabled(it) },
+            title = "灵动岛提醒入账",
+            checked = islandOn,
+            onCheckedChange = { vm.setIslandEnabled(it) },
         )
         RowDivider()
         PermissionTutorial(
             "悬浮窗授权教程",
             listOf(
+                "灵动岛在屏幕顶部弹出胶囊提醒入账，悬浮窗权限是它的前提。",
                 "推荐：点上方「去授权」，直达「显示在其他应用上层 / 悬浮窗」开关，打开即可。",
                 overlayPathFor(Brand.current()),
                 "若开关为灰色不可开：安卓 13+ 需先做「允许受限制的设置」（见通知监听教程第 1 步）。",
-                "授权后用「开发者功能 → 手动启动」里的测试弹窗验证；" +
-                    "支付时若 Logcat 有 floating confirm shown 但看不到窗，" +
+                "授权后用「开发者功能 → 手动启动」里的测试入口验证；" +
+                    "支付时若 Logcat 有 island shown 但看不到，" +
                     "是支付保护中心/支付保险箱拦截，见保活设置。",
             ),
         )

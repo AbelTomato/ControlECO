@@ -45,14 +45,14 @@ object CaptureCenter {
     private const val PREFS_NAME = "settings"
     private const val KEY_CAPTURE_ENABLED = "auto_capture_enabled"
     private const val KEY_A11Y_CAPTURE_ENABLED = "a11y_capture_enabled"
-    private const val KEY_FLOATING_CONFIRM_ENABLED = "floating_confirm_enabled"
+    private const val KEY_ISLAND_ENABLED = "island_enabled"
     private const val KEY_REFUND_LINK_ENABLED = "refund_link_enabled"
     private const val KEY_CAPTURE_NOTIFY_ENABLED = "capture_notify_enabled"
     private const val KEY_AUTO_ENTRY_ENABLED = "auto_entry_enabled"
     private const val KEY_DEBUG_CAPTURE_ALL = "debug_capture_all"
     private const val KEY_DEBUG_CAPTURE_ALL_PAGES = "debug_capture_all_pages"
 
-    /** 点击通知/悬浮卡跳转的路由（MainActivity intent extra） */
+    /** 点击通知/灵动岛跳转的路由（MainActivity intent extra） */
     const val EXTRA_ROUTE = "controleco.route"
     const val ROUTE_PENDING = "pending"
     const val ROUTE_REFUND_LINK = "refundLink"
@@ -69,15 +69,17 @@ object CaptureCenter {
     private const val REPOST_WINDOW_MS = 10_000L
     private const val RECENT_KEY_CAP = 256
 
-    /** 自动悬浮窗延迟：页面捕获后仍在支付成功页停留期，立刻弹必被拦截 */
-    private const val FLOATING_DELAY_MS = 4_000L
+    /** 灵动岛弹出延迟：页面捕获后仍在支付成功页停留期，立刻弹必被拦截 */
+    private const val ISLAND_DELAY_MS = 4_000L
 
-    /** 本应用是否在前台（MainActivity onResume/onPause 维护；前台时悬浮窗无意义） */
+    /** 本应用是否在前台（MainActivity onResume/onPause 维护；前台时灵动岛无意义） */
     @Volatile
     private var appInForeground = false
 
     fun setAppForeground(foreground: Boolean) {
         appInForeground = foreground
+        // 进 App 即收岛：待确认列表里直接处理，岛继续悬着只会挡视线
+        if (foreground) mainHandler.post { FloatingIslandWindow.dismiss() }
     }
 
     /** 捕获日志保留策略 */
@@ -178,10 +180,14 @@ object CaptureCenter {
         }
     }
 
+    private fun pendingNotifText(sourceLabel: String, amountCents: Long, counterparty: String): String =
+        "$sourceLabel ${Money.formatYuan(amountCents)}" +
+            (if (counterparty.isNotBlank()) " · $counterparty" else "") +
+            " · 点击确认入账"
+
     /**
-     * 捕获入队后的双通道提醒：系统通知（横幅，可靠）+ 悬浮确认卡（支付页上方会被拦截，
-     * 离开支付页后可见）。冲突处理：悬浮卡确认/忽略 → 自动删除同笔通知；
-     * 点击通知 → 打开 App 时关闭悬浮卡（onRouteOpened）。
+     * 捕获入队后的提醒分发：灵动岛开启时由灵动岛接管（不发通知，岛超时/弹出失败才补发通知
+     * 兜底），关闭时按通知开关发横幅。通知 id 确定化，灵动岛确认/忽略会撤掉同笔通知。
      */
     private suspend fun announceCapture(
         type: TxType,
@@ -201,36 +207,29 @@ object CaptureCenter {
             type == TxType.EXPENSE -> "支出"
             else -> "收入"
         }
-        postCaptureNotification(
-            "捕获到一笔$kind",
-            "$sourceLabel ${Money.formatYuan(amountCents)}" +
-                (if (counterparty.isNotBlank()) " · $counterparty" else "") +
-                " · 点击确认入账",
-            ROUTE_PENDING,
-            notifId,
+        val parsed = PageRules.ParsedPage(
+            type = type,
+            amountCents = amountCents,
+            counterparty = counterparty,
+            paymentMethod = paymentMethod,
+            txTime = txTime,
+            sourceLabel = sourceLabel,
+            ruleName = ruleName,
+            note = note,
+            dedupKey = dedupKey,
         )
-        maybeShowFloatingConfirm(
-            PageRules.ParsedPage(
-                type = type,
-                amountCents = amountCents,
-                counterparty = counterparty,
-                paymentMethod = paymentMethod,
-                txTime = txTime,
-                sourceLabel = sourceLabel,
-                ruleName = ruleName,
-                note = note,
-                dedupKey = dedupKey,
-            ),
-            notifId,
-            isRefund,
-        )
+        if (isIslandEnabled()) {
+            maybeShowIsland(parsed, notifId, isRefund, "捕获到一笔$kind")
+            return
+        }
+        postCaptureNotification("捕获到一笔$kind", pendingNotifText(sourceLabel, amountCents, counterparty), ROUTE_PENDING, notifId)
     }
 
-    /** MainActivity 收到悬浮卡/通知的跳转后回调：点通知进 App 时关闭悬浮卡，避免悬在本应用上层 */
+    /** MainActivity 收到灵动岛/通知的跳转后回调：点通知进 App 时关闭灵动岛，避免悬在本应用上层 */
     fun onRouteOpened(route: String) {
         if (!initialized) return
-        mainHandler.post { FloatingConfirmWindow.dismiss() }
-        AppLog.d("Page", "route opened: $route, floating dismissed if any")
+        mainHandler.post { FloatingIslandWindow.dismiss() }
+        AppLog.d("Page", "route opened: $route, island dismissed if any")
     }
 
     fun markConnected(connected: Boolean) {
@@ -259,12 +258,16 @@ object CaptureCenter {
         AppLog.i("Page", "a11yCaptureEnabled=$enabled")
     }
 
-    fun isFloatingConfirmEnabled(): Boolean =
-        prefs().getBoolean(KEY_FLOATING_CONFIRM_ENABLED, true)
+    /**
+     * 灵动岛提醒开关（默认开）。开启时接管动账通知（见 announceCapture）。
+     * 迁移：旧「悬浮确认窗」开关（floating_confirm_enabled，已弃用）的取值作为首次默认。
+     */
+    fun isIslandEnabled(): Boolean =
+        prefs().getBoolean(KEY_ISLAND_ENABLED, prefs().getBoolean("floating_confirm_enabled", true))
 
-    fun setFloatingConfirmEnabled(enabled: Boolean) {
-        prefs().edit().putBoolean(KEY_FLOATING_CONFIRM_ENABLED, enabled).apply()
-        AppLog.i("Page", "floatingConfirmEnabled=$enabled")
+    fun setIslandEnabled(enabled: Boolean) {
+        prefs().edit().putBoolean(KEY_ISLAND_ENABLED, enabled).apply()
+        AppLog.i("Page", "islandEnabled=$enabled")
     }
 
     fun isRefundLinkEnabled(): Boolean =
@@ -466,45 +469,19 @@ object CaptureCenter {
 
     // ---------- 退款关联提醒（无金额退款通知） ----------
 
-    /** 微信"退款到账通知"没有金额，无法直接入队：提醒用户进 App 选择被退款的账单 */
+    /** 微信"退款到账通知"没有金额，无法直接入队：提醒用户进 App 选择被退款的账单（纯通知，无悬浮窗） */
     private suspend fun handleRefundNotice(packageName: String, rawId: Long, postTime: Long) {
         captureDao.updateMatch(rawId, "退款·待关联", false)
         AppLog.i("Ntf", "amountless refund notice -> link reminder pkg=$packageName")
         if (!isRefundLinkEnabled()) return
         val label = NotificationRules.sourceLabel(packageName)
         val notifId = ("refund|$packageName|$postTime").hashCode()
-        if (Settings.canDrawOverlays(appContext)) {
-            mainHandler.post {
-                FloatingConfirmWindow.showRefundLink(
-                    appContext,
-                    label,
-                    onOpen = {
-                        cancelCaptureNotification(notifId)
-                        openRoute(ROUTE_REFUND_LINK)
-                    },
-                    onIgnore = { cancelCaptureNotification(notifId) },
-                )
-            }
-        } else {
-            AppLog.i("Page", "refund floating skipped (no overlay permission)")
-        }
         postCaptureNotification(
             "${label}退款到账",
             "点击选择被退款的账单，记录退款收入",
             ROUTE_REFUND_LINK,
             notifId,
         )
-    }
-
-    /** 从悬浮卡/通知跳进 App 内页面（调用点均在主线程） */
-    private fun openRoute(route: String) {
-        runCatching {
-            appContext.startActivity(
-                android.content.Intent(appContext, com.controleco.app.MainActivity::class.java)
-                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                    .putExtra(EXTRA_ROUTE, route),
-            )
-        }.onFailure { AppLog.w("Page", "open route $route failed", it) }
     }
 
     // ---------- 通道二：无障碍页面抓取 ----------
@@ -600,8 +577,15 @@ object CaptureCenter {
                             "${related.pending.id} ${parsed.ruleName} ${Money.formatYuan(parsed.amountCents)}" +
                             (if (related.sameAmount) "" else " (通知解析 ${Money.formatYuan(related.pending.amountCents)}，页面金额为准)"),
                     )
-                    // 自动入账无需确认；待确认条目弹富化后的悬浮卡（确认/忽略会撤掉原通知）
-                    if (!autoEntered) maybeShowFloatingConfirm(parsed, pendingNotifId(related.pending.dedupKey))
+                    // 自动入账无需确认；待确认条目由灵动岛富化后再次弹出（确认/忽略会撤掉原通知）
+                    if (!autoEntered && isIslandEnabled()) {
+                        maybeShowIsland(
+                            parsed,
+                            pendingNotifId(related.pending.dedupKey),
+                            isRefund = false,
+                            notifTitle = "捕获到一笔${if (parsed.type == TxType.EXPENSE) "支出" else "收入"}",
+                        )
+                    }
                     return@launch
                 }
 
@@ -731,62 +715,73 @@ object CaptureCenter {
         }
     }
 
-    // ---------- 悬浮确认窗 ----------
+    // ---------- 灵动岛 ----------
 
-    private suspend fun maybeShowFloatingConfirm(
+    /**
+     * 灵动岛提醒（默认开，开启时接管动账通知）。兜底链：
+     * - 无悬浮窗权限 / 无分类账户可预填 → 立即补发通知；
+     * - 延迟 4s 后本应用在前台 / addView 被支付保护拦截 → 补发通知；
+     * - 岛弹出但 30s 超时未处理 → 补发通知。
+     * 补发用确定化 id，notify 同 id 幂等覆盖，富化路径（同笔通知已存在）重复调用无副作用。
+     */
+    private suspend fun maybeShowIsland(
         parsed: PageRules.ParsedPage,
-        notifId: Int? = null,
-        isRefund: Boolean = false,
+        notifId: Int,
+        isRefund: Boolean,
+        notifTitle: String,
     ) {
-        if (!isFloatingConfirmEnabled()) {
-            AppLog.i("Page", "floating confirm skipped（设置页「支付完成弹出悬浮窗」开关关闭）")
-            return
+        val notifText = pendingNotifText(parsed.sourceLabel, parsed.amountCents, parsed.counterparty)
+        fun fallback(reason: String) {
+            AppLog.i("Page", "island fallback to notify（$reason）")
+            postCaptureNotification(notifTitle, notifText, ROUTE_PENDING, notifId)
         }
         if (!Settings.canDrawOverlays(appContext)) {
-            AppLog.i("Page", "floating confirm skipped（未授权悬浮窗权限/显示在其他应用上层）")
+            fallback("未授权悬浮窗权限/显示在其他应用上层")
             return
         }
         val categories = categoryDao.getAll().filter { it.type == parsed.type }
         val accounts = accountDao.getAll()
         if (categories.isEmpty() || accounts.isEmpty()) {
-            AppLog.w("Page", "floating confirm skipped (no categories/accounts to prefill)")
+            fallback("无分类/账户可预填")
             return
         }
         val suggestedCategoryId = CaptureDefaults.categoryId(
             categories, parsed.type, parsed.counterparty.ifBlank { parsed.note },
         )
         // 页面捕获发生在支付成功页停留期（约 1 秒后），此刻弹窗必被支付保护拦截——
-        // 延迟到用户大概率已离开支付页时再弹（横幅通知先行兜底）
+        // 延迟到用户大概率已离开支付页时再弹
         mainHandler.postDelayed({
             if (appInForeground) {
-                AppLog.i("Page", "floating confirm skipped（本应用在前台，待确认列表里直接处理）")
+                fallback("本应用在前台，待确认列表里直接处理")
                 return@postDelayed
             }
-            FloatingConfirmWindow.show(
+            val shown = FloatingIslandWindow.show(
                 appContext,
                 parsed,
                 categories,
                 accounts,
                 suggestedCategoryId = suggestedCategoryId,
                 onConfirm = { categoryId, accountId ->
-                    // 冲突处理：悬浮窗操作 → 撤掉同笔通知
-                    if (notifId != null) cancelCaptureNotification(notifId)
+                    // 冲突处理：灵动岛操作 → 撤掉同笔通知
+                    cancelCaptureNotification(notifId)
                     confirmDirect(parsed, categoryId, accountId, isRefund)
                 },
                 onIgnore = {
-                    if (notifId != null) cancelCaptureNotification(notifId)
+                    cancelCaptureNotification(notifId)
                     scope.launch {
                         deletePendingFor(parsed)
-                        AppLog.i("Page", "floating ignored, removed same-transaction pending entries")
+                        AppLog.i("Page", "island ignored, removed same-transaction pending entries")
                     }
                 },
+                onTimeout = { fallback("30s 超时未处理") },
             )
+            if (!shown) fallback("addView 失败，可能被支付保护拦截")
             // debug 判别器：Toast 是系统级窗口不受支付保护拦截——
-            // Toast 可见而悬浮窗不可见 = 悬浮窗被系统/支付保护层拦截的铁证
+            // Toast 可见而灵动岛不可见 = 窗口被系统/支付保护层拦截的铁证
             if (BuildConfig.DEBUG) {
-                android.widget.Toast.makeText(appContext, "自动悬浮窗已尝试弹出（debug）", android.widget.Toast.LENGTH_LONG).show()
+                android.widget.Toast.makeText(appContext, "灵动岛已尝试弹出（debug）", android.widget.Toast.LENGTH_LONG).show()
             }
-        }, FLOATING_DELAY_MS)
+        }, ISLAND_DELAY_MS)
     }
 
     /**
@@ -837,41 +832,41 @@ object CaptureCenter {
     }
 
     /**
-     * debug：手动弹出测试悬浮窗（设置页入口）。
-     * 不经捕获链路、不入账，确认/忽略只回显——用于区分"悬浮窗层坏了/被拦截"与"页面没捕获到"。
+     * debug：手动弹出测试灵动岛（设置页入口）。
+     * 不经捕获链路、不入账，确认/忽略只回显——用于区分"窗口层坏了/被拦截"与"页面没捕获到"。
      */
-    fun showFloatingTest(onResult: (String) -> Unit) {
+    fun showIslandTest(onResult: (String) -> Unit) {
         if (!initialized) return
         if (!Settings.canDrawOverlays(appContext)) {
-            onResult("未授权悬浮窗权限：设置页「悬浮确认窗」→ 去授权")
+            onResult("未授权悬浮窗权限：设置页「权限 → 灵动岛提醒」→ 去授权")
             return
         }
         scope.launch {
-            showSampleFloating()
+            showSampleIsland()
             // onResult 可能触发 UI 操作（Toast），必须回主线程——IO 线程直接 Toast 会崩溃
             mainHandler.post {
-                onResult("悬浮窗已尝试弹出；若看不到，多半被支付保护/支付保险箱拦截（见保活设置），或看 Logcat [Page] 日志")
+                onResult("灵动岛已尝试弹出；若看不到，多半被支付保护/支付保险箱拦截（见保活设置），或看 Logcat [Page] 日志")
             }
         }
     }
 
     /**
-     * debug：延迟弹测试悬浮窗——按下后 20 秒才弹，用于切到支付宝付款页验证
-     * "悬浮窗在支付页上层是否被系统/支付保护拦截"（测试弹窗本身能弹但支付页上不弹的判别）。
+     * debug：延迟弹测试灵动岛——按下后 20 秒才弹，用于切到支付宝付款页验证
+     * "灵动岛在支付页上层是否被系统/支付保护拦截"（测试弹窗本身能弹但支付页上不弹的判别）。
      */
-    fun scheduleFloatingTest(onResult: (String) -> Unit) {
+    fun scheduleIslandTest(onResult: (String) -> Unit) {
         if (!initialized) return
         if (!Settings.canDrawOverlays(appContext)) {
-            onResult("未授权悬浮窗权限：设置页「悬浮确认窗」→ 去授权")
+            onResult("未授权悬浮窗权限：设置页「权限 → 灵动岛提醒」→ 去授权")
             return
         }
         mainHandler.postDelayed({
             scope.launch {
-                showSampleFloating()
-                toast("延迟测试：悬浮窗已尝试弹出")
+                showSampleIsland()
+                toast("延迟测试：灵动岛已尝试弹出")
             }
         }, 20_000L)
-        onResult("已安排：20 秒后弹窗，请立刻切到支付宝付款页并停留等待")
+        onResult("已安排：20 秒后弹出，请立刻切到支付宝付款页并停留等待")
     }
 
     /** debug：延迟 20 秒发一条样例捕获通知（验证通知通道可用性与点击跳转） */
@@ -888,7 +883,7 @@ object CaptureCenter {
         onResult("已安排：20 秒后发送测试通知（可切到任意界面等待）")
     }
 
-    private suspend fun showSampleFloating() {
+    private suspend fun showSampleIsland() {
         val categories = categoryDao.getAll().filter { it.type == TxType.EXPENSE }
         val accounts = accountDao.getAll()
         if (categories.isEmpty() || accounts.isEmpty()) {
@@ -902,18 +897,19 @@ object CaptureCenter {
             paymentMethod = "中国银行储蓄卡(8920)",
             txTime = null,
             sourceLabel = "测试",
-            ruleName = "悬浮窗测试",
+            ruleName = "灵动岛测试",
             note = "测试数据，确认不会入账",
-            dedupKey = "test|floating",
+            dedupKey = "test|island",
         )
         mainHandler.post {
-            FloatingConfirmWindow.show(
+            FloatingIslandWindow.show(
                 appContext,
                 parsed,
                 categories,
                 accounts,
-                onConfirm = { _, _ -> toast("测试窗口：确认回调正常（未入账）") },
-                onIgnore = { toast("测试窗口：忽略回调正常") },
+                onConfirm = { _, _ -> toast("测试岛：确认回调正常（未入账）") },
+                onIgnore = { toast("测试岛：忽略回调正常") },
+                onTimeout = { toast("测试岛：超时回调正常（未入账）") },
             )
         }
     }

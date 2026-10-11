@@ -33,7 +33,7 @@ object CapturePermissions {
                 CapturePermission.A11Y to
                     ready(CaptureCenter.isA11yCaptureEnabled(), AccBookAccessibilityService.isEnabled(app)),
                 CapturePermission.OVERLAY to
-                    ready(CaptureCenter.isFloatingConfirmEnabled(), Settings.canDrawOverlays(app)),
+                    ready(CaptureCenter.isIslandEnabled(), Settings.canDrawOverlays(app)),
                 CapturePermission.NOTIFY to
                     ready(CaptureCenter.isCaptureNotifyEnabled(), canPostNotifications(app)),
             ),
