@@ -10,6 +10,9 @@
     <!-- 捕获通知：检测到动账/退款时发系统通知提醒确认（安卓 13+ 运行时申请） -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- 自动更新：启动时查 GitHub Release 最新版（唯一联网用途，只读不上传） -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <!-- 各品牌自启动/安全中心页面包可见性（Android 11+ 显式跳转其他应用组件需要声明） -->
     <queries>
         <package android:name="com.miui.securitycenter" />

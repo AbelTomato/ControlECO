@@ -21,6 +21,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -102,8 +103,8 @@ fun PendingScreen(vm: LedgerViewModel, onBack: () -> Unit) {
             categories = categories,
             defaultCategoryId = vm.guessCategoryId(p.type),
             defaultAccountId = vm.guessAccountId(p.sourcePackage),
-            onConfirm = { categoryId, accountId ->
-                vm.confirmPending(p, categoryId, accountId)
+            onConfirm = { categoryId, accountId, counterparty ->
+                vm.confirmPending(p, categoryId, accountId, counterparty)
                 confirming = null
             },
             onDismiss = { confirming = null },
@@ -148,6 +149,15 @@ private fun PendingRow(item: PendingTransactionEntity, onConfirm: () -> Unit, on
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (item.counterparty.isNotBlank()) {
+                Text(
+                    "收款方 ${item.counterparty}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
             if (item.note.isNotBlank()) {
                 Text(
                     item.note,
@@ -176,11 +186,12 @@ private fun ConfirmPendingDialog(
     categories: List<CategoryEntity>,
     defaultCategoryId: Long?,
     defaultAccountId: Long?,
-    onConfirm: (Long, Long) -> Unit,
+    onConfirm: (Long, Long, String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var categoryId by remember(item.id) { mutableStateOf(defaultCategoryId) }
     var accountId by remember(item.id) { mutableStateOf(defaultAccountId) }
+    var counterparty by remember(item.id) { mutableStateOf(item.counterparty) }
     var error by remember { mutableStateOf<String?>(null) }
     val catsOfType = categories.filter { it.type == item.type }
 
@@ -204,6 +215,12 @@ private fun ConfirmPendingDialog(
                     )
                 }
                 Text("分类", style = MaterialTheme.typography.labelMedium)
+                OutlinedTextField(
+                    value = counterparty,
+                    onValueChange = { counterparty = it },
+                    label = { Text("收款方/商户") },
+                    singleLine = true,
+                )
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     catsOfType.forEach { c ->
                         FilterChip(
@@ -234,7 +251,7 @@ private fun ConfirmPendingDialog(
                     error = "请选择账户"
                     return@TextButton
                 }
-                onConfirm(categoryId!!, accountId!!)
+                onConfirm(categoryId!!, accountId!!, counterparty.trim())
             }) { Text("入账") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },

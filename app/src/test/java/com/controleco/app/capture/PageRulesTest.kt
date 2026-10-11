@@ -167,6 +167,34 @@ class PageRulesTest {
     }
 
     @Test
+    fun `alipay real success page deepseek merchant`() {
+        // 用户真机样本（2026-10-11）：商户"杭州深度求索"是独立节点、无标签；
+        // 页面比拼多多样本多了"回首页/返回商家"，少了 x3 步进器
+        val r = parse(
+            NotificationRules.ALIPAY,
+            listOf(
+                "支付成功￥5.00", "杭州深度求索", "￥5.00", "付款方式",
+                "中国银行储蓄卡(8920)", "回首页", "返回商家", "完成", "完成",
+            ),
+        )!!
+        assertEquals(TxType.EXPENSE, r.type)
+        assertEquals(500L, r.amountCents)
+        assertEquals("杭州深度求索", r.counterparty)
+        assertEquals("中国银行储蓄卡(8920)", r.paymentMethod)
+    }
+
+    @Test
+    fun `partial snapshot without merchant node does not pick nav buttons`() {
+        // 页面分阶段渲染：商户节点未就绪的半截快照，导航节点（回首页）不能被兜底当成收款方
+        val r = parse(
+            NotificationRules.ALIPAY,
+            listOf("支付成功￥5.00", "￥5.00", "付款方式", "中国银行储蓄卡(8920)", "回首页", "返回商家", "完成", "完成"),
+        )!!
+        assertEquals(500L, r.amountCents)
+        assertEquals("", r.counterparty)
+    }
+
+    @Test
     fun `alipay real cashier page skipped`() {
         // 真机样本：收银台页（还没付款），"支付成功得xx券"营销文案会让它命中"支付成功"
         assertNull(

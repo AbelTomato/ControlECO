@@ -31,6 +31,7 @@ import com.controleco.app.data.budget.Budget
 import com.controleco.app.data.model.BillSource
 import com.controleco.app.data.model.ImportCommitResult
 import com.controleco.app.data.model.ParsedBill
+import com.controleco.app.update.AppUpdate
 import com.controleco.app.util.AppLog
 import com.controleco.app.util.Money
 import kotlinx.coroutines.Dispatchers
@@ -740,6 +741,14 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
         _autoEntryEnabled.value = enabled
     }
 
+    private val _autoUpdateEnabled = MutableStateFlow(AppUpdate.isAutoUpdateEnabled(getApplication()))
+    val autoUpdateEnabled: StateFlow<Boolean> = _autoUpdateEnabled
+
+    fun setAutoUpdateEnabled(enabled: Boolean) {
+        AppUpdate.setAutoUpdateEnabled(getApplication(), enabled)
+        _autoUpdateEnabled.value = enabled
+    }
+
     /** 通知权限（安卓 13+ 运行时） */
     fun canPostNotifications(): Boolean = CaptureCenter.canPostNotifications()
 
@@ -812,7 +821,12 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun confirmPending(item: PendingTransactionEntity, categoryId: Long, accountId: Long) {
+    fun confirmPending(
+        item: PendingTransactionEntity,
+        categoryId: Long,
+        accountId: Long,
+        counterparty: String = item.counterparty,
+    ) {
         viewModelScope.launch(Dispatchers.IO) {
             val externalId = "NTF:${item.dedupKey}"
             txDao.insert(
@@ -823,7 +837,7 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
                     accountId = accountId,
                     timestamp = item.timestamp,
                     note = item.note.ifBlank { item.ruleName },
-                    counterparty = item.counterparty,
+                    counterparty = counterparty.trim().ifBlank { item.counterparty },
                     source = TxSource.NOTIFICATION,
                     externalId = externalId,
                     refundMark = item.refundMark,

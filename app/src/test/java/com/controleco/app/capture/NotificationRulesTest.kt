@@ -96,6 +96,19 @@ class NotificationRulesTest {
     }
 
     @Test
+    fun `alipay expense with long modifier before keyword`() {
+        // 真实样本（2026-10-11）：免密扣款通知，金额与"扣款"之间的修饰语超过 3 个字；
+        // 关键词后的"领取6个支付宝积分"不能被当成金额
+        val r = parse(
+            NotificationRules.ALIPAY,
+            "交易提醒",
+            "你在浙江嗨便利网络科技有限公司有一笔2.98元的免密/自动扣款支付，点击领取6个支付宝积分。",
+        )!!
+        assertEquals(TxType.EXPENSE, r.type)
+        assertEquals(298L, r.amountCents)
+    }
+
+    @Test
     fun `unionpay expense`() {
         val r = parse(NotificationRules.UNIONPAY, "云闪付", "您尾号1234的账户消费50.00元")!!
         assertEquals(TxType.EXPENSE, r.type)

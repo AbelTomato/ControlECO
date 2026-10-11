@@ -53,7 +53,7 @@ import com.controleco.app.util.Money
 import java.time.LocalDate
 
 /** 开源仓库（个人页底部一行，点按用系统浏览器打开） */
-private const val GITHUB_REPO_PATH = "ArrogHie/MyGcoin"
+private const val GITHUB_REPO_PATH = "ArrogHie/ControlECO"
 private const val GITHUB_REPO_URL = "https://github.com/$GITHUB_REPO_PATH"
 
 /**

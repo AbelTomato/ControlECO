@@ -31,6 +31,7 @@ fun SettingsScreen(
     LaunchedEffect(Unit) { AppLog.i("settings", "hub opened") }
 
     val autoEntry by vm.autoEntryEnabled.collectAsStateWithLifecycle()
+    val autoUpdate by vm.autoUpdateEnabled.collectAsStateWithLifecycle()
 
     SettingsPage(title = "设置", onBack = onBack) {
         SectionTitle("账本")
@@ -54,6 +55,13 @@ fun SettingsScreen(
 
         SectionTitle("其他")
         PaneCard {
+            SwitchRow(
+                title = "自动更新",
+                subtitle = "启动时检查新版本：先走 GitHub 直连，超时自动改走镜像",
+                checked = autoUpdate,
+                onCheckedChange = { vm.setAutoUpdateEnabled(it) },
+            )
+            RowDivider()
             InfoRow(title = "开发者功能", onClick = onOpenDeveloper)
             RowDivider()
             InfoRow(title = "关于 我ECO", onClick = onOpenAbout)
