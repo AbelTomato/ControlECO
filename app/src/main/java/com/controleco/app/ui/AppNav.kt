@@ -50,6 +50,7 @@ import com.controleco.app.ui.accounts.CategoriesScreen
 import com.controleco.app.ui.common.PermissionReminderDialog
 import com.controleco.app.ui.common.QuickAddPill
 import com.controleco.app.ui.debug.CaptureLogScreen
+import com.controleco.app.ui.debug.CaptureTraceScreen
 import com.controleco.app.ui.home.HomeScreen
 import com.controleco.app.ui.imports.ImportScreen
 import com.controleco.app.ui.keepalive.KeepAliveScreen
@@ -142,6 +143,8 @@ fun AccBookNav(
                 onQuickAdd = { navController.navigate("quickAdd") },
                 onEditTransaction = { id -> navController.navigate("edit/$id") },
                 onOpenPending = { navController.navigate("pending") },
+                onOpenAccount = { navController.navigate("settings/account") },
+                onOpenImport = { navController.navigate("settings/import") },
                 onOpenSettings = { navController.navigate("settings") },
                 onOpenCategories = { navController.navigate("categories") },
             )
@@ -157,14 +160,19 @@ fun AccBookNav(
         composable("pending") { PendingScreen(vm = vm, onBack = { navController.popBackStack() }) }
         composable("refundLink") { RefundLinkScreen(vm = vm, onBack = { navController.popBackStack() }) }
         composable("captureLog") { CaptureLogScreen(vm = vm, onBack = { navController.popBackStack() }) }
+        composable("captureTrace") {
+            CaptureTraceScreen(
+                vm = vm,
+                onBack = { navController.popBackStack() },
+                onOpenTransaction = { id -> navController.navigate("edit/$id") },
+            )
+        }
 
-        // ---- 设置体系：设置 →（账户 / 账单导入 / 权限 / 开发者功能 / 关于）----
+        // ---- 设置体系：设置 →（权限 / 开发者功能 / 关于）；账户/账单导入在个人页 ----
         composable("settings") {
             SettingsScreen(
                 vm = vm,
                 onBack = { navController.popBackStack() },
-                onOpenAccount = { navController.navigate("settings/account") },
-                onOpenImport = { navController.navigate("settings/import") },
                 onOpenPermissions = { navController.navigate("settings/permissions") },
                 onOpenDeveloper = { navController.navigate("settings/developer") },
                 onOpenAbout = { navController.navigate("settings/about") },
@@ -198,6 +206,7 @@ fun AccBookNav(
                 onBack = { navController.popBackStack() },
                 onOpenPending = { navController.navigate("pending") },
                 onOpenCaptureLog = { navController.navigate("captureLog") },
+                onOpenCaptureTrace = { navController.navigate("captureTrace") },
                 onOpenKeepAlive = { navController.navigate("keepAlive") },
             )
         }
@@ -234,6 +243,8 @@ private fun MainScaffold(
     onQuickAdd: () -> Unit,
     onEditTransaction: (Long) -> Unit,
     onOpenPending: () -> Unit,
+    onOpenAccount: () -> Unit,
+    onOpenImport: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenCategories: () -> Unit,
 ) {
@@ -287,6 +298,8 @@ private fun MainScaffold(
                 2 -> StatsScreen(vm = vm, scrollToTopTick = reenterTick)
                 3 -> ProfileScreen(
                     vm = vm,
+                    onOpenAccount = onOpenAccount,
+                    onOpenImport = onOpenImport,
                     onOpenSettings = onOpenSettings,
                     onOpenCategories = onOpenCategories,
                 )

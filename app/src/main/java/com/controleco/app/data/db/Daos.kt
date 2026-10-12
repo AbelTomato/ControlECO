@@ -1,6 +1,7 @@
 package com.controleco.app.data.db
 
 import androidx.room.Dao
+import androidx.room.Embedded
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
@@ -282,4 +283,41 @@ interface PendingDao {
 
     @Query("DELETE FROM pending_transactions WHERE dedupKey = :dedupKey")
     suspend fun deleteByDedupKey(dedupKey: String)
+}
+
+/**
+ * 溯源列表行：原始快照 + 该笔入账的当前状态（联查解析，不在溯源表里冗余存状态）。
+ * - [linkedTxId] 非空 = 已入账的账单 id（externalId = "NTF:" + dedupKey，唯一索引保证最多一条；
+ *   账单被删除后解析为空，溯源记录本身仍保留作证据）；
+ * - [pendingCount] > 0 = 仍在待确认队列里（只数 PENDING 条目；自动入账留下的 AUTO 记录不算，它在合并池里只是回填用）。
+ */
+data class CaptureTraceRow(
+    @Embedded val trace: CaptureTraceEntity,
+    val linkedTxId: Long? = null,
+    val pendingCount: Int = 0,
+)
+
+@Dao
+interface TraceDao {
+
+    @Insert
+    suspend fun insert(trace: CaptureTraceEntity): Long
+
+    @Query(
+        """SELECT tr.*,
+           (SELECT t.id FROM transactions t WHERE t.externalId = 'NTF:' || tr.dedupKey LIMIT 1) AS linkedTxId,
+           (SELECT COUNT(*) FROM pending_transactions p
+              WHERE p.dedupKey = tr.dedupKey AND p.status = 'PENDING') AS pendingCount
+           FROM capture_traces tr ORDER BY tr.id DESC LIMIT :limit"""
+    )
+    fun observeRecent(limit: Int): Flow<List<CaptureTraceRow>>
+
+    @Query("SELECT COUNT(*) FROM capture_traces")
+    fun observeCount(): Flow<Int>
+
+    @Query("DELETE FROM capture_traces WHERE id NOT IN (SELECT id FROM capture_traces ORDER BY id DESC LIMIT :keep)")
+    suspend fun keepNewest(keep: Int)
+
+    @Query("DELETE FROM capture_traces")
+    suspend fun clearAll()
 }

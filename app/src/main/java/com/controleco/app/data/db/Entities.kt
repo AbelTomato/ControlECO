@@ -107,6 +107,64 @@ data class CapturedNotificationEntity(
     val queued: Boolean = false,
 )
 
+/**
+ * 自动记账溯源：一次捕获事件对入账流程的处置结果（仅在开发者功能「记录记账来源」开启时记录）。
+ * 注意不是每条捕获都有溯源记录——只有"与入账有关"的捕获才记（未识别/未感兴趣的走捕获日志）。
+ */
+enum class TraceOutcome {
+    /** 自动入账：捕获后直接落账 */
+    AUTO_ENTRY,
+
+    /** 进入待确认队列（等用户确认） */
+    PENDING,
+
+    /** 页面信息合并：同笔已由另一通道入账/入队，本次捕获把页面富化信息回填过去 */
+    MERGED_PAGE,
+
+    /** 重复捕获：同笔已由另一通道处理，本次不再入账 */
+    SKIPPED_DUPLICATE,
+
+    /** 无金额退款通知：只发提醒，等用户手动关联退款（不产生账目） */
+    REFUND_NOTICE,
+}
+
+/**
+ * 自动记账溯源记录（开发者功能，默认关闭时零写入）：
+ * 每次与入账有关的捕获，把**原始来源**（通知 title/text/bigText 或页面文本快照）
+ * 与解析结果、处置方式一并留档，供日后回查"这笔账是从哪个页面/通知来的"。
+ * 与捕获日志（7 天/2000 条滚动清理）不同：这是**每笔入账的持久证据**，
+ * 只按条数封顶（最近 1000 条）+ 手动清空。
+ * 与账目的关联靠 [dedupKey]（交易 externalId = "NTF:" + dedupKey），
+ * 因此确认入账/回填/删除都能被同一把钥匙解析出最新状态。
+ */
+@Entity(
+    tableName = "capture_traces",
+    indices = [Index(value = ["dedupKey"])],
+)
+data class CaptureTraceEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    /** 本次捕获的通道：通知监听 / 无障碍页面抓取 */
+    val channel: CaptureChannel,
+    val packageName: String,
+    /** 通知通道 = 通知标题；页面通道 = "页面快照" */
+    val title: String = "",
+    /** 通知通道 = 正文（含折叠明细行）；页面通道 = 页面文本节点（" | " 拼接） */
+    val text: String = "",
+    val bigText: String = "",
+    /** 来源时刻：通知 postTime / 页面捕获时刻 */
+    val capturedAt: Long,
+    val matchedRule: String = "",
+    /** 解析出的方向金额（退款提醒类无方向金额为 null/0）；页面合并时取页面侧（权威）值 */
+    val type: TxType? = null,
+    val amountCents: Long = 0,
+    val counterparty: String = "",
+    val note: String = "",
+    /** 本次处置对应的入账键（合并/重复时指向另一通道那笔的键，保证解析到同一账目） */
+    val dedupKey: String,
+    val outcome: TraceOutcome,
+    val createdAt: Long = System.currentTimeMillis(),
+)
+
 /** 自动捕获、待用户确认的交易；确认后转为交易（externalId = "NTF:" + dedupKey 防重） */
 @Entity(
     tableName = "pending_transactions",

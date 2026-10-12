@@ -17,6 +17,7 @@ import com.controleco.app.csv.BillParsers
 import com.controleco.app.data.db.AccountBalanceRow
 import com.controleco.app.data.db.AccountEntity
 import com.controleco.app.data.db.CaptureChannel
+import com.controleco.app.data.db.CaptureTraceRow
 import com.controleco.app.data.db.CapturedNotificationEntity
 import com.controleco.app.data.db.CategoryEntity
 import com.controleco.app.data.db.CategorySumRow
@@ -63,6 +64,7 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
     private val categoryDao = db.categoryDao()
     private val pendingDao = db.pendingDao()
     private val captureDao = db.captureDao()
+    private val traceDao = db.traceDao()
 
     private val zone: ZoneId = ZoneId.systemDefault()
 
@@ -710,6 +712,30 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
     fun setDebugCaptureAllPages(enabled: Boolean) {
         CaptureCenter.setDebugCaptureAllPages(enabled)
         _debugCaptureAllPages.value = enabled
+    }
+
+    // ---------- 自动记账溯源（开发者功能，默认关） ----------
+
+    private val _traceEnabled = MutableStateFlow(CaptureCenter.isTraceEnabled())
+    val traceEnabled: StateFlow<Boolean> = _traceEnabled
+
+    fun setTraceEnabled(enabled: Boolean) {
+        CaptureCenter.setTraceEnabled(enabled)
+        _traceEnabled.value = enabled
+    }
+
+    /** 溯源记录（最新在前，联查已带对应账单 id 与待确认状态） */
+    val traceRows: StateFlow<List<CaptureTraceRow>> =
+        traceDao.observeRecent(300).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val traceCount: StateFlow<Int> =
+        traceDao.observeCount().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+
+    fun clearTraces() {
+        viewModelScope.launch(Dispatchers.IO) {
+            traceDao.clearAll()
+            AppLog.i("Trace", "capture traces cleared")
+        }
     }
 
     fun isListenerGranted(): Boolean {

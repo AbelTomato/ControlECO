@@ -14,8 +14,9 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         TransactionEntity::class,
         CapturedNotificationEntity::class,
         PendingTransactionEntity::class,
+        CaptureTraceEntity::class,
     ],
-    version = 6,
+    version = 7,
     exportSchema = true,
 )
 abstract class AccBookDatabase : RoomDatabase() {
@@ -25,6 +26,7 @@ abstract class AccBookDatabase : RoomDatabase() {
     abstract fun transactionDao(): TransactionDao
     abstract fun captureDao(): CaptureDao
     abstract fun pendingDao(): PendingDao
+    abstract fun traceDao(): TraceDao
 
     companion object {
         /** v2：交易表新增退款标记列 */
@@ -92,6 +94,34 @@ abstract class AccBookDatabase : RoomDatabase() {
             }
         }
 
+        /** v7：自动记账溯源表（开发者功能「记录记账来源」，默认关闭时零写入） */
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `capture_traces` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`channel` TEXT NOT NULL, " +
+                        "`packageName` TEXT NOT NULL, " +
+                        "`title` TEXT NOT NULL, " +
+                        "`text` TEXT NOT NULL, " +
+                        "`bigText` TEXT NOT NULL, " +
+                        "`capturedAt` INTEGER NOT NULL, " +
+                        "`matchedRule` TEXT NOT NULL, " +
+                        "`type` TEXT, " +
+                        "`amountCents` INTEGER NOT NULL, " +
+                        "`counterparty` TEXT NOT NULL, " +
+                        "`note` TEXT NOT NULL, " +
+                        "`dedupKey` TEXT NOT NULL, " +
+                        "`outcome` TEXT NOT NULL, " +
+                        "`createdAt` INTEGER NOT NULL)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_capture_traces_dedupKey` " +
+                        "ON `capture_traces` (`dedupKey`)",
+                )
+            }
+        }
+
         @Volatile
         private var instance: AccBookDatabase? = null
 
@@ -102,7 +132,10 @@ abstract class AccBookDatabase : RoomDatabase() {
                     AccBookDatabase::class.java,
                     "accbook.db",
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                    .addMigrations(
+                        MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6,
+                        MIGRATION_6_7,
+                    )
                     .build().also { instance = it }
             }
     }

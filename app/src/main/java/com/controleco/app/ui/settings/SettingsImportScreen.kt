@@ -20,7 +20,7 @@ import com.controleco.app.ui.common.SettingsPage
 import com.controleco.app.ui.common.SwitchRow
 
 /**
- * 设置 → 账单导入：导入入口 + 微信/支付宝导出账单的路径教程 + 退款记录显示开关。
+ * 账单导入（个人页「账本」→ 账单导入）：导入入口 + 微信/支付宝导出账单的路径教程 + 退款记录显示开关。
  */
 @Composable
 fun SettingsImportScreen(

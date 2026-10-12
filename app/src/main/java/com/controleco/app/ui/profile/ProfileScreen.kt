@@ -57,12 +57,14 @@ private const val GITHUB_REPO_PATH = "ArrogHie/ControlECO"
 private const val GITHUB_REPO_URL = "https://github.com/$GITHUB_REPO_PATH"
 
 /**
- * 个人页：身份卡 + 本月预算（预算总结 + 两个入口）+ 设置入口 + 开源仓库链接。
- * 除设置跳转外只保留预算这一件事，其余全部收进设置体系。
+ * 个人页：身份卡 + 本月预算（预算总结 + 入口）+ 账本（账户/账单导入）+ 设置入口 + 开源仓库链接。
+ * 账本两项从设置页移来（2026-10-12）：预算下方的位置与"账户/分类"的使用频次更匹配。
  */
 @Composable
 fun ProfileScreen(
     vm: LedgerViewModel,
+    onOpenAccount: () -> Unit,
+    onOpenImport: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenCategories: () -> Unit,
 ) {
@@ -128,6 +130,16 @@ fun ProfileScreen(
                 trailing = "$currency  ${currencyName(currency)}",
                 onClick = { showCurrencyDialog = true },
             )
+        }
+
+        Spacer(Modifier.height(18.dp))
+
+        // ---- 账本（从设置页移来：账户与账单导入） ----
+        SectionTitle("账本")
+        PaneCard {
+            InfoRow(title = "账户", onClick = onOpenAccount)
+            RowDivider()
+            InfoRow(title = "账单导入", onClick = onOpenImport)
         }
 
         Spacer(Modifier.height(18.dp))

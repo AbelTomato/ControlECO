@@ -8,7 +8,7 @@ import com.controleco.app.ui.common.SectionTitle
 import com.controleco.app.ui.common.SettingsPage
 
 /**
- * 设置 → 账户：只放账户与分类两个入口（预算相关内容在个人页）。
+ * 账户（个人页「账本」→ 账户）：只放账户与分类两个入口（预算相关内容在个人页）。
  */
 @Composable
 fun SettingsAccountScreen(

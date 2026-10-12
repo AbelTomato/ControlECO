@@ -11,6 +11,7 @@ import com.controleco.app.data.db.AccountDao
 import com.controleco.app.data.db.AccountEntity
 import com.controleco.app.data.db.CaptureChannel
 import com.controleco.app.data.db.CaptureDao
+import com.controleco.app.data.db.CaptureTraceEntity
 import com.controleco.app.data.db.CapturedNotificationEntity
 import com.controleco.app.data.db.CategoryDao
 import com.controleco.app.data.db.CategoryEntity
@@ -18,6 +19,8 @@ import com.controleco.app.data.db.PendingDao
 import com.controleco.app.data.db.PendingStatus
 import com.controleco.app.data.db.PendingTransactionEntity
 import com.controleco.app.data.db.RefundMark
+import com.controleco.app.data.db.TraceDao
+import com.controleco.app.data.db.TraceOutcome
 import com.controleco.app.data.db.TransactionDao
 import com.controleco.app.data.db.TransactionEntity
 import com.controleco.app.data.db.TxSource
@@ -38,6 +41,7 @@ import kotlinx.coroutines.launch
  * **页面信息优先**——页面侧带商户/支付方式，捕获在后时覆盖通知侧的稀疏值与金额（见 CaptureMerge）。
  * 设置开启「自动入账」时识别到即直接记账（不再逐笔确认），条目留 AUTO 记录供页面回填。
  * debug 构建可全量记录（设置开关），Logcat tag=ControlECO 便于真实样本调试。
+ * 开发者功能「记录记账来源」开启时，另把每次入账相关捕获的原始来源写入溯源表（见 traceCapture）。
  */
 object CaptureCenter {
 
@@ -49,6 +53,7 @@ object CaptureCenter {
     private const val KEY_AUTO_ENTRY_ENABLED = "auto_entry_enabled"
     private const val KEY_DEBUG_CAPTURE_ALL = "debug_capture_all"
     private const val KEY_DEBUG_CAPTURE_ALL_PAGES = "debug_capture_all_pages"
+    private const val KEY_TRACE_ENABLED = "capture_trace_enabled"
 
     /** 点击通知跳转的路由（MainActivity intent extra） */
     const val EXTRA_ROUTE = "controleco.route"
@@ -71,6 +76,9 @@ object CaptureCenter {
     private const val KEEP_DAYS = 7L
     private const val KEEP_ROWS = 2_000
 
+    /** 溯源记录保留条数：只按条数封顶、不按时间清理（开发者证据），可手动清空 */
+    private const val TRACE_KEEP_ROWS = 1_000
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mainHandler = Handler(Looper.getMainLooper())
     private val recentKeys = LinkedHashMap<String, Long>()
@@ -81,6 +89,7 @@ object CaptureCenter {
     private lateinit var pendingDao: PendingDao
     private lateinit var categoryDao: CategoryDao
     private lateinit var accountDao: AccountDao
+    private lateinit var traceDao: TraceDao
     private val initialized get() = this::appContext.isInitialized
 
     private val _connected = MutableStateFlow(false)
@@ -100,6 +109,7 @@ object CaptureCenter {
         pendingDao = db.pendingDao()
         categoryDao = db.categoryDao()
         accountDao = db.accountDao()
+        traceDao = db.traceDao()
         createNotificationChannel()
         cleanup()
     }
@@ -273,10 +283,65 @@ object CaptureCenter {
         AppLog.i("Page", "debugCaptureAllPages=$enabled")
     }
 
+    /**
+     * 自动记账溯源（开发者功能，默认关）：开启后每次与入账有关的捕获都把
+     * 原始来源（通知原文 / 页面快照）连同解析结果与处置方式留档，供回查"这笔账从哪来"。
+     * 关闭时零写入（连判断都只有一次 SharedPreferences 读取）。
+     */
+    fun isTraceEnabled(): Boolean =
+        prefs().getBoolean(KEY_TRACE_ENABLED, false)
+
+    fun setTraceEnabled(enabled: Boolean) {
+        prefs().edit().putBoolean(KEY_TRACE_ENABLED, enabled).apply()
+        AppLog.i("Trace", "captureTraceEnabled=$enabled")
+    }
+
+    /**
+     * 溯源落库：原始来源 + 解析结果 + 处置方式。写入失败只记日志，绝不影响入账主流程
+     * （开发者功能不能成为记账链路的故障点）。
+     */
+    private suspend fun traceCapture(
+        channel: CaptureChannel,
+        packageName: String,
+        title: String,
+        text: String,
+        bigText: String,
+        capturedAt: Long,
+        matchedRule: String,
+        type: TxType?,
+        amountCents: Long,
+        counterparty: String = "",
+        note: String = "",
+        dedupKey: String,
+        outcome: TraceOutcome,
+    ) {
+        if (!isTraceEnabled()) return
+        runCatching {
+            traceDao.insert(
+                CaptureTraceEntity(
+                    channel = channel,
+                    packageName = packageName,
+                    title = title.take(200),
+                    text = text.take(4000),
+                    bigText = bigText.take(4000),
+                    capturedAt = capturedAt,
+                    matchedRule = matchedRule,
+                    type = type,
+                    amountCents = amountCents,
+                    counterparty = counterparty,
+                    note = note,
+                    dedupKey = dedupKey,
+                    outcome = outcome,
+                ),
+            )
+        }.onFailure { AppLog.w("Trace", "trace insert failed", it) }
+    }
+
     private fun cleanup() {
         scope.launch {
             captureDao.deleteOlderThan(System.currentTimeMillis() - KEEP_DAYS * 24 * 3_600_000)
             captureDao.keepNewest(KEEP_ROWS)
+            traceDao.keepNewest(TRACE_KEEP_ROWS)
             // 自动入账条目只在合并窗口（10s）内有意义，留一天足够，避免长期堆积
             pendingDao.deleteAutoOlderThan(System.currentTimeMillis() - 24 * 3_600_000)
         }
@@ -345,10 +410,12 @@ object CaptureCenter {
                     if (interested && isCaptureEnabled() &&
                         NotificationRules.isAmountlessRefundNotice(packageName, title, text)
                     ) {
-                        handleRefundNotice(packageName, rawId, postTime)
+                        handleRefundNotice(packageName, rawId, postTime, title, text, bigText)
                     }
                     return@launch
                 }
+                // 溯源用来源时刻：通知的 when 偶有异常值，退回落库时刻（只影响展示，不回写通知流程）
+                val sourceAt = if (postTime > 0) postTime else System.currentTimeMillis()
                 // 跨通道去重（10s 窗口）：页面通道先捕获/自动入账了同一笔 → 通知侧信息更少，不覆盖。
                 // 通知侧严格比金额：同 App 内 10s 内两笔金额不同的付款不能被并成一笔（丢记录）
                 val related = pickRelatedPending(
@@ -357,6 +424,18 @@ object CaptureCenter {
                 )
                 if (related != null) {
                     AppLog.d("Ntf", "skip duplicate ${parsed.dedupKey} (page side won, related #${related.pending.id})")
+                    traceCapture(
+                        channel = CaptureChannel.NOTIFICATION,
+                        packageName = packageName,
+                        title = title, text = text, bigText = bigText,
+                        capturedAt = sourceAt,
+                        matchedRule = parsed.ruleName,
+                        type = parsed.type,
+                        amountCents = parsed.amountCents,
+                        note = parsed.note,
+                        dedupKey = related.pending.dedupKey,
+                        outcome = TraceOutcome.SKIPPED_DUPLICATE,
+                    )
                     return@launch
                 }
                 // 自动入账（设置开启）：按推测分类/账户直接落账，不进待确认、不发确认提醒
@@ -377,6 +456,18 @@ object CaptureCenter {
                         "Ntf",
                         "auto entry: ${parsed.ruleName} ${parsed.type} ${Money.formatYuan(parsed.amountCents)}" +
                             (if (parsed.isRefund) " [退款]" else "") + " pkg=$packageName",
+                    )
+                    traceCapture(
+                        channel = CaptureChannel.NOTIFICATION,
+                        packageName = packageName,
+                        title = title, text = text, bigText = bigText,
+                        capturedAt = sourceAt,
+                        matchedRule = parsed.ruleName,
+                        type = parsed.type,
+                        amountCents = parsed.amountCents,
+                        note = parsed.note,
+                        dedupKey = parsed.dedupKey,
+                        outcome = TraceOutcome.AUTO_ENTRY,
                     )
                     return@launch
                 }
@@ -399,6 +490,18 @@ object CaptureCenter {
                     "queued pending: ${parsed.ruleName} ${parsed.type} ${Money.formatYuan(parsed.amountCents)}" +
                         (if (parsed.isRefund) " [退款]" else "") + " pkg=$packageName",
                 )
+                traceCapture(
+                    channel = CaptureChannel.NOTIFICATION,
+                    packageName = packageName,
+                    title = title, text = text, bigText = bigText,
+                    capturedAt = sourceAt,
+                    matchedRule = parsed.ruleName,
+                    type = parsed.type,
+                    amountCents = parsed.amountCents,
+                    note = parsed.note,
+                    dedupKey = parsed.dedupKey,
+                    outcome = TraceOutcome.PENDING,
+                )
                 announceCapture(
                     type = parsed.type,
                     isRefund = parsed.isRefund,
@@ -420,9 +523,28 @@ object CaptureCenter {
     // ---------- 退款关联提醒（无金额退款通知） ----------
 
     /** 微信"退款到账通知"没有金额，无法直接入队：发通知提醒用户进 App 选择被退款的账单 */
-    private suspend fun handleRefundNotice(packageName: String, rawId: Long, postTime: Long) {
+    private suspend fun handleRefundNotice(
+        packageName: String,
+        rawId: Long,
+        postTime: Long,
+        title: String,
+        text: String,
+        bigText: String,
+    ) {
         captureDao.updateMatch(rawId, "退款·待关联", false)
         AppLog.i("Ntf", "amountless refund notice -> link reminder pkg=$packageName")
+        // 溯源记录不产生账目：dedupKey 用提醒 id 的同一构造，永远不会和交易对上（状态固定为"仅提醒"）
+        traceCapture(
+            channel = CaptureChannel.NOTIFICATION,
+            packageName = packageName,
+            title = title, text = text, bigText = bigText,
+            capturedAt = if (postTime > 0) postTime else System.currentTimeMillis(),
+            matchedRule = "退款·待关联",
+            type = null,
+            amountCents = 0,
+            dedupKey = "refund|$packageName|$postTime",
+            outcome = TraceOutcome.REFUND_NOTICE,
+        )
         if (!isRefundLinkEnabled()) return
         val label = NotificationRules.sourceLabel(packageName)
         val notifId = ("refund|$packageName|$postTime").hashCode()
@@ -463,12 +585,13 @@ object CaptureCenter {
 
                 // 支付类页面快照进 INFO 日志（华为默认隐藏 DEBUG 级日志）；聊天等噪音不打
                 AppLog.i("Page", "page snapshot pkg=$packageName texts=[${texts.joinToString(" | ").take(1200)}]")
+                val snapshotText = texts.joinToString(" | ").take(4000)
 
                 val rawId = captureDao.insert(
                     CapturedNotificationEntity(
                         packageName = packageName,
                         title = parsed?.ruleName ?: "页面快照",
-                        text = texts.joinToString(" | ").take(4000),
+                        text = snapshotText,
                         postTime = capturedAt,
                         source = CaptureChannel.A11Y,
                     ),
@@ -527,6 +650,23 @@ object CaptureCenter {
                             "${related.pending.id} ${parsed.ruleName} ${Money.formatYuan(parsed.amountCents)}" +
                             (if (related.sameAmount) "" else " (通知解析 ${Money.formatYuan(related.pending.amountCents)}，页面金额为准)"),
                     )
+                    // 溯源：本页捕获的字段是**合并后真正生效的值**，附上页面原始快照，
+                    // 键取同笔条目的 dedupKey——金额被页面改写时通知侧的键已对不上交易，只有这个键能解析到账目
+                    traceCapture(
+                        channel = CaptureChannel.A11Y,
+                        packageName = packageName,
+                        title = "页面快照",
+                        text = snapshotText,
+                        bigText = "",
+                        capturedAt = capturedAt,
+                        matchedRule = merged.ruleName,
+                        type = parsed.type,
+                        amountCents = merged.amountCents,
+                        counterparty = merged.counterparty,
+                        note = merged.note,
+                        dedupKey = related.pending.dedupKey,
+                        outcome = TraceOutcome.MERGED_PAGE,
+                    )
                     // 页面富化无需再次提醒：同笔通知在入队时已发出，这里只更新待确认数据
                     return@launch
                 }
@@ -548,6 +688,21 @@ object CaptureCenter {
                         "Page",
                         "auto entry: ${parsed.ruleName} ${Money.formatYuan(parsed.amountCents)} 收款方=${parsed.counterparty}",
                     )
+                    traceCapture(
+                        channel = CaptureChannel.A11Y,
+                        packageName = packageName,
+                        title = "页面快照",
+                        text = snapshotText,
+                        bigText = "",
+                        capturedAt = capturedAt,
+                        matchedRule = parsed.ruleName,
+                        type = parsed.type,
+                        amountCents = parsed.amountCents,
+                        counterparty = parsed.counterparty,
+                        note = parsed.note,
+                        dedupKey = parsed.dedupKey,
+                        outcome = TraceOutcome.AUTO_ENTRY,
+                    )
                     return@launch
                 }
 
@@ -566,6 +721,21 @@ object CaptureCenter {
                 )
                 captureDao.updateMatch(rawId, parsed.ruleName, true)
                 AppLog.i("Page", "queued pending: ${parsed.ruleName} ${Money.formatYuan(parsed.amountCents)} 收款方=${parsed.counterparty}")
+                traceCapture(
+                    channel = CaptureChannel.A11Y,
+                    packageName = packageName,
+                    title = "页面快照",
+                    text = snapshotText,
+                    bigText = "",
+                    capturedAt = capturedAt,
+                    matchedRule = parsed.ruleName,
+                    type = parsed.type,
+                    amountCents = parsed.amountCents,
+                    counterparty = parsed.counterparty,
+                    note = parsed.note,
+                    dedupKey = parsed.dedupKey,
+                    outcome = TraceOutcome.PENDING,
+                )
                 announceCapture(
                     type = parsed.type,
                     isRefund = false,

@@ -16,16 +16,15 @@ import com.controleco.app.ui.common.SwitchRow
 import com.controleco.app.util.AppLog
 
 /**
- * 设置（一级页）：以导航分发为主，五个子页各自干净——
- * 账户（账户/分类）、账单导入、权限（教程与开关）、开发者功能（手动启动/日志与诊断）、关于。
+ * 设置（一级页）：以导航分发为主，各子页保持干净——
+ * 自动记账（总开关 + 权限）、其他（自动更新/检查更新/开发者功能/关于）。
+ * 「账本」两项（账户、账单导入）不在本页：入口已移到个人页「本月预算」下方。
  * 例外：「自动记账」段落顶部放一个总开关（自动入账），其余行仍只做导航、不放说明与取值。
  */
 @Composable
 fun SettingsScreen(
     vm: LedgerViewModel,
     onBack: () -> Unit,
-    onOpenAccount: () -> Unit,
-    onOpenImport: () -> Unit,
     onOpenPermissions: () -> Unit,
     onOpenDeveloper: () -> Unit,
     onOpenAbout: () -> Unit,
@@ -37,13 +36,6 @@ fun SettingsScreen(
     val autoUpdate by vm.autoUpdateEnabled.collectAsStateWithLifecycle()
 
     SettingsPage(title = "设置", onBack = onBack) {
-        SectionTitle("账本")
-        PaneCard {
-            InfoRow(title = "账户", onClick = onOpenAccount)
-            RowDivider()
-            InfoRow(title = "账单导入", onClick = onOpenImport)
-        }
-
         SectionTitle("自动记账")
         PaneCard {
             SwitchRow(

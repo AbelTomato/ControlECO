@@ -34,12 +34,15 @@ fun SettingsDeveloperScreen(
     onBack: () -> Unit,
     onOpenPending: () -> Unit,
     onOpenCaptureLog: () -> Unit,
+    onOpenCaptureTrace: () -> Unit,
     onOpenKeepAlive: () -> Unit,
 ) {
     val context = LocalContext.current
     val lastCaptureAt by vm.lastCaptureAt.collectAsStateWithLifecycle()
     val debugCaptureAll by vm.debugCaptureAll.collectAsStateWithLifecycle()
     val debugCaptureAllPages by vm.debugCaptureAllPages.collectAsStateWithLifecycle()
+    val traceEnabled by vm.traceEnabled.collectAsStateWithLifecycle()
+    val traceCount by vm.traceCount.collectAsStateWithLifecycle()
 
     fun toast() = { msg: String -> Toast.makeText(context, msg, Toast.LENGTH_LONG).show() }
 
@@ -73,6 +76,25 @@ fun SettingsDeveloperScreen(
                 title = "捕获所有页面（调试）",
                 checked = debugCaptureAllPages,
                 onCheckedChange = { vm.setDebugCaptureAllPages(it) },
+            )
+        }
+
+        SectionTitle("自动记账溯源")
+        PaneCard {
+            // 默认关：开启后每次与入账有关的捕获都留原始来源（通知原文/页面快照），
+            // 供回查"这笔账从哪来"；关闭时零写入
+            SwitchRow(
+                title = "记录记账来源（溯源）",
+                subtitle = "开启后，每笔自动入账/待确认的捕获来源（页面快照或通知原文）原样留档，可在「溯源记录」里回查",
+                checked = traceEnabled,
+                onCheckedChange = { vm.setTraceEnabled(it) },
+            )
+            RowDivider()
+            InfoRow(
+                title = "溯源记录",
+                subtitle = if (traceEnabled) "最新在前，保留最近 1000 条" else "历史记录仍可查看（当前未在记录）",
+                trailing = if (traceCount == 0) "暂无" else "$traceCount 条",
+                onClick = onOpenCaptureTrace,
             )
         }
     }
