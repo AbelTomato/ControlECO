@@ -172,7 +172,7 @@ object PageRules {
             sourceLabel = label,
             ruleName = "$label·$kind",
             note = note,
-            dedupKey = "$packageName|${TxType.EXPENSE}|$amountCents|${(txTime ?: capturedAt) / 60_000}",
+            dedupKey = NotificationRules.dedupKey(packageName, TxType.EXPENSE, false, amountCents, txTime ?: capturedAt),
         )
     }
 
