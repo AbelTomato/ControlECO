@@ -8,7 +8,7 @@ import com.controleco.app.data.db.TxType
 import com.controleco.app.util.AppLog
 
 /**
- * 商户归类学习（"越用越准"，自研方案的 商户规则/资产映射学习 思路，见
+ * 商户归类学习（"越用越准"，自研方案的商户规则学习思路，见
  * docs/自动记账捕获机制.md 第一节「归类学习」）。
  *
  * 规则：确认/编辑捕获来的交易时，把"商户词 → 分类/账户"记下来；下次同商户捕获时优先用学到的归类。
