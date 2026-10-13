@@ -767,6 +767,27 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
         _autoEntryEnabled.value = enabled
     }
 
+    // ---------- 银行动账（短信 / 银行 App 推送） ----------
+
+    private val _bankPushEnabled = MutableStateFlow(CaptureCenter.isBankPushEnabled())
+    val bankPushEnabled: StateFlow<Boolean> = _bankPushEnabled
+
+    fun setBankPushEnabled(enabled: Boolean) {
+        CaptureCenter.setBankPushEnabled(enabled)
+        _bankPushEnabled.value = enabled
+    }
+
+    private val _smsCaptureEnabled = MutableStateFlow(CaptureCenter.isSmsCaptureEnabled())
+    val smsCaptureEnabled: StateFlow<Boolean> = _smsCaptureEnabled
+
+    fun setSmsCaptureEnabled(enabled: Boolean) {
+        CaptureCenter.setSmsCaptureEnabled(enabled)
+        _smsCaptureEnabled.value = enabled
+    }
+
+    /** 收短信权限（银行短信通道的前提） */
+    fun isSmsPermissionGranted(): Boolean = CaptureCenter.hasSmsPermission()
+
     private val _autoUpdateEnabled = MutableStateFlow(AppUpdate.isAutoUpdateEnabled(getApplication()))
     val autoUpdateEnabled: StateFlow<Boolean> = _autoUpdateEnabled
 
@@ -858,7 +879,7 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
                     timestamp = item.timestamp,
                     note = item.note.ifBlank { item.ruleName },
                     counterparty = counterparty.trim().ifBlank { item.counterparty },
-                    source = TxSource.NOTIFICATION,
+                    source = CaptureDefaults.txSource(item.sourcePackage),
                     externalId = externalId,
                     refundMark = item.refundMark,
                 ),
@@ -883,11 +904,15 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
                     type = item.type,
                     amountCents = item.amountCents,
                     categoryId = cat.id,
-                    accountId = CaptureDefaults.accountId(accs, item.sourcePackage) ?: return@launch,
+                    accountId = CaptureDefaults.accountId(
+                        accs,
+                        item.sourcePackage,
+                        CaptureDefaults.bankNameOf(item.sourcePackage, item.ruleName),
+                    ) ?: return@launch,
                     timestamp = item.timestamp,
                     note = item.note.ifBlank { item.ruleName },
                     counterparty = item.counterparty,
-                    source = TxSource.NOTIFICATION,
+                    source = CaptureDefaults.txSource(item.sourcePackage),
                     externalId = "NTF:${item.dedupKey}",
                     refundMark = item.refundMark,
                 )
@@ -903,9 +928,12 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
     fun guessCategoryId(type: TxType, merchantHint: String = ""): Long? =
         CaptureDefaults.categoryId(categories.value, type, merchantHint)
 
-    /** 按来源包名推测账户：微信→微信零钱、支付宝→支付宝、云闪付/其他→银行卡 */
-    fun guessAccountId(sourcePackage: String): Long? =
-        CaptureDefaults.accountId(accounts.value, sourcePackage)
+    /**
+     * 按来源推测账户：微信→微信零钱、支付宝→支付宝、银行侧（短信/银行推送）→ 先按银行名匹配
+     * 账户名，再退化到"银行"关键词。[ruleName] 供号码兜底的短信取回银行名用。
+     */
+    fun guessAccountId(sourcePackage: String, ruleName: String = ""): Long? =
+        CaptureDefaults.accountId(accounts.value, sourcePackage, CaptureDefaults.bankNameOf(sourcePackage, ruleName))
 
     fun clearCaptureLog() {
         viewModelScope.launch(Dispatchers.IO) {

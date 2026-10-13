@@ -104,6 +104,13 @@ object BankLedgerRules {
         return bankNames.firstOrNull { text.contains(it.first) }?.second
     }
 
+    /**
+     * 某个标准银行名的全部写法（标准名 + 别名，如 招商银行 ⇄ 招行）：账户名推测用——
+     * 用户账户常起名"招行卡""工行"，只比对标准名会匹配不上。
+     */
+    fun aliasesOf(bankName: String): List<String> =
+        (listOf(bankName) + bankNames.filter { it.second == bankName }.map { it.first }).distinct()
+
     // ---------- 噪声（银行营销/通知类短信占绝对多数，必须挡掉） ----------
 
     /**

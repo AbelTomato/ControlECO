@@ -112,10 +112,15 @@ fun CaptureLogScreen(vm: LedgerViewModel, onBack: () -> Unit) {
                     onClick = { vm.setCaptureFilter(CaptureChannel.A11Y) },
                     label = { Text("页面") },
                 )
+                FilterChip(
+                    selected = filter == CaptureChannel.SMS,
+                    onClick = { vm.setCaptureFilter(CaptureChannel.SMS) },
+                    label = { Text("短信") },
+                )
             }
             Text(
                 "共 ${rows.size} 条（仅保留最近记录）；点条目可复制原文；" +
-                    "debug 构建下 Logcat 过滤 ControlECO 可看全部明细（[Ntf] 通知 / [Page] 页面）。",
+                    "debug 构建下 Logcat 过滤 ControlECO 可看全部明细（[Ntf] 通知 / [Page] 页面 / [Sms] 短信）。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
@@ -139,7 +144,7 @@ fun CaptureLogScreen(vm: LedgerViewModel, onBack: () -> Unit) {
                                 .clickable {
                                     copyToClipboard(
                                         context,
-                                        "channel=${if (n.source == CaptureChannel.A11Y) "页面" else "通知"}\n" +
+                                        "channel=${channelLabel(n.source)}\n" +
                                             "pkg=${n.packageName}\ntitle=${n.title}\ntext=${n.text}\nbigText=${n.bigText}",
                                     )
                                 }
@@ -147,7 +152,7 @@ fun CaptureLogScreen(vm: LedgerViewModel, onBack: () -> Unit) {
                         ) {
                             Column(Modifier.weight(1f)) {
                                 Text(
-                                    "${if (n.source == CaptureChannel.A11Y) "页面" else "通知"} · ${n.packageName} · " +
+                                    "${channelLabel(n.source)} · ${n.packageName} · " +
                                         n.matchedRule.ifBlank { "未匹配" } + if (n.queued) " · 已入待确认" else "",
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -198,6 +203,12 @@ fun CaptureLogScreen(vm: LedgerViewModel, onBack: () -> Unit) {
             dismissButton = { TextButton(onClick = { clearAsk = false }) { Text("取消") } },
         )
     }
+}
+
+private fun channelLabel(source: CaptureChannel): String = when (source) {
+    CaptureChannel.A11Y -> "页面"
+    CaptureChannel.SMS -> "短信"
+    CaptureChannel.NOTIFICATION -> "通知"
 }
 
 private fun copyToClipboard(context: Context, text: String) {

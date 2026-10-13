@@ -1,5 +1,6 @@
 package com.controleco.app.capture
 
+import com.controleco.app.data.db.RefundMark
 import com.controleco.app.data.db.TxType
 import kotlin.math.abs
 
@@ -49,6 +50,24 @@ internal object CrossChannelDedup {
         val isRefund: Boolean,
         val source: String,
         val time: Long,
+    )
+
+    /**
+     * 从待确认/自动入账条目的字段构造签名（退款标记 → isRefund 的折算只在这一处，
+     * 避免调用方各处口径不一致）。
+     */
+    fun signatureOf(
+        amountCents: Long,
+        type: TxType,
+        refundMark: RefundMark,
+        source: String,
+        time: Long,
+    ): Signature = Signature(
+        amountCents = amountCents,
+        type = type,
+        isRefund = refundMark == RefundMark.REFUND_INCOME,
+        source = source,
+        time = time,
     )
 
     fun isSameTransaction(existing: Signature, incoming: Signature): Boolean {

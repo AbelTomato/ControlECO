@@ -35,10 +35,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
 /**
- * 采集中心：通知监听与无障碍页面两条通道的唯一入口。
+ * 采集中心：通知监听、无障碍页面、银行动账短信三条通道的唯一入口。
  * 通道流程一致：原始快照落库（不解析）→ 规则引擎 → 待确认队列。
- * 跨通道去重：两条通道在 10s 内捕获同一笔（同包名 + 同方向 + 金额）只保留一条，
- * **页面信息优先**——页面侧带商户/支付方式，捕获在后时覆盖通知侧的稀疏值与金额（见 CaptureMerge）。
+ * 跨通道去重分两层：
+ * - 同源（通知⇄页面，10s 窗口，见 CaptureMerge）：只保留一条，**页面信息优先**；
+ * - 异源（支付类⇄银行类，±130s，见 CrossChannelDedup）：同一笔消费被微信通知与银行卡
+ *   短信/推送同时捕获时归并成一条，银行侧只补充账户线索。
  * 设置开启「自动入账」时识别到即直接记账（不再逐笔确认），条目留 AUTO 记录供页面回填。
  * debug 构建可全量记录（设置开关），Logcat tag=ControlECO 便于真实样本调试。
  * 开发者功能「记录记账来源」开启时，另把每次入账相关捕获的原始来源写入溯源表（见 traceCapture）。
@@ -54,6 +56,8 @@ object CaptureCenter {
     private const val KEY_DEBUG_CAPTURE_ALL = "debug_capture_all"
     private const val KEY_DEBUG_CAPTURE_ALL_PAGES = "debug_capture_all_pages"
     private const val KEY_TRACE_ENABLED = "capture_trace_enabled"
+    private const val KEY_BANK_PUSH_ENABLED = "bank_push_enabled"
+    private const val KEY_SMS_CAPTURE_ENABLED = "sms_capture_enabled"
 
     /** 点击通知跳转的路由（MainActivity intent extra） */
     const val EXTRA_ROUTE = "controleco.route"
@@ -255,6 +259,38 @@ object CaptureCenter {
         AppLog.i("Ntf", "autoEntryEnabled=$enabled")
     }
 
+    /**
+     * 银行 App 动账推送（默认开）：银行 App 的动账通知与动账短信同源同形，
+     * 走 BankLedgerRules 的「正文【银行名】签名」闸门 + 银行包名短名单兜底。
+     * 不需要额外权限（走既有通知监听授权）。
+     */
+    fun isBankPushEnabled(): Boolean =
+        prefs().getBoolean(KEY_BANK_PUSH_ENABLED, true)
+
+    fun setBankPushEnabled(enabled: Boolean) {
+        prefs().edit().putBoolean(KEY_BANK_PUSH_ENABLED, enabled).apply()
+        AppLog.i("Sms", "bankPushEnabled=$enabled")
+    }
+
+    /**
+     * 银行动账短信（默认关）：银行卡直接刷卡/被扣款而没有任何 App 通知时，短信是唯一线索。
+     * 只收新到短信（RECEIVE_SMS），不读历史、不解码彩信、非默认短信应用；
+     * 非银行号码与无银行签名的短信在采集层丢弃（内容不入库）。
+     */
+    fun isSmsCaptureEnabled(): Boolean =
+        prefs().getBoolean(KEY_SMS_CAPTURE_ENABLED, false)
+
+    fun setSmsCaptureEnabled(enabled: Boolean) {
+        prefs().edit().putBoolean(KEY_SMS_CAPTURE_ENABLED, enabled).apply()
+        AppLog.i("Sms", "smsCaptureEnabled=$enabled")
+    }
+
+    /** 是否已授予收短信权限（安卓 13+ 侧载同样需运行时授权） */
+    fun hasSmsPermission(): Boolean =
+        initialized && androidx.core.content.ContextCompat.checkSelfPermission(
+            appContext, android.Manifest.permission.RECEIVE_SMS,
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
     /** 横幅通知提醒确认入账（安卓 13+ 需 POST_NOTIFICATIONS 运行时授权） */
     fun canPostNotifications(): Boolean =
         if (Build.VERSION.SDK_INT >= 33) {
@@ -383,13 +419,22 @@ object CaptureCenter {
 
         val interested = NotificationRules.isInterested(packageName)
         val captureAll = isDebugCaptureAll(isDebugBuild)
-        if (!interested && !captureAll) {
+        // 银行 App 动账推送：不在支付白名单里，走「正文【银行名】签名 / 银行包名短名单」两道线索。
+        // 是否真的入库要在解析通过后决定（银行 App 的营销/通知类推送极密集，未命中不入库）。
+        val bankCandidate = !interested && !captureAll && isBankPushEnabled() && isCaptureEnabled() &&
+            (BankLedgerRules.detectBankName("$title $text $bigText") != null ||
+                BankLedgerRules.bankNameOfPackage(packageName) != null)
+        if (!interested && !captureAll && !bankCandidate) {
             AppLog.d("Ntf", "skip (not interested) pkg=$packageName title=[$title]")
             return
         }
 
         scope.launch {
             try {
+                if (!interested) {
+                    handleBankPush(packageName, title, text, bigText, postTime)
+                    return@launch
+                }
                 val rawId = captureDao.insert(
                     CapturedNotificationEntity(
                         packageName = packageName,
@@ -518,6 +563,263 @@ object CaptureCenter {
                 AppLog.e("Ntf", "capture handling failed", e)
             }
         }
+    }
+
+    // ---------- 通道三：银行动账（短信 / 银行 App 推送，共用解析与入队） ----------
+
+    /**
+     * 短信通道入口（由 SmsCaptureReceiver 在 IO 协程里调用，goAsync 保证写完才 finish）。
+     * 隐私闸门在最前面：既不是已知银行号码、正文里也没有银行签名 → 立即丢弃，不解析不入库
+     * （银行动账短信才有记账价值，私人短信一律不碰）。
+     */
+    suspend fun onSmsReceived(sender: String, body: String, eventTime: Long) {
+        if (!initialized || body.isBlank()) return
+        if (!isSmsCaptureEnabled() || !isCaptureEnabled()) {
+            AppLog.d("Sms", "skip (sms capture disabled)")
+            return
+        }
+        val normalized = NotificationRules.normalize(body)
+        val bankName = BankLedgerRules.detectBankName(normalized)
+        if (!BankLedgerRules.isBankSender(sender) && bankName == null) {
+            AppLog.d("Sms", "skip (not a bank message) sender=$sender")
+            return
+        }
+        val sourceKey = NotificationRules.SMS_SOURCE_PREFIX + (bankName ?: sender.takeLast(5))
+        // 先落原始快照（只有银行侧短信会走到这里）；未匹配的银行短信留在捕获日志里供扩规则
+        val rawId = captureDao.insert(
+            CapturedNotificationEntity(
+                packageName = sourceKey,
+                title = "短信 $sender",
+                text = normalized.take(4000),
+                postTime = eventTime,
+                source = CaptureChannel.SMS,
+            ),
+        )
+        val ledger = BankLedgerRules.parse(normalized, sourceKey, "短信", eventTime, bankName)
+        if (ledger == null) {
+            AppLog.i("Sms", "bank sms not matched (#$rawId) sender=$sender text=[${normalized.take(160)}]")
+            return
+        }
+        enqueueBankLedger(ledger, rawId, eventTime, CaptureChannel.SMS)
+    }
+
+    /**
+     * 银行 App 动账推送：与短信共用 BankLedgerRules。推送没有号码闸门，
+     * 用「正文签名 + 包名短名单」两道线索；解析不通过就不落快照（营销推送不入库）。
+     */
+    private suspend fun handleBankPush(
+        packageName: String,
+        title: String,
+        text: String,
+        bigText: String,
+        postTime: Long,
+    ) {
+        val body = NotificationRules.normalize(
+            listOf(title, text, bigText).filter { it.isNotBlank() }.joinToString(" "),
+        )
+        val fallbackBankName = BankLedgerRules.bankNameOfPackage(packageName)
+        val ledger = BankLedgerRules.parse(body, packageName, "通知", postTime, fallbackBankName)
+        if (ledger == null) {
+            AppLog.d("Ntf", "bank push not matched pkg=$packageName body=[${body.take(160)}]")
+            return
+        }
+        val rawId = captureDao.insert(
+            CapturedNotificationEntity(
+                packageName = packageName,
+                title = title,
+                text = text,
+                bigText = bigText,
+                postTime = postTime,
+            ),
+        )
+        enqueueBankLedger(ledger, rawId, postTime, CaptureChannel.NOTIFICATION)
+    }
+
+    /** 银行动账统一入队：跨通道归并 → 自动入账 → 待确认（与通知/页面通道同一套下游） */
+    private suspend fun enqueueBankLedger(
+        ledger: BankLedgerRules.BankLedger,
+        rawId: Long,
+        eventTime: Long,
+        channel: CaptureChannel,
+    ) {
+        val sourceAt = if (eventTime > 0) eventTime else System.currentTimeMillis()
+
+        // 跨通道归并（±130s）：支付侧（微信/支付宝）已捕获同笔 → 银行侧只补充账户线索，
+        // 不再产生第二条（真实场景：银行卡绑定微信支付一笔，支付通知 + 银行短信同时到）
+        val related = findCrossChannelPending(ledger, sourceAt)
+        if (related != null) {
+            mergeBankInfoIntoPending(related, ledger)
+            captureDao.updateMatch(rawId, ledger.ruleName + "·并入待确认", true)
+            traceCapture(
+                channel = channel,
+                packageName = ledger.sourceKey,
+                title = if (channel == CaptureChannel.SMS) "银行短信" else "银行推送",
+                text = ledger.note,
+                bigText = "",
+                capturedAt = sourceAt,
+                matchedRule = ledger.ruleName,
+                type = ledger.type,
+                amountCents = ledger.amountCents,
+                counterparty = ledger.merchant,
+                note = ledger.note,
+                dedupKey = related.dedupKey,
+                outcome = TraceOutcome.MERGED_CROSS,
+            )
+            return
+        }
+
+        if (isAutoEntryEnabled() && autoEnter(
+                type = ledger.type,
+                amountCents = ledger.amountCents,
+                timestamp = sourceAt,
+                counterparty = ledger.merchant,
+                note = ledger.note,
+                sourcePackage = ledger.sourceKey,
+                dedupKey = ledger.dedupKey,
+                ruleName = ledger.ruleName,
+                isRefund = ledger.isRefund,
+                source = TxSource.BANK,
+                bankName = ledger.bankName,
+            )
+        ) {
+            captureDao.updateMatch(rawId, ledger.ruleName, true)
+            AppLog.i(
+                "Sms",
+                "auto entry: ${ledger.ruleName} ${ledger.type} ${Money.formatYuan(ledger.amountCents)}" +
+                    (if (ledger.isRefund) " [退款]" else "") + " ${ledger.displayLabel}",
+            )
+            traceCapture(
+                channel = channel,
+                packageName = ledger.sourceKey,
+                title = if (channel == CaptureChannel.SMS) "银行短信" else "银行推送",
+                text = ledger.note,
+                bigText = "",
+                capturedAt = sourceAt,
+                matchedRule = ledger.ruleName,
+                type = ledger.type,
+                amountCents = ledger.amountCents,
+                counterparty = ledger.merchant,
+                note = ledger.note,
+                dedupKey = ledger.dedupKey,
+                outcome = TraceOutcome.AUTO_ENTRY,
+            )
+            return
+        }
+
+        pendingDao.insert(
+            PendingTransactionEntity(
+                type = ledger.type,
+                amountCents = ledger.amountCents,
+                timestamp = sourceAt,
+                counterparty = ledger.merchant,
+                note = ledger.note,
+                sourcePackage = ledger.sourceKey,
+                ruleName = ledger.ruleName,
+                dedupKey = ledger.dedupKey,
+                rawNotificationId = rawId,
+                refundMark = if (ledger.isRefund) RefundMark.REFUND_INCOME else RefundMark.NONE,
+            ),
+        )
+        captureDao.updateMatch(rawId, ledger.ruleName, true)
+        AppLog.i(
+            "Sms",
+            "queued pending: ${ledger.ruleName} ${ledger.type} ${Money.formatYuan(ledger.amountCents)}" +
+                " 账户=${ledger.accountLabel}",
+        )
+        traceCapture(
+            channel = channel,
+            packageName = ledger.sourceKey,
+            title = if (channel == CaptureChannel.SMS) "银行短信" else "银行推送",
+            text = ledger.note,
+            bigText = "",
+            capturedAt = sourceAt,
+            matchedRule = ledger.ruleName,
+            type = ledger.type,
+            amountCents = ledger.amountCents,
+            counterparty = ledger.merchant,
+            note = ledger.note,
+            dedupKey = ledger.dedupKey,
+            outcome = TraceOutcome.PENDING,
+        )
+        announceCapture(
+            type = ledger.type,
+            isRefund = ledger.isRefund,
+            amountCents = ledger.amountCents,
+            sourceLabel = ledger.displayLabel,
+            counterparty = ledger.merchant,
+            paymentMethod = null,
+            dedupKey = ledger.dedupKey,
+            ruleName = ledger.ruleName,
+            txTime = sourceAt,
+            note = ledger.note,
+        )
+    }
+
+    /** 跨通道归并候选：合并池里"通道类别相异（支付类⇄银行类）且特征全等"的同笔条目 */
+    private suspend fun findCrossChannelPending(
+        ledger: BankLedgerRules.BankLedger,
+        eventTime: Long,
+    ): PendingTransactionEntity? {
+        val incoming = CrossChannelDedup.Signature(
+            amountCents = ledger.amountCents,
+            type = ledger.type,
+            isRefund = ledger.isRefund,
+            source = ledger.sourceKey,
+            time = eventTime,
+        )
+        return pendingDao.getMergeable().firstOrNull { candidate ->
+            CrossChannelDedup.isSameTransaction(
+                CrossChannelDedup.signatureOf(
+                    amountCents = candidate.amountCents,
+                    type = candidate.type,
+                    refundMark = candidate.refundMark,
+                    source = candidate.sourcePackage,
+                    time = candidate.timestamp,
+                ),
+                incoming,
+            )
+        }
+    }
+
+    /**
+     * 银行侧信息并入既有条目：支付侧信息更全（商户/支付方式），只追加银行侧独有的账户线索
+     * （"银行 工商银行(1234)"），不改金额/时间/方向（金额全等才可能命中）。
+     * 目标若是自动入账条目，同步回填交易本身（与页面回填同一路径）。
+     */
+    private suspend fun mergeBankInfoIntoPending(
+        existing: PendingTransactionEntity,
+        ledger: BankLedgerRules.BankLedger,
+    ) {
+        val extra = "银行 ${ledger.accountLabel}"
+        val note = if (existing.note.contains(ledger.accountLabel)) {
+            existing.note
+        } else {
+            (if (existing.note.isBlank()) extra else "${existing.note} · $extra").take(300)
+        }
+        val counterparty = existing.counterparty.ifBlank { ledger.merchant }
+        pendingDao.updateFromPage(
+            existing.id,
+            existing.amountCents,
+            existing.timestamp,
+            counterparty,
+            note,
+            existing.ruleName,
+        )
+        if (existing.status == PendingStatus.AUTO) {
+            txDao.updateCapturedByExternalId(
+                "NTF:${existing.dedupKey}",
+                existing.amountCents,
+                existing.timestamp,
+                counterparty,
+                note,
+            )
+        }
+        AppLog.i(
+            "Sms",
+            "merged bank info into " +
+                (if (existing.status == PendingStatus.AUTO) "auto entry" else "pending") +
+                " #${existing.id} ${ledger.ruleName} 账户=${ledger.accountLabel}",
+        )
     }
 
     // ---------- 退款关联提醒（无金额退款通知） ----------
@@ -769,9 +1071,11 @@ object CaptureCenter {
         dedupKey: String,
         ruleName: String,
         isRefund: Boolean = false,
+        source: TxSource = TxSource.NOTIFICATION,
+        bankName: String? = null,
     ): Boolean {
         val categoryId = CaptureDefaults.categoryId(categoryDao.getAll(), type, counterparty.ifBlank { note })
-        val accountId = CaptureDefaults.accountId(accountDao.getAll(), sourcePackage)
+        val accountId = CaptureDefaults.accountId(accountDao.getAll(), sourcePackage, bankName)
         if (categoryId == null || accountId == null) {
             AppLog.w("Ntf", "auto entry skipped (no category/account to use)")
             return false
@@ -786,7 +1090,7 @@ object CaptureCenter {
                     timestamp = timestamp,
                     note = note.ifBlank { ruleName },
                     counterparty = counterparty,
-                    source = TxSource.NOTIFICATION,
+                    source = source,
                     externalId = "NTF:$dedupKey",
                     refundMark = if (isRefund) RefundMark.REFUND_INCOME else RefundMark.NONE,
                 ),

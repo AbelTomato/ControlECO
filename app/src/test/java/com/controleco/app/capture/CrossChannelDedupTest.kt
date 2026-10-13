@@ -1,5 +1,6 @@
 package com.controleco.app.capture
 
+import com.controleco.app.data.db.RefundMark
 import com.controleco.app.data.db.TxType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -45,6 +46,19 @@ class CrossChannelDedupTest {
         // 早前草稿把"不在支付白名单里"一律当银行侧，电商/外卖收银台会被误判、与支付通知错误归并
         assertEquals(CrossChannelDedup.ChannelClass.UNKNOWN, CrossChannelDedup.channelClass("com.jingdong.app.mall"))
         assertEquals(CrossChannelDedup.ChannelClass.UNKNOWN, CrossChannelDedup.channelClass("com.example.unknown"))
+    }
+
+    @Test
+    fun `refund mark maps to refund flag in signature`() {
+        // 待确认条目用 refundMark 存退款标记，折算口径只在一处（signatureOf）
+        val refund = CrossChannelDedup.signatureOf(
+            5000, TxType.INCOME, RefundMark.REFUND_INCOME, NotificationRules.ALIPAY, t0,
+        )
+        val plain = CrossChannelDedup.signatureOf(
+            5000, TxType.INCOME, RefundMark.NONE, NotificationRules.ALIPAY, t0,
+        )
+        assertTrue(refund.isRefund)
+        assertFalse(plain.isRefund)
     }
 
     // ---------- 判为同一笔 ----------

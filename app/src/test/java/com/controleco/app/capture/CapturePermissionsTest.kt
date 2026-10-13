@@ -19,6 +19,7 @@ class CapturePermissionsTest {
             CapturePermission.LISTENER to true,
             CapturePermission.A11Y to false,
             CapturePermission.NOTIFY to false,
+            CapturePermission.SMS to true,
         )
         assertEquals(
             listOf(CapturePermission.A11Y, CapturePermission.NOTIFY),
@@ -28,13 +29,25 @@ class CapturePermissionsTest {
 
     @Test
     fun `功能未启用（视为就绪）不提醒`() {
-        // 用户主动关掉「自动记录支付页面」= 无障碍未授权也不算问题
+        // 用户主动关掉「自动记录支付页面」= 无障碍未授权也不算问题；短信开关默认关，同理不提醒
         val ready = mapOf(
             CapturePermission.LISTENER to false,
             CapturePermission.A11Y to true,
             CapturePermission.NOTIFY to true,
+            CapturePermission.SMS to true,
         )
         assertEquals(listOf(CapturePermission.LISTENER), missingPermissions(ready))
+    }
+
+    @Test
+    fun `短信开关开着但没授权时提醒`() {
+        val ready = mapOf(
+            CapturePermission.LISTENER to true,
+            CapturePermission.A11Y to true,
+            CapturePermission.NOTIFY to true,
+            CapturePermission.SMS to false,
+        )
+        assertEquals(listOf(CapturePermission.SMS), missingPermissions(ready))
     }
 
     @Test
@@ -47,5 +60,6 @@ class CapturePermissionsTest {
         assertEquals("通知监听", CapturePermission.LISTENER.label)
         assertEquals("无障碍", CapturePermission.A11Y.label)
         assertEquals("通知权限", CapturePermission.NOTIFY.label)
+        assertEquals("短信权限", CapturePermission.SMS.label)
     }
 }
