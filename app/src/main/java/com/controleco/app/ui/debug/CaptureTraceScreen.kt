@@ -229,7 +229,7 @@ private fun TraceRowItem(
                     modifier = Modifier.padding(top = 2.dp),
                 )
                 Text(
-                    "原始来源（${if (t.channel == CaptureChannel.A11Y) "页面快照" else "通知原文"}）：",
+                    "原始来源（${rawSourceLabel(t.channel)}）：",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 8.dp),
@@ -277,13 +277,23 @@ private fun TraceChip(text: String, color: Color) {
     )
 }
 
-private fun channelLabel(channel: CaptureChannel): String =
-    if (channel == CaptureChannel.A11Y) "页面" else "通知"
+private fun channelLabel(channel: CaptureChannel): String = when (channel) {
+    CaptureChannel.A11Y -> "页面"
+    CaptureChannel.SMS -> "短信"
+    CaptureChannel.NOTIFICATION -> "通知"
+}
+
+private fun rawSourceLabel(channel: CaptureChannel): String = when (channel) {
+    CaptureChannel.A11Y -> "页面快照"
+    CaptureChannel.SMS -> "短信原文"
+    CaptureChannel.NOTIFICATION -> "通知原文"
+}
 
 private fun outcomeLabel(outcome: TraceOutcome): String = when (outcome) {
     TraceOutcome.AUTO_ENTRY -> "自动入账"
     TraceOutcome.PENDING -> "待确认入账"
     TraceOutcome.MERGED_PAGE -> "页面合并回填"
+    TraceOutcome.MERGED_CROSS -> "跨通道归并"
     TraceOutcome.SKIPPED_DUPLICATE -> "重复捕获"
     TraceOutcome.REFUND_NOTICE -> "退款提醒"
 }

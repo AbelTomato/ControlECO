@@ -9,6 +9,7 @@ enum class CapturePermission(val label: String) {
     LISTENER("通知监听"),
     A11Y("无障碍"),
     NOTIFY("通知权限"),
+    SMS("短信权限"),
 }
 
 /**
@@ -32,6 +33,8 @@ object CapturePermissions {
                     ready(CaptureCenter.isA11yCaptureEnabled(), AccBookAccessibilityService.isEnabled(app)),
                 CapturePermission.NOTIFY to
                     ready(CaptureCenter.isCaptureNotifyEnabled(), canPostNotifications(app)),
+                CapturePermission.SMS to
+                    ready(CaptureCenter.isSmsCaptureEnabled(), hasSmsPermission(app)),
             ),
         )
     }
@@ -60,4 +63,10 @@ object CapturePermissions {
         } else {
             true
         }
+
+    /** 收短信权限（银行动账短信通道的前提；安卓 13+ 侧载同样需运行时授权） */
+    private fun hasSmsPermission(context: Context): Boolean =
+        androidx.core.content.ContextCompat.checkSelfPermission(
+            context, android.Manifest.permission.RECEIVE_SMS,
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
 }

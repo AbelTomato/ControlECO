@@ -4,6 +4,7 @@ import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
@@ -60,6 +61,7 @@ fun SettingsPermissionScreen(
     SettingsPage(title = "权限", onBack = onBack) {
         NotificationSection(vm, resumeTick, onOpenNotificationAccess)
         A11ySection(vm, resumeTick, onOpenAccessibilitySettings)
+        BankSection(vm, resumeTick)
     }
 }
 
@@ -115,6 +117,8 @@ private fun NotificationSection(vm: LedgerViewModel, resumeTick: Int, onOpenNoti
             checked = captureEnabled,
             onCheckedChange = { vm.setCaptureEnabled(it) },
         )
+        RowDivider()
+        BankPushSetting(vm)
         RowDivider()
         CaptureNotifySetting(vm, resumeTick)
         RowDivider()
@@ -204,6 +208,86 @@ private fun A11ySection(vm: LedgerViewModel, resumeTick: Int, onOpenAccessibilit
                 a11yPathFor(Brand.current()),
                 "打开「我ECO 支付页面采集」开关；系统弹 10 秒倒计时确认属正常（小米十秒盾）。",
                 "回到本页状态应显示「已连接」；付款后在捕获日志的「页面」通道能看到页面快照。",
+            ),
+        )
+    }
+}
+
+@Composable
+private fun BankPushSetting(vm: LedgerViewModel) {
+    val enabled by vm.bankPushEnabled.collectAsStateWithLifecycle()
+    Row(
+        Modifier.padding(horizontal = 16.dp, vertical = 15.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("银行 App 动账推送", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                "银行 App 的动账通知（与动账短信同源，靠【银行名】签名识别）",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(checked = enabled, onCheckedChange = { vm.setBankPushEnabled(it) })
+    }
+}
+
+/**
+ * 银行动账短信：只收新到短信（RECEIVE_SMS），不读历史、非默认短信应用；
+ * 非银行号码与无银行签名的短信在采集层丢弃（内容不入库）。开关默认关，开启时申请权限。
+ */
+@Composable
+private fun BankSection(vm: LedgerViewModel, resumeTick: Int) {
+    val context = LocalContext.current
+    val enabled by vm.smsCaptureEnabled.collectAsStateWithLifecycle()
+    val granted = remember(resumeTick) { vm.isSmsPermissionGranted() }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { ok ->
+        Toast.makeText(
+            context,
+            if (ok) "短信权限已授予，银行动账短信将进入待确认" else "未授予短信权限，银行动账短信无法记录",
+            Toast.LENGTH_LONG,
+        ).show()
+    }
+
+    SectionTitle("银行动账短信")
+    PaneCard {
+        PermissionStatusRow(
+            title = "收短信权限",
+            granted = granted,
+            grantedText = "已授权",
+            ungrantedText = "未授权",
+            actionText = "去授权",
+            onAction = { permissionLauncher.launch(android.Manifest.permission.RECEIVE_SMS) },
+        )
+        RowDivider()
+        Row(
+            Modifier.padding(horizontal = 16.dp, vertical = 15.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "记录银行动账短信",
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.weight(1f),
+            )
+            Switch(
+                checked = enabled,
+                onCheckedChange = { on ->
+                    vm.setSmsCaptureEnabled(on)
+                    if (on && !granted) permissionLauncher.launch(android.Manifest.permission.RECEIVE_SMS)
+                },
+            )
+        }
+        RowDivider()
+        PermissionTutorial(
+            "为什么需要短信权限",
+            listOf(
+                "银行卡直接刷卡/被扣款时可能没有任何 App 通知，动账短信是唯一的线索。",
+                "只接收新到的短信，不读取历史短信、不需要成为默认短信应用。",
+                "只有银行号码（95588 等）或带【银行名】签名的短信会被解析；" +
+                    "其他短信在采集层直接丢弃，内容不会入库。",
+                "关闭本开关或撤销权限后，短信通道立即失效。",
             ),
         )
     }

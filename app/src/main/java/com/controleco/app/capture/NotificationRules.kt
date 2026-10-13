@@ -16,6 +16,14 @@ import com.controleco.app.util.Money
  * - 支付宝支出：text=你有一笔14.90元的支出，点此查看详情。（金额在关键词前，走反向正则）
  * - 支付宝退款：text=你收到一笔14.90元退款，点此查看账单详情！（退款→收入，打退款标记）
  * - 云闪付：成功入账100.00元 / 消费50.00元
+ *
+ * 2026-10-13 加固（对照设计记录，见 docs/自动记账捕获机制.md）：
+ * 1. 文本归一化：全角数字转半角、￥→¥、剥离折叠通知的「[N条]/共N条」计数前缀；
+ * 2. 金额捕获组支持千分位——修复「已支付¥6,064.76」被兜底正则抓成 ¥6.00 的**静默错账**；
+ * 3. 卡尾号遮罩：避免「尾号7619」「储蓄卡(8920)」里的四位数字被金额正则抓走；
+ * 4. 金额上限：超过 ¥1000 万视为误抓（订单号/手机号），宁可漏记不记错账；
+ * 5. 噪声黑名单：只在**没有任何交易确认短语**时一票否决（真实通知常带"使用优惠券省 3 元"的
+ *    营销尾巴，不能连交易一起丢）。
  */
 object NotificationRules {
 
@@ -25,7 +33,16 @@ object NotificationRules {
 
     val knownPackages = setOf(WECHAT, ALIPAY, UNIONPAY)
 
+    /** 短信来源前缀（见 CaptureCenter.onSmsReceived）：来源键形如 `SMS:工商银行` */
+    const val SMS_SOURCE_PREFIX = "SMS:"
+
     fun isInterested(packageName: String): Boolean = packageName in knownPackages
+
+    /** 全渠道统一金额捕获组：优先匹配带千分位的写法（6,064.76），否则普通写法（0.01 / 100） */
+    private const val AMT = "([0-9]{1,3}(?:,[0-9]{3})+(?:\\.[0-9]{1,2})?|[0-9]+(?:\\.[0-9]{1,2})?)"
+
+    /** 金额上限（分）：¥1000 万，超过视为误抓（订单号/卡号/手机号被当金额） */
+    const val MAX_AMOUNT_CENTS = 1_000_000_000L
 
     /**
      * 无金额的退款到账提醒（微信折叠通知"退款到账通知"常不带金额，实测样本：
@@ -36,22 +53,118 @@ object NotificationRules {
         packageName in knownPackages &&
             ((title + text).contains("退款") || (title + text).contains("退回"))
 
-    fun sourceLabel(packageName: String): String = when (packageName) {
-        WECHAT -> "微信"
-        ALIPAY -> "支付宝"
-        UNIONPAY -> "云闪付"
+    fun sourceLabel(packageName: String): String = when {
+        packageName.startsWith(SMS_SOURCE_PREFIX) -> packageName.removePrefix(SMS_SOURCE_PREFIX) + "短信"
+        packageName == WECHAT -> "微信"
+        packageName == ALIPAY -> "支付宝"
+        packageName == UNIONPAY -> "云闪付"
+        // 银行 App 推送（动账通知）走 BankLedgerRules 的签名闸门，包名 → 银行名
+        BankLedgerRules.bankNameOfPackage(packageName) != null ->
+            BankLedgerRules.bankNameOfPackage(packageName) + "通知"
         else -> packageName
     }
+
+    /** 去重键：来源包名 + 方向（退款加 R）+ 金额分 + 分钟级时间。通知/页面/短信三条路径共用同一构造 */
+    fun dedupKey(packageName: String, type: TxType, isRefund: Boolean, amountCents: Long, timeMillis: Long): String =
+        "$packageName|$type${if (isRefund) "|R" else ""}|$amountCents|${timeMillis / 60_000}"
+
+    // ---------- 文本归一化与遮罩 ----------
+
+    private val bracketedCount = Regex("""[\[［【(（]\s*\d+\s*条\s*[\]］】)）]""")
+    private val countSuffix = Regex("""(?:共|新)\s*\d+\s*条(?:消息|通知)?""")
+    private val appCountPrefix = Regex("""(微信支付|微信收款|微信|支付宝|云闪付)\s*[:：]?\s*\d+\s*条""")
+    private val whitespace = Regex("""\s+""")
+
+    /**
+     * 归一化：全角数字→半角、￥→¥、全角句点→半角句点、全角空格→空格，
+     * 并剥离折叠通知的计数前缀（`[2条]微信支付: …` → `微信支付: …`），最后折叠连续空白。
+     *
+     * 刻意**不**把全角标点「，。」转成半角：反向金额正则靠 `[^，。\d]` 限定关键词距离，
+     * 转换会让它跨越逗号去够更远的关键词，反而抓到不相干的金额。
+     */
+    fun normalize(raw: String): String {
+        if (raw.isEmpty()) return raw
+        val sb = StringBuilder(raw.length)
+        for (ch in raw) {
+            sb.append(
+                when {
+                    ch in '０'..'９' -> '0' + (ch - '０')
+                    ch == '￥' -> '¥'
+                    ch == '．' -> '.'
+                    ch == '　' -> ' '
+                    else -> ch
+                },
+            )
+        }
+        var s = bracketedCount.replace(sb, " ")
+        s = countSuffix.replace(s, " ")
+        s = appCountPrefix.replace(s, "\$1 ")
+        return whitespace.replace(s.trim(), " ").trim()
+    }
+
+    private val cardTailWord = Regex("""尾号\s*\d{4,}""")
+    private val cardTailBracket = Regex("""【([^】]*?)[(（]\s*\d{4}\s*[)）][^】]*】""")
+    private val cardTailParen = Regex("""(储蓄卡|信用卡|借记卡|银行卡|账户|卡)\s*[(（]\s*\d{4}\s*[)）]""")
+
+    /**
+     * 卡尾号遮罩：卡号后四位不应参与金额解析。顺序 = 先剥【中国银行储蓄卡(8920)】的括号，
+     * 再把「储蓄卡(8920)」变成「储蓄卡(****)」、把「尾号7619」变成「尾号****」。
+     * 括号外的文字保留（支付方式识别仍需读"中国银行储蓄卡"）。
+     */
+    fun maskCardTails(text: String): String {
+        var s = cardTailBracket.replace(text, "【\$1】")
+        s = cardTailParen.replace(s, "\$1(****)")
+        s = cardTailWord.replace(s, "尾号****")
+        return s
+    }
+
+    // ---------- 噪声过滤 ----------
+
+    /**
+     * 交易确认短语：出现即认为文本确实在报告一笔已完成的交易，此时黑名单放行。
+     *
+     * 刻意**不含**裸的"已到账"：优惠券/红包类推送也写"已到账"
+     * （"限时优惠券已到账，点击领取 20元券"会被解析成 ¥20 收入），
+     * 把它当确认短语会放过一整类营销文案。
+     */
+    private val confirmPhrases = listOf(
+        "已支付", "支付成功", "付款成功", "支付完成", "交易成功", "已付款",
+        "扣款成功", "已扣款", "消费成功", "收款成功", "已收款", "收款到账",
+        "入账成功", "成功入账", "转账到账", "收到转账",
+        "退款到账", "退款成功", "已退款",
+        // 免密/自动扣款类（真实样本："你有一笔2.98元的免密/自动扣款支付，点击领取6个支付宝积分。"）——
+        // 这句里的"点击领取"是营销词，但交易本身是真的，必须让确认短语放行
+        "扣款支付", "免密支付", "自动扣款", "自动扣费",
+    )
+
+    /**
+     * 噪声关键词：营销/额度/物流/安全提醒类。只在缺失确认短语时生效——
+     * 真实通知常带"使用优惠券省 3 元"的尾巴，有确认短语就放行，避免把真交易一起丢掉。
+     */
+    private val noiseKeywords = listOf(
+        "验证码", "动态码", "登录验证", "登录成功", "注册成功", "开通成功",
+        "账单日", "最低还款", "还款提醒", "即将到期", "已逾期", "逾期提醒",
+        "可用额度", "信用额度", "剩余额度", "提额", "额度已更新",
+        "已发货", "待收货", "已签收", "物流", "配送中", "包裹",
+        "领券", "优惠券", "消费券", "抵用券", "待领取", "点击领取", "限时领取", "立即领取",
+        "积分到账", "积分即将", "会员权益", "开通会员", "立即申请", "点击查看详情",
+        "提现提醒", "尚未处理", "正在处理中", "预约", "投票", "签到",
+    )
+
+    fun isNoise(text: String): Boolean =
+        confirmPhrases.none { text.contains(it) } && noiseKeywords.any { text.contains(it) }
+
+    // ---------- 金额与方向 ----------
 
     /**
      * 正向：关键词后跟金额且金额带"元"（收款0.01元 / 消费50.00元）。
      * 必须有"元"字收尾——关键词后的营销文案常带裸数字（真实样本：
-     * "…自动扣款支付，点击领取6个支付宝积分" 曾把 6 当成金额；"支付成功，领取6个积分"同理），
+     * "…自动扣款支付，点击领取6个支付宝积分"曾把 6 当成金额；"支付成功，领取6个积分"同理），
      * ¥ 前缀的金额（已支付¥12.80）交给 currencyAmount 兜底。
      */
-    private val incomeAmount = Regex("""(?:收款|到账|入账|收入)[^\d￥¥.]{0,8}([0-9]+(?:\.[0-9]{1,2})?)元""")
-    private val expenseAmount = Regex("""(?:已支付|支付成功|支出|消费|付款|扣款)[^\d￥¥.]{0,8}([0-9]+(?:\.[0-9]{1,2})?)元""")
-    private val refundAmount = Regex("""(?:退款|退回)[^\d￥¥.]{0,8}([0-9]+(?:\.[0-9]{1,2})?)元""")
+    private val incomeAmount = Regex("""(?:收款|到账|入账|收入)[^\d￥¥.]{0,8}${AMT}元""")
+    private val expenseAmount = Regex("""(?:已支付|支付成功|支出|消费|付款|扣款)[^\d￥¥.]{0,8}${AMT}元""")
+    private val refundAmount = Regex("""(?:退款|退回)[^\d￥¥.]{0,8}${AMT}元""")
 
     /**
      * 反向：金额在前（你有一笔14.90元的支出 / 你收到一笔14.90元退款 / 一笔100元的收入）。
@@ -60,10 +173,10 @@ object NotificationRules {
      * 不会被反向正则跨越（"支出，领1元红包"仍匹配到 0.01 而不是 1）。
      */
     private val reversedAmount =
-        Regex("""([0-9]+(?:\.[0-9]{1,2})?)\s*元[^，。\d]{0,8}的?\s*(?:支出|消费|付款|扣款|收款|收入|到账|入账|退款|退回)""")
+        Regex("""$AMT\s*元[^，。\d]{0,8}的?\s*(?:支出|消费|付款|扣款|收款|收入|到账|入账|退款|退回)""")
 
     /** 兜底：文本里直接出现 ¥ 金额（已支付¥12.80 / 收款金额¥0.01） */
-    private val currencyAmount = Regex("""[￥¥]\s*([0-9]+(?:\.[0-9]{1,2})?)""")
+    private val currencyAmount = Regex("""[￥¥]\s*$AMT""")
 
     data class ParsedNotification(
         val type: TxType,
@@ -84,8 +197,16 @@ object NotificationRules {
         postTime: Long,
     ): ParsedNotification? {
         if (packageName !in knownPackages) return null
-        val body = sequenceOf(text, bigText).filter { it.isNotBlank() }.joinToString(" ").trim()
+        // 归一化 + 卡尾号遮罩后才做匹配：规则只面对干净输入
+        val body = maskCardTails(
+            normalize(sequenceOf(title, text, bigText).filter { it.isNotBlank() }.joinToString(" ")),
+        ).trim()
         if (body.isBlank()) return null
+
+        if (isNoise(body)) {
+            AppLog.d("Ntf", "skip noise pkg=$packageName body=$body")
+            return null
+        }
 
         val refundHit = body.contains("退款") || body.contains("退回")
         val incomeHit = body.contains("收款") || body.contains("到账") || body.contains("入账") || body.contains("收入")
@@ -126,18 +247,23 @@ object NotificationRules {
             return null
         }
         val amountCents = Money.parseCents(amountText) ?: return null
+        if (amountCents <= 0 || amountCents > MAX_AMOUNT_CENTS) {
+            AppLog.w("Ntf", "rule amount out of range [$amountText] -> $amountCents pkg=$packageName body=$body")
+            return null
+        }
 
+        val label = sourceLabel(packageName)
         return ParsedNotification(
             type = type,
             amountCents = amountCents,
-            sourceLabel = sourceLabel(packageName),
-            ruleName = sourceLabel(packageName) + when {
+            sourceLabel = label,
+            ruleName = label + when {
                 isRefund -> "·退款"
                 type == TxType.INCOME -> "·收款/入账"
                 else -> "·支出/消费"
             },
             note = body.take(200),
-            dedupKey = "$packageName|${type}${if (isRefund) "|R" else ""}|$amountCents|${postTime / 60_000}",
+            dedupKey = dedupKey(packageName, type, isRefund, amountCents, postTime),
             isRefund = isRefund,
         )
     }

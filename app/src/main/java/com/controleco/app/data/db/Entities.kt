@@ -9,11 +9,11 @@ import androidx.room.PrimaryKey
 /** 交易方向 */
 enum class TxType { EXPENSE, INCOME }
 
-/** 捕获通道：通知监听 / 无障碍页面抓取（捕获日志共用一张表，用 source 区分） */
-enum class CaptureChannel { NOTIFICATION, A11Y }
+/** 捕获通道：通知监听 / 无障碍页面抓取 / 银行动账短信（捕获日志共用一张表，用 source 区分） */
+enum class CaptureChannel { NOTIFICATION, A11Y, SMS }
 
-/** 交易来源：手动输入 / 微信账单 / 支付宝账单 / 通知捕获（后续新增：短信、无障碍） */
-enum class TxSource { MANUAL, WECHAT, ALIPAY, NOTIFICATION }
+/** 交易来源：手动输入 / 微信账单 / 支付宝账单 / 通知捕获（含页面/短信/银行推送，外部凭去重键区分）/ 银行动账 */
+enum class TxSource { MANUAL, WECHAT, ALIPAY, NOTIFICATION, BANK }
 
 /**
  * 退款标记：
@@ -110,6 +110,7 @@ data class CapturedNotificationEntity(
 /**
  * 自动记账溯源：一次捕获事件对入账流程的处置结果（仅在开发者功能「记录记账来源」开启时记录）。
  * 注意不是每条捕获都有溯源记录——只有"与入账有关"的捕获才记（未识别/未感兴趣的走捕获日志）。
+ * 枚举存字符串：新增取值不需要 Room 迁移。
  */
 enum class TraceOutcome {
     /** 自动入账：捕获后直接落账 */
@@ -120,6 +121,9 @@ enum class TraceOutcome {
 
     /** 页面信息合并：同笔已由另一通道入账/入队，本次捕获把页面富化信息回填过去 */
     MERGED_PAGE,
+
+    /** 跨通道归并：同笔已由另一通道（支付类⇄银行类）捕获，本次银行侧信息并入既有条目 */
+    MERGED_CROSS,
 
     /** 重复捕获：同笔已由另一通道处理，本次不再入账 */
     SKIPPED_DUPLICATE,

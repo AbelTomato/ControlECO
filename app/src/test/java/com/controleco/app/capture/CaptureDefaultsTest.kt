@@ -2,6 +2,7 @@ package com.controleco.app.capture
 
 import com.controleco.app.data.db.AccountEntity
 import com.controleco.app.data.db.CategoryEntity
+import com.controleco.app.data.db.TxSource
 import com.controleco.app.data.db.TxType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -82,5 +83,34 @@ class CaptureDefaultsTest {
         val plain = listOf(acc(1, "现金"), acc(2, "备用金"))
         assertEquals(1L, CaptureDefaults.accountId(plain, NotificationRules.ALIPAY))
         assertNull(CaptureDefaults.accountId(emptyList(), NotificationRules.ALIPAY))
+    }
+
+    @Test
+    fun `银行来源按银行名匹配账户`() {
+        assertEquals(4L, CaptureDefaults.accountId(accounts, "SMS:中国银行", "中国银行"))
+        // 简称匹配："招商银行" 对账户名"招行卡"
+        val withShort = accounts + acc(9, "招行卡")
+        assertEquals(9L, CaptureDefaults.accountId(withShort, "SMS:招商银行", "招商银行"))
+        // 没有对应银行名的账户 → 退化到含"银行"的账户
+        assertEquals(4L, CaptureDefaults.accountId(accounts, "SMS:工商银行", "工商银行"))
+    }
+
+    @Test
+    fun `从来源键与规则名取回银行名`() {
+        assertEquals("工商银行", CaptureDefaults.bankNameOf("SMS:工商银行"))
+        // 号码兜底：来源键是 SMS:95588，银行名要从规则名里找
+        assertEquals("工商银行", CaptureDefaults.bankNameOf("SMS:95588", "工商银行短信·支出"))
+        assertNull(CaptureDefaults.bankNameOf("SMS:95588", ""))
+        assertEquals("工商银行", CaptureDefaults.bankNameOf("com.icbc"))
+        assertEquals("建设银行", CaptureDefaults.bankNameOf("com.unknown.app", "建设银行通知·支出"))
+    }
+
+    @Test
+    fun `银行来源标记与支付来源标记`() {
+        assertEquals(TxSource.BANK, CaptureDefaults.txSource("SMS:工商银行"))
+        assertEquals(TxSource.BANK, CaptureDefaults.txSource(NotificationRules.UNIONPAY))
+        assertEquals(TxSource.BANK, CaptureDefaults.txSource("com.icbc"))
+        assertEquals(TxSource.NOTIFICATION, CaptureDefaults.txSource(NotificationRules.WECHAT))
+        assertEquals(TxSource.NOTIFICATION, CaptureDefaults.txSource("com.example.unknown"))
     }
 }
