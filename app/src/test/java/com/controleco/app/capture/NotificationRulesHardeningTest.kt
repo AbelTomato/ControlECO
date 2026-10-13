@@ -225,6 +225,27 @@ class NotificationRulesHardeningTest {
     }
 
     @Test
+    fun `source label falls back to rule name for unknown packages`() {
+        // 真机验证发现：未收录短名单的银行 App 推送只能显示包名（对用户无意义）→ 退回规则名前缀
+        assertEquals(
+            "工商银行通知",
+            NotificationRules.sourceLabelOrRule("com.some.unknown.bank", "工商银行通知·支出"),
+        )
+        // 已知来源仍用品牌名
+        assertEquals("微信", NotificationRules.sourceLabelOrRule(NotificationRules.WECHAT, "微信·支出/消费"))
+        assertEquals(
+            "工商银行通知",
+            NotificationRules.sourceLabelOrRule("com.icbc", "工商银行通知·支出"),
+        )
+        assertEquals(
+            "工商银行短信",
+            NotificationRules.sourceLabelOrRule("SMS:工商银行", "工商银行短信·支出"),
+        )
+        // 规则名为空时最差退回包名（不抛异常）
+        assertEquals("com.unknown.pkg", NotificationRules.sourceLabelOrRule("com.unknown.pkg", ""))
+    }
+
+    @Test
     fun `grouped summary detection helpers`() {
         assertTrue(NotificationRules.looksLikeGroupedSummary("[2条]微信支付: 退款到账通知"))
         assertTrue(NotificationRules.looksLikeGroupedSummary("微信支付 共3条"))

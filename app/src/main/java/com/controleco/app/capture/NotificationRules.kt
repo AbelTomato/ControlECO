@@ -95,6 +95,17 @@ object NotificationRules {
         else -> packageName
     }
 
+    /**
+     * 来源显示名（列表/卡片用）：已知来源给品牌名；**未知来源退回规则名前缀**——
+     * 未收录短名单的银行 App 推送只有包名（如 com.some.bank），直接显示包名对用户毫无意义，
+     * 规则名（"工商银行通知·支出"）的前缀才是可读的来源。
+     */
+    fun sourceLabelOrRule(packageName: String, ruleName: String): String {
+        val label = sourceLabel(packageName)
+        if (label != packageName) return label
+        return ruleName.substringBefore('·').ifBlank { label }
+    }
+
     /** 去重键：来源包名 + 方向（退款加 R）+ 金额分 + 分钟级时间。通知/页面/短信三条路径共用同一构造 */
     fun dedupKey(packageName: String, type: TxType, isRefund: Boolean, amountCents: Long, timeMillis: Long): String =
         "$packageName|$type${if (isRefund) "|R" else ""}|$amountCents|${timeMillis / 60_000}"

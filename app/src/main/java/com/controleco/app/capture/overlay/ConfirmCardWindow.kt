@@ -211,7 +211,9 @@ internal object ConfirmCardWindow {
         autoDismiss?.let { handler.removeCallbacks(it) }
         val r = Runnable {
             AppLog.i(TAG, "confirm card auto dismiss (no interaction)")
-            if (dismissConfirm()) collapseCallback?.invoke()
+            // 先取出回调：dismissConfirm → removeConfirmWindow 会把它清空
+            val cb = collapseCallback
+            if (dismissConfirm()) cb?.invoke()
         }
         autoDismiss = r
         handler.postDelayed(r, OVERLAY_AUTO_DISMISS_MS)

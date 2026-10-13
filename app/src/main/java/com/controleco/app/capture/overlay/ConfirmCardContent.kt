@@ -96,7 +96,7 @@ internal class ConfirmCardState {
         pendingId = pending.id
         type = pending.type
         isRefund = pending.refundMark == com.controleco.app.data.db.RefundMark.REFUND_INCOME
-        sourceLabel = com.controleco.app.capture.NotificationRules.sourceLabel(pending.sourcePackage)
+        sourceLabel = com.controleco.app.capture.NotificationRules.sourceLabelOrRule(pending.sourcePackage, pending.ruleName)
         ruleName = pending.ruleName
         timestamp = pending.timestamp
         amountText = if (pending.amountCents > 0) Money.formatCents(pending.amountCents) else ""

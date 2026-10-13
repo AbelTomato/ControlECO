@@ -18,6 +18,7 @@ class OverlayDecisionTest {
         keyguardLocked: Boolean = false,
         foregroundPackage: String? = NotificationRules.WECHAT,
         sourcePackage: String = NotificationRules.WECHAT,
+        foregroundIsPaymentContext: Boolean = false,
     ) = OverlayConditions(
         enabled = enabled,
         canDrawOverlays = canDrawOverlays,
@@ -26,6 +27,7 @@ class OverlayDecisionTest {
         keyguardLocked = keyguardLocked,
         foregroundPackage = foregroundPackage,
         sourcePackage = sourcePackage,
+        foregroundIsPaymentContext = foregroundIsPaymentContext,
     )
 
     @Test
@@ -64,10 +66,24 @@ class OverlayDecisionTest {
     }
 
     @Test
-    fun `前台应用与来源不一致（已切走）不弹卡`() {
+    fun `前台应用与来源不一致（已切到无关应用）不弹卡`() {
         assertFalse(
             shouldShowOverlay(
                 conditions(foregroundPackage = NotificationRules.ALIPAY, sourcePackage = NotificationRules.WECHAT),
+            ),
+        )
+    }
+
+    @Test
+    fun `前台是别的支付购物应用时仍弹卡（跳转支付）`() {
+        // 京东下单 → 拉起微信支付：通知到达时前台是京东（监听目录内），仍在支付语境
+        assertTrue(
+            shouldShowOverlay(
+                conditions(
+                    foregroundPackage = "com.jingdong.app.mall",
+                    sourcePackage = NotificationRules.WECHAT,
+                    foregroundIsPaymentContext = true,
+                ),
             ),
         )
     }

@@ -187,7 +187,7 @@ private fun PendingAmountDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    "${NotificationRules.sourceLabel(item.sourcePackage)} · ${item.ruleName}",
+                    "${NotificationRules.sourceLabelOrRule(item.sourcePackage, item.ruleName)} · ${item.ruleName}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -263,7 +263,7 @@ private fun PendingRow(
                 },
             )
             Text(
-                "${NotificationRules.sourceLabel(item.sourcePackage)} · ${item.ruleName}",
+                "${NotificationRules.sourceLabelOrRule(item.sourcePackage, item.ruleName)} · ${item.ruleName}",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -321,7 +321,7 @@ private fun ConfirmPendingDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    "${NotificationRules.sourceLabel(item.sourcePackage)} · ${item.ruleName} · ${formatTimestamp(item.timestamp)}",
+                    "${NotificationRules.sourceLabelOrRule(item.sourcePackage, item.ruleName)} · ${item.ruleName} · ${formatTimestamp(item.timestamp)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

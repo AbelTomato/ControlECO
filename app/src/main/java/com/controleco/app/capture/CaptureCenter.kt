@@ -532,6 +532,7 @@ object CaptureCenter {
     private fun overlayConditionsOk(sourcePackage: String): Boolean {
         val pm = appContext.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
         val km = appContext.getSystemService(Context.KEYGUARD_SERVICE) as android.app.KeyguardManager
+        val fg = foregroundPackage
         return shouldShowOverlay(
             OverlayConditions(
                 enabled = isOverlayConfirmEnabled(),
@@ -539,8 +540,9 @@ object CaptureCenter {
                 appInForeground = appInForeground,
                 screenInteractive = pm.isInteractive,
                 keyguardLocked = km.isKeyguardLocked,
-                foregroundPackage = foregroundPackage,
+                foregroundPackage = fg,
                 sourcePackage = sourcePackage,
+                foregroundIsPaymentContext = fg != null && CaptureAppCatalog.isWatched(appContext, fg),
             ),
         )
     }
@@ -598,8 +600,10 @@ object CaptureCenter {
                     scope.launch { ignoreFromOverlay(pending.id, pending.dedupKey) }
                 },
                 onCollapse = {
-                    // 收起 = 保留待确认 + 补发通知（不丢单）
+                    // 收起 = 移除卡片 + 保留待确认 + 补发通知（不丢单）；
+                    // 用户点 ✕/上方空白，以及 60 秒自动收起（窗口侧先取出回调再移除）都会走到这里
                     AppLog.i("Overlay", "card collapsed, fallback to notification")
+                    mainHandler.post { ConfirmCardWindow.dismissConfirm() }
                     postPendingNotification(pending.type, isRefund, pending.amountCents, sourceLabel, counterparty, dedupKey)
                 },
             )

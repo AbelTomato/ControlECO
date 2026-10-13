@@ -35,15 +35,25 @@ internal data class OverlayConditions(
     val foregroundPackage: String?,
     /** 本次捕获的来源键（包名 / SMS:银行 / 银行推送包名） */
     val sourcePackage: String,
+    /**
+     * 当前前台应用是否属于"支付/购物上下文"（监听目录内的应用）。
+     * 典型场景：京东下单拉起微信支付，支付通知到达时前台是京东而不是微信——
+     * 此时仍然应该弹卡（用户在购物/支付语境里，卡片不突兀）。
+     */
+    val foregroundIsPaymentContext: Boolean = false,
 )
 
 internal fun shouldShowOverlay(c: OverlayConditions): Boolean = when {
     !c.enabled || !c.canDrawOverlays -> false
     c.appInForeground -> false
     !c.screenInteractive || c.keyguardLocked -> false
-    // 判不出前台应用（无障碍未开）→ 放行；判得出则要求一致（人还在支付页才弹卡）
-    c.foregroundPackage == null || c.foregroundPackage == c.sourcePackage -> true
+    // 判不出前台应用（无障碍未开）→ 放行
+    c.foregroundPackage == null -> true
+    // 人还在来源应用（最常见的场景）
+    c.foregroundPackage == c.sourcePackage -> true
     // 银行侧（短信/银行推送/云闪付）到达时用户常不在来源应用里（在收银台/别处），不做前台匹配
     CaptureDefaults.isBankSource(c.sourcePackage) -> true
+    // 用户在别的支付/购物应用里（京东→拉起微信支付这种跳转支付的常见流）→ 仍在支付语境，允许弹卡
+    c.foregroundIsPaymentContext -> true
     else -> false
 }
