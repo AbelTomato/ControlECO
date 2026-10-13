@@ -142,12 +142,18 @@ fun CategoryTile(categoryName: String, size: Dp = 40.dp) {
 }
 
 /** 通用下拉选择（非实验性 API 实现） */@Composable
-fun DropdownSelector(label: String, options: List<Pair<Long, String>>, selectedId: Long?, onSelect: (Long) -> Unit) {
+fun DropdownSelector(
+    label: String,
+    options: List<Pair<Long, String>>,
+    selectedId: Long?,
+    onSelect: (Long) -> Unit,
+    modifier: Modifier = Modifier.fillMaxWidth(),
+) {
     var expanded by remember { mutableStateOf(false) }
     val selectedText = options.firstOrNull { it.first == selectedId }?.second ?: "请选择"
-    Box {
+    Box(modifier = modifier) {
         OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
-            Text("$label：$selectedText")
+            Text("$label：$selectedText", maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             options.forEach { (id, name) ->

@@ -6,7 +6,6 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -14,13 +13,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Button
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -49,7 +46,6 @@ import com.controleco.app.data.db.AccountEntity
 import com.controleco.app.data.db.CategoryEntity
 import com.controleco.app.data.db.PendingTransactionEntity
 import com.controleco.app.data.db.TxType
-import com.controleco.app.ui.common.CategoryLogo
 import com.controleco.app.ui.common.DropdownSelector
 import com.controleco.app.ui.common.formatTimestamp
 import com.controleco.app.ui.theme.accBook
@@ -171,7 +167,7 @@ internal class ConfirmCardState {
 
 /**
  * 底部确认卡内容（全部用应用自己的设计语言：白卡 + hairline 边框 + 大圆角，
- * 分类 FilterChip + 分类图标，账户 DropdownSelector，金额用 tabular 数字排版）。
+ * 分类/账户均为下拉选择（并排一行），金额用 tabular 数字排版；整体字号紧凑，避免遮挡支付页）。
  *
  * 交互：点卡片上方空白 = 收起（保留待确认，由调用方补发通知）；点 ✕ 同收起；
  * 「忽略」= 丢弃该笔；「记一笔」= 以当前编辑值入账。
@@ -211,7 +207,7 @@ internal fun ConfirmCardContent(
                 shadowElevation = 10.dp,
                 tonalElevation = 0.dp,
             ) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
                     // 标题行：方向 + 来源 + 收起
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         val title = when {
@@ -226,17 +222,22 @@ internal fun ConfirmCardContent(
                         }
                         Text(
                             title,
-                            style = MaterialTheme.typography.titleMedium,
+                            style = MaterialTheme.typography.titleSmall,
                             color = titleColor,
                             modifier = Modifier.weight(1f),
                         )
                         Text(
                             state.sourceLabel,
-                            style = MaterialTheme.typography.labelMedium,
+                            style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         IconButton(onClick = onCollapse) {
-                            Icon(Icons.Filled.Close, contentDescription = "收起", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Icon(
+                                Icons.Filled.Close,
+                                contentDescription = "收起",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(20.dp),
+                            )
                         }
                     }
 
@@ -244,7 +245,7 @@ internal fun ConfirmCardContent(
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
                             if (state.type == TxType.EXPENSE) "-" else "+",
-                            style = MaterialTheme.typography.headlineSmall,
+                            style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -253,9 +254,9 @@ internal fun ConfirmCardContent(
                             onValueChange = { state.updateAmount(it) },
                             modifier = Modifier.weight(1f),
                             singleLine = true,
-                            label = { Text(if (state.amountCents == null) "金额（待补）" else "金额") },
+                            label = { Text(if (state.amountCents == null) "金额（待补）" else "金额", style = MaterialTheme.typography.labelSmall) },
                             prefix = { Text(Money.symbol) },
-                            textStyle = MaterialTheme.typography.headlineSmall.copy(
+                            textStyle = MaterialTheme.typography.titleLarge.copy(
                                 fontWeight = FontWeight.SemiBold,
                             ),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
@@ -276,31 +277,28 @@ internal fun ConfirmCardContent(
                         onValueChange = { state.updateCounterparty(it) },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
-                        label = { Text("商户/备注") },
-                        textStyle = MaterialTheme.typography.bodyLarge,
+                        label = { Text("商户/备注", style = MaterialTheme.typography.labelSmall) },
+                        textStyle = MaterialTheme.typography.bodyMedium,
                     )
 
-                    // 分类
-                    Text("分类", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    // 分类 + 账户：下拉并排（此前分类是横向滚动 chips，左右滑动体感差、占高度）
                     val catsOfType = state.categories.filter { it.type == state.type }
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(end = 4.dp)) {
-                        items(catsOfType, key = { it.id }) { c ->
-                            FilterChip(
-                                selected = state.categoryId == c.id,
-                                onClick = { state.categoryId = c.id },
-                                label = { Text(c.name) },
-                                leadingIcon = { CategoryLogo(c.name, c.icon, 20.dp) },
-                            )
-                        }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        DropdownSelector(
+                            label = "分类",
+                            options = catsOfType.map { it.id to it.name },
+                            selectedId = state.categoryId,
+                            onSelect = { state.categoryId = it },
+                            modifier = Modifier.weight(1f),
+                        )
+                        DropdownSelector(
+                            label = "账户",
+                            options = state.accounts.map { it.id to it.name },
+                            selectedId = state.accountId,
+                            onSelect = { state.accountId = it },
+                            modifier = Modifier.weight(1.25f),
+                        )
                     }
-
-                    // 账户
-                    DropdownSelector(
-                        label = "账户",
-                        options = state.accounts.map { it.id to it.name },
-                        selectedId = state.accountId,
-                        onSelect = { state.accountId = it },
-                    )
 
                     // 底部动作
                     Row(verticalAlignment = Alignment.CenterVertically) {

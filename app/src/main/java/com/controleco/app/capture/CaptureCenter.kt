@@ -83,6 +83,9 @@ object CaptureCenter {
     /** 分享导入：route = 前缀 + 文件 uri（ShareImportActivity 落盘后跳转，AppNav 解析并预解析账单） */
     const val ROUTE_IMPORT_FILE_PREFIX = "import?file="
 
+    /** 悬浮确认卡样例（调试路由：弹一张不入库的样例卡，等价开发者功能里的测试入口） */
+    const val ROUTE_OVERLAY_TEST = "overlayTest"
+
     /** 渠道 v2：横幅提醒（IMPORTANCE_HIGH 才会弹屏幕上方横幅）；旧渠道 capture（DEFAULT 静默）删除 */
     const val CHANNEL_CAPTURE = "capture_alert"
     private const val CHANNEL_LEGACY = "capture"
@@ -699,7 +702,10 @@ object CaptureCenter {
                         mainHandler.post { ConfirmCardWindow.dismissConfirm() }
                         toast("测试卡片：已忽略")
                     },
-                    onCollapse = { toast("测试卡片：已收起") },
+                    onCollapse = {
+                        mainHandler.post { ConfirmCardWindow.dismissConfirm() }
+                        toast("测试卡片：已收起")
+                    },
                 )
                 // Toast 是系统级窗口不受支付保护层拦截：Toast 可见而卡片不可见 = 卡片被系统/支付保护层拦截
                 toast(if (shown) "悬浮确认卡已弹出（若看不到，看本 Toast：卡片被支付保护层拦截）" else "卡片弹不出来：检查悬浮窗权限/支付保护")

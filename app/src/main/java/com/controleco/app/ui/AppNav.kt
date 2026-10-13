@@ -135,6 +135,11 @@ fun AccBookNav(
             route.startsWith(CaptureCenter.ROUTE_EDIT_PREFIX) -> navController.navigate(route)
             // 快捷方式/磁贴：直接进快速记账
             route == "quickAdd" -> navController.navigate("quickAdd")
+            // 设置子页直达（调试/客服引导用：开发者功能、权限页）
+            route == "settings/developer" || route == "settings/permissions" ->
+                navController.navigate(route)
+            // 悬浮确认卡样例（等价开发者功能里的「悬浮确认卡（立即）」；调试路由，不落库）
+            route == CaptureCenter.ROUTE_OVERLAY_TEST -> CaptureCenter.showOverlayTest(0L) { }
             // 分享导入：文件已在缓存里，跳到导入页并预解析
             route.startsWith(CaptureCenter.ROUTE_IMPORT_FILE_PREFIX) -> {
                 val fileUri = route.removePrefix(CaptureCenter.ROUTE_IMPORT_FILE_PREFIX)
