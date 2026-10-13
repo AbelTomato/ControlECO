@@ -62,7 +62,9 @@ import com.controleco.app.ui.settings.SettingsAccountScreen
 import com.controleco.app.ui.settings.SettingsDeveloperScreen
 import com.controleco.app.ui.settings.SettingsImportScreen
 import com.controleco.app.ui.settings.SettingsPermissionScreen
+import com.controleco.app.ui.settings.SettingsMerchantRulesScreen
 import com.controleco.app.ui.settings.SettingsScreen
+import com.controleco.app.ui.settings.SettingsWatchedAppsScreen
 import com.controleco.app.ui.stats.StatsScreen
 import com.controleco.app.ui.theme.accBook
 import com.controleco.app.ui.transactions.EditTransactionScreen
@@ -185,6 +187,8 @@ fun AccBookNav(
                 vm = vm,
                 onBack = { navController.popBackStack() },
                 onOpenPermissions = { navController.navigate("settings/permissions") },
+                onOpenWatchedApps = { navController.navigate("settings/watchedApps") },
+                onOpenMerchantRules = { navController.navigate("settings/merchantRules") },
                 onOpenDeveloper = { navController.navigate("settings/developer") },
                 onOpenAbout = { navController.navigate("settings/about") },
             )
@@ -211,6 +215,12 @@ fun AccBookNav(
                 onOpenAccessibilitySettings = openAccessibilitySettings,
                 onOpenOverlayPermission = openOverlayPermission,
             )
+        }
+        composable("settings/watchedApps") {
+            SettingsWatchedAppsScreen(onBack = { navController.popBackStack() })
+        }
+        composable("settings/merchantRules") {
+            SettingsMerchantRulesScreen(vm = vm, onBack = { navController.popBackStack() })
         }
         composable("settings/developer") {
             SettingsDeveloperScreen(

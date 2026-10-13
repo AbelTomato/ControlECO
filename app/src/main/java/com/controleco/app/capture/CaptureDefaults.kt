@@ -2,33 +2,51 @@ package com.controleco.app.capture
 
 import com.controleco.app.data.db.AccountEntity
 import com.controleco.app.data.db.CategoryEntity
+import com.controleco.app.data.db.MerchantRuleEntity
 import com.controleco.app.data.db.TxSource
 import com.controleco.app.data.db.TxType
 import com.controleco.app.util.CategoryGuesser
 
 /**
- * 捕获入账的分类/账户推测（待确认弹窗与自动入账共用一套规则，纯函数便于单测）：
- * 分类优先按商户/备注关键词猜（CategoryGuesser，"滴滴出行"→交通、"医院"→医疗…），
+ * 捕获入账的分类/账户推测（待确认弹窗、悬浮卡与自动入账共用一套规则，纯函数便于单测）：
+ * 分类优先用**学到的商户规则**（MerchantRules：确认/编辑过几次后自动归类），
+ * 没有规则再按关键词猜（CategoryGuesser："滴滴出行"→交通、"医院"→医疗…），
  * 猜中的分类必须与方向匹配才采用，否则回退该类型的「其他」（没有则第一个）；
  * 账户按来源推测（微信/支付宝/银行名），未命中取第一个。
  */
 internal object CaptureDefaults {
 
-    fun categoryId(categories: List<CategoryEntity>, type: TxType, merchantHint: String = ""): Long? {
+    fun categoryId(
+        categories: List<CategoryEntity>,
+        type: TxType,
+        merchantHint: String = "",
+        learnedRules: List<MerchantRuleEntity> = emptyList(),
+        counterparty: String = merchantHint,
+        note: String = "",
+    ): Long? {
+        // 1) 学到的商户规则（"越用越准"）
+        MerchantRules.categoryIdFrom(learnedRules, categories, type, counterparty, note)?.let { return it }
+        // 2) 关键词猜测
         val hint = merchantHint.trim()
         if (hint.isNotEmpty()) {
             val guessed = CategoryGuesser.guess(hint)
             categories.firstOrNull { it.type == type && it.name == guessed }?.id?.let { return it }
         }
+        // 3) 该方向的其他/第一个
         return categories.firstOrNull { it.type == type && it.name == "其他" }?.id
             ?: categories.firstOrNull { it.type == type }?.id
     }
 
     /**
-     * 账户推测。银行侧（短信 / 银行 App 推送）先按银行名匹配账户名
-     * （账户常起名"中国银行储蓄卡"），再退化到"银行"关键词；支付渠道按渠道名匹配。
+     * 账户推测。优先级：学到的账户 > 银行名匹配（银行侧）/ 渠道名匹配（支付侧）> 第一个账户。
      */
-    fun accountId(accounts: List<AccountEntity>, sourcePackage: String, bankName: String? = null): Long? {
+    fun accountId(
+        accounts: List<AccountEntity>,
+        sourcePackage: String,
+        bankName: String? = null,
+        learnedAccountId: Long? = null,
+    ): Long? {
+        if (learnedAccountId != null && accounts.any { it.id == learnedAccountId }) return learnedAccountId
         if (bankName != null) {
             // 账户名常起"招行卡""工行"这类简称：按标准名 + 全部别名逐个匹配
             for (alias in BankLedgerRules.aliasesOf(bankName)) {

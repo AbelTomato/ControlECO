@@ -26,6 +26,8 @@ fun SettingsScreen(
     vm: LedgerViewModel,
     onBack: () -> Unit,
     onOpenPermissions: () -> Unit,
+    onOpenWatchedApps: () -> Unit,
+    onOpenMerchantRules: () -> Unit,
     onOpenDeveloper: () -> Unit,
     onOpenAbout: () -> Unit,
 ) {
@@ -44,6 +46,10 @@ fun SettingsScreen(
                 checked = autoEntry,
                 onCheckedChange = { vm.setAutoEntryEnabled(it) },
             )
+            RowDivider()
+            InfoRow(title = "监听的 App", onClick = onOpenWatchedApps)
+            RowDivider()
+            InfoRow(title = "商户归类", onClick = onOpenMerchantRules)
             RowDivider()
             InfoRow(title = "权限", onClick = onOpenPermissions)
         }

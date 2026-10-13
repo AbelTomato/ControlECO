@@ -301,9 +301,38 @@ interface PendingDao {
     suspend fun deleteByDedupKey(dedupKey: String)
 }
 
+@Dao
+interface MerchantRuleDao {
+
+    @Query("SELECT * FROM merchant_rules")
+    suspend fun getAll(): List<MerchantRuleEntity>
+
+    /** 管理页列表（最近学习的在前） */
+    @Query("SELECT * FROM merchant_rules ORDER BY updatedAt DESC LIMIT 300")
+    fun observeRecent(): Flow<List<MerchantRuleEntity>>
+
+    @Query("SELECT COUNT(*) FROM merchant_rules")
+    suspend fun countAll(): Int
+
+    @Query("SELECT * FROM merchant_rules WHERE matchKey = :matchKey AND type = :type LIMIT 1")
+    suspend fun find(matchKey: String, type: TxType): MerchantRuleEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(rule: MerchantRuleEntity): Long
+
+    @Query("DELETE FROM merchant_rules WHERE id = :id")
+    suspend fun deleteById(id: Long)
+
+    @Query("DELETE FROM merchant_rules")
+    suspend fun clearAll()
+
+    /** 条数封顶：按最近学习保留 */
+    @Query("DELETE FROM merchant_rules WHERE id NOT IN (SELECT id FROM merchant_rules ORDER BY updatedAt DESC LIMIT :keep)")
+    suspend fun keepNewest(keep: Int)
+}
+
 /**
- * 溯源列表行：原始快照 + 该笔入账的当前状态（联查解析，不在溯源表里冗余存状态）。
- * - [linkedTxId] 非空 = 已入账的账单 id（externalId = "NTF:" + dedupKey，唯一索引保证最多一条；
+ * 溯源列表行：原始快照 + 该笔入账的当前状态（联查解析，不在溯源表里冗余存状态）。 * - [linkedTxId] 非空 = 已入账的账单 id（externalId = "NTF:" + dedupKey，唯一索引保证最多一条；
  *   账单被删除后解析为空，溯源记录本身仍保留作证据）；
  * - [pendingCount] > 0 = 仍在待确认队列里（只数 PENDING 条目；自动入账留下的 AUTO 记录不算，它在合并池里只是回填用）。
  */

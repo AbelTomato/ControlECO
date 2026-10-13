@@ -169,6 +169,32 @@ data class CaptureTraceEntity(
     val createdAt: Long = System.currentTimeMillis(),
 )
 
+/**
+ * 商户归类学习规则（"越用越准"）：用户确认过几次"瑞幸咖啡"→餐饮之后，下次捕获自动预选。
+ *
+ * 学习时机：确认待确认条目（PendingActions）/ 编辑捕获来的交易；**不从手动记账学习**
+ * （手写的一次性备注容易污染规则）。键是归一化后的商户/备注词（[MerchantRules.keyOf]），
+ * 平台通用词与纯数字不入库；条数封顶（见 CaptureCenter.cleanup）。
+ * 不做外键：分类被删后规则只是匹配不上（应用规则时会校验分类仍然存在）。
+ */
+@Entity(
+    tableName = "merchant_rules",
+    indices = [Index(value = ["matchKey", "type"], unique = true)],
+)
+data class MerchantRuleEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    /** 归一化后的商户/备注键（小写、去空白与标点，截断） */
+    val matchKey: String,
+    /** 方向：同一商户名在收/支两侧的归类可能不同，分开学 */
+    val type: TxType,
+    val categoryId: Long,
+    /** 学习到的账户（可选：确认时用户选的账户） */
+    val accountId: Long? = null,
+    /** 命中次数（确认几次后认定稳定，展示用） */
+    val hits: Int = 1,
+    val updatedAt: Long = System.currentTimeMillis(),
+)
+
 /** 自动捕获、待用户确认的交易；确认后转为交易（externalId = "NTF:" + dedupKey 防重） */
 @Entity(
     tableName = "pending_transactions",
