@@ -193,4 +193,25 @@ class CaptureMergeTest {
         assertFalse(samePendingFamily(page, parseDedupKey("com.eg.android.AlipayGphone|EXPENSE|1290|29500")!!))
         assertFalse(samePendingFamily(page, parseDedupKey("com.tencent.mm|INCOME|1290|29500")!!))
     }
+
+    // ---------- 自动入账前的重复预检（±60s 数据库校验） ----------
+
+    @Test
+    fun `窗口内同来源同方向同金额视为已有同笔`() {
+        val existing = listOf(pending(amount = 1290, createdAt = base))
+        assertTrue(hasRecentSameEntry(existing, NotificationRules.WECHAT, TxType.EXPENSE, 1290, base + 30_000))
+        // 边界：正好 60 秒仍算
+        assertTrue(hasRecentSameEntry(existing, NotificationRules.WECHAT, TxType.EXPENSE, 1290, base + 60_000))
+    }
+
+    @Test
+    fun `窗口外或特征不同不算同笔`() {
+        val existing = listOf(pending(amount = 1290, createdAt = base))
+        // 超过窗口
+        assertFalse(hasRecentSameEntry(existing, NotificationRules.WECHAT, TxType.EXPENSE, 1290, base + 60_001))
+        // 金额不同 / 方向不同 / 来源不同
+        assertFalse(hasRecentSameEntry(existing, NotificationRules.WECHAT, TxType.EXPENSE, 1291, base + 1_000))
+        assertFalse(hasRecentSameEntry(existing, NotificationRules.WECHAT, TxType.INCOME, 1290, base + 1_000))
+        assertFalse(hasRecentSameEntry(existing, NotificationRules.ALIPAY, TxType.EXPENSE, 1290, base + 1_000))
+    }
 }

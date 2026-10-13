@@ -110,6 +110,17 @@ fun AccBookNav(
         }
         Unit
     }
+    val openOverlayPermission: () -> Unit = {
+        runCatching {
+            context.startActivity(
+                Intent(
+                    android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    android.net.Uri.parse("package:${context.packageName}"),
+                ),
+            )
+        }
+        Unit
+    }
 
     // 系统通知点击跳转（MainActivity 传入 route 事件；既有路由名是捕获层的对外契约，勿改）
     LaunchedEffect(navEvent.first) {
@@ -198,6 +209,7 @@ fun AccBookNav(
                 onBack = { navController.popBackStack() },
                 onOpenNotificationAccess = openNotificationAccess,
                 onOpenAccessibilitySettings = openAccessibilitySettings,
+                onOpenOverlayPermission = openOverlayPermission,
             )
         }
         composable("settings/developer") {

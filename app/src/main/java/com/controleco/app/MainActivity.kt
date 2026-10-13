@@ -64,8 +64,20 @@ class MainActivity : ComponentActivity() {
         consumeRoute(intent)
     }
 
+    // 前台状态上报：悬浮确认卡在本应用前台时立即收起（应用内用待确认列表，卡片悬在本应用上会挡操作）
+    override fun onResume() {
+        super.onResume()
+        CaptureCenter.setAppForeground(true)
+    }
+
+    override fun onPause() {
+        CaptureCenter.setAppForeground(false)
+        super.onPause()
+    }
+
     private fun consumeRoute(intent: Intent?) {
         val route = intent?.getStringExtra(CaptureCenter.EXTRA_ROUTE) ?: return
+        CaptureCenter.onRouteOpened(route)
         navEvent = (navEvent.first + 1) to route
     }
 }

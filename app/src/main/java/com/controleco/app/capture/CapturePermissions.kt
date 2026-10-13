@@ -10,6 +10,7 @@ enum class CapturePermission(val label: String) {
     A11Y("无障碍"),
     NOTIFY("通知权限"),
     SMS("短信权限"),
+    OVERLAY("悬浮窗"),
 }
 
 /**
@@ -35,6 +36,8 @@ object CapturePermissions {
                     ready(CaptureCenter.isCaptureNotifyEnabled(), canPostNotifications(app)),
                 CapturePermission.SMS to
                     ready(CaptureCenter.isSmsCaptureEnabled(), hasSmsPermission(app)),
+                CapturePermission.OVERLAY to
+                    ready(CaptureCenter.isOverlayConfirmEnabled(), canDrawOverlays(app)),
             ),
         )
     }
@@ -69,4 +72,8 @@ object CapturePermissions {
         androidx.core.content.ContextCompat.checkSelfPermission(
             context, android.Manifest.permission.RECEIVE_SMS,
         ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+    /** 悬浮窗权限（悬浮确认卡的前提；未授权时该通道自动回落通知，开关开着才提醒） */
+    private fun canDrawOverlays(context: Context): Boolean =
+        android.provider.Settings.canDrawOverlays(context)
 }

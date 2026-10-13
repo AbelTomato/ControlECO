@@ -50,6 +50,12 @@ fun SettingsDeveloperScreen(
         SectionTitle("手动启动")
         PaneCard {
             ActionRow("动账通知（延迟 20 秒）") { vm.scheduleNotifyTest(toast()) }
+            RowDivider()
+            // 悬浮确认卡排查：Toast 是系统级窗口不受支付保护层拦截——
+            // Toast 可见而卡片不可见 = 卡片被支付保护层/系统拦截（见权限页教程）
+            ActionRow("悬浮确认卡（立即）") { vm.showOverlayTest(0L, toast()) }
+            RowDivider()
+            ActionRow("悬浮确认卡（延迟 20 秒）") { vm.showOverlayTest(20_000L, toast()) }
         }
 
         SectionTitle("日志与诊断")

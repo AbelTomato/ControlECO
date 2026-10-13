@@ -1,0 +1,245 @@
+package com.controleco.app.capture.overlay
+
+import android.content.Context
+import android.graphics.PixelFormat
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.view.Gravity
+import android.view.WindowManager
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.ComposeView
+import com.controleco.app.data.db.AccountEntity
+import com.controleco.app.data.db.CategoryEntity
+import com.controleco.app.data.db.PendingTransactionEntity
+import com.controleco.app.data.db.TxType
+import com.controleco.app.util.AppLog
+import com.controleco.app.util.Money
+
+/**
+ * 悬浮确认卡（底部卡片）与「已记入 · 撤销」细条的窗口宿主。
+ *
+ * 方案对照（见 docs/自动记账捕获机制.md 第二节）：
+ * - **底部**卡片（顶部 placement 会被 MIUI 压到状态栏下方，这正是 v0.4.13 灵动岛失败的原因）；
+ * - 全屏透明窗口 + `NOT_TOUCH_MODAL|LAYOUT_IN_SCREEN|LAYOUT_INSET_DECOR|WATCH_OUTSIDE_TOUCH`
+ *   （自测验证过的参数组合）——上方透明区点按 = 收起卡片（保留待确认 + 由调用方补发通知），不是丢弃；
+ * - 窗口可聚焦，卡内输入框可直接调键盘；
+ * - `addView` 抛异常（无权限/被支付保护层拦截）→ [showConfirm] 返回 false，调用方回落横幅通知
+ *   （`show():Boolean` 写法，v0.4.13 起验证）。
+ *
+ * UI 全部用本应用自己的 Compose 设计组件（[ConfirmCardContent]），不沿用任何一家的视觉。
+ */
+internal object ConfirmCardWindow {
+
+    private const val TAG = "Overlay"
+
+    private lateinit var appContext: Context
+    private val handler = Handler(Looper.getMainLooper())
+
+    private var confirmView: ComposeView? = null
+    private var confirmHost: OverlayComposeHost? = null
+    private var savedView: ComposeView? = null
+    private var savedHost: OverlayComposeHost? = null
+
+    private var autoDismiss: Runnable? = null
+    private var savedDismiss: Runnable? = null
+    private var collapseCallback: (() -> Unit)? = null
+
+    /** 卡片当前展示的待确认条目 id（-1 = 未展示） */
+    var showingPendingId: Long = -1L
+        private set
+
+    /** 卡片内容状态（编辑中的金额/分类/账户都在这） */
+    val state = ConfirmCardState()
+
+    fun init(context: Context) {
+        appContext = context.applicationContext
+    }
+
+    fun isVisible(): Boolean = confirmView != null || savedView != null
+
+    // ---------- 确认卡 ----------
+
+    /**
+     * 展示确认卡。返回 false = 窗口没弹出来（无权限/被拦截），调用方必须回落通知。
+     * [onConfirm] 的四个参数：金额分、分类 id、账户 id、商户/备注；[onCollapse] = 收起（不动数据）。
+     */
+    fun showConfirm(
+        pending: PendingTransactionEntity,
+        categories: List<CategoryEntity>,
+        accounts: List<AccountEntity>,
+        onConfirm: (amountCents: Long, categoryId: Long, accountId: Long, counterparty: String) -> Unit,
+        onIgnore: () -> Unit,
+        onCollapse: () -> Unit,
+    ): Boolean {
+        if (!this::appContext.isInitialized) return false
+        removeConfirmWindow() // 重入时先清旧窗口（新的一笔直接替换展示）
+
+        state.bind(pending, categories, accounts)
+
+        val wm = appContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        val host = OverlayComposeHost()
+        val view = buildOverlayComposeView(appContext, host) {
+            ConfirmCardContent(
+                state = state,
+                onConfirm = { amountCents, categoryId, accountId, counterparty ->
+                    onConfirm(amountCents, categoryId, accountId, counterparty)
+                },
+                onIgnore = onIgnore,
+                onCollapse = onCollapse,
+            )
+        }
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_LAYOUT_INSET_DECOR or
+                WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
+            PixelFormat.TRANSLUCENT,
+        ).apply {
+            if (Build.VERSION.SDK_INT >= 28) {
+                layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+            softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+        }
+
+        return try {
+            wm.addView(view, params)
+            host.attach()
+            confirmView = view
+            confirmHost = host
+            showingPendingId = pending.id
+            collapseCallback = onCollapse
+            scheduleAutoDismiss()
+            AppLog.i(TAG, "confirm card shown pending=#${pending.id} ${pending.ruleName}")
+            true
+        } catch (e: Exception) {
+            // 无悬浮窗权限 / 被支付保护层拦截：调用方回落通知（Toast 可见而卡片不可见 = 被拦截的铁证）
+            AppLog.w(TAG, "confirm card addView failed, fallback to notification", e)
+            runCatching { host.destroy() }
+            false
+        }
+    }
+
+    /**
+     * 后续捕获把同笔条目富化后（页面合并/跨通道归并）刷新卡片；用户已改过的字段不覆盖
+     * （自研方案的写入规则：用户手改过的值优先）。
+     */
+    fun updatePending(pending: PendingTransactionEntity, categories: List<CategoryEntity>, accounts: List<AccountEntity>) {
+        if (confirmView == null || showingPendingId != pending.id) return
+        state.mergeFrom(pending, categories, accounts)
+        AppLog.i(TAG, "confirm card updated pending=#${pending.id}")
+    }
+
+    /** 收起确认卡（数据不动）。返回 true = 之前确实有卡片在展示 */
+    fun dismissConfirm(): Boolean {
+        val wasVisible = confirmView != null
+        removeConfirmWindow()
+        return wasVisible
+    }
+
+    // ---------- 已记入 · 撤销 细条 ----------
+
+    /** 确认入账后的非阻塞细条：底部小条 + 撤销按钮，几秒后自动消失 */
+    fun showSaved(type: TxType, amountCents: Long, onUndo: () -> Unit) {
+        if (!this::appContext.isInitialized) return
+        removeSavedWindow()
+
+        val wm = appContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        val host = OverlayComposeHost()
+        val view = buildOverlayComposeView(appContext, host) {
+            SavedStripContent(
+                text = "已记入" + (if (type == TxType.EXPENSE) "支出 " else "收入 ") + Money.formatYuan(amountCents),
+                onUndo = {
+                    onUndo()
+                    removeSavedWindow()
+                },
+            )
+        }
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT,
+        ).apply {
+            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            y = dp(24)
+            if (Build.VERSION.SDK_INT >= 28) {
+                layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+        }
+
+        runCatching {
+            wm.addView(view, params)
+            host.attach()
+            savedView = view
+            savedHost = host
+            val r = Runnable { removeSavedWindow() }
+            savedDismiss = r
+            handler.postDelayed(r, SAVED_STRIP_DISMISS_MS)
+            AppLog.i(TAG, "saved strip shown")
+        }.onFailure {
+            AppLog.w(TAG, "saved strip addView failed", it)
+            runCatching { host.destroy() }
+        }
+    }
+
+    /** 收起全部窗口（进入应用、屏幕关闭等场景） */
+    fun dismissAll() {
+        removeConfirmWindow()
+        removeSavedWindow()
+    }
+
+    // ---------- 内部 ----------
+
+    private fun scheduleAutoDismiss() {
+        autoDismiss?.let { handler.removeCallbacks(it) }
+        val r = Runnable {
+            AppLog.i(TAG, "confirm card auto dismiss (no interaction)")
+            if (dismissConfirm()) collapseCallback?.invoke()
+        }
+        autoDismiss = r
+        handler.postDelayed(r, OVERLAY_AUTO_DISMISS_MS)
+    }
+
+    /** 卡片内有交互（改金额/备注、点分类/账户）时重置自动收起计时，避免编辑中被收起 */
+    fun noteUserActivity() {
+        if (confirmView != null) scheduleAutoDismiss()
+    }
+
+    private fun removeConfirmWindow() {
+        autoDismiss?.let { handler.removeCallbacks(it) }
+        autoDismiss = null
+        collapseCallback = null
+        val view = confirmView ?: return
+        confirmView = null
+        showingPendingId = -1L
+        val wm = appContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        runCatching { wm.removeViewImmediate(view) }.onFailure { AppLog.w(TAG, "remove confirm view failed", it) }
+        runCatching { confirmHost?.destroy() }
+        confirmHost = null
+    }
+
+    private fun removeSavedWindow() {
+        savedDismiss?.let { handler.removeCallbacks(it) }
+        savedDismiss = null
+        val view = savedView ?: return
+        savedView = null
+        val wm = appContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        runCatching { wm.removeViewImmediate(view) }.onFailure { AppLog.w(TAG, "remove saved view failed", it) }
+        runCatching { savedHost?.destroy() }
+        savedHost = null
+    }
+
+    private fun dp(value: Int): Int =
+        (value * appContext.resources.displayMetrics.density).toInt()
+}

@@ -71,7 +71,7 @@ fun SettingsAboutScreen(onBack: () -> Unit) {
                 Spacer(Modifier.height(8.dp))
                 Bullet("数据存于应用私有目录（Room / SQLite），卸载即清除，可被系统备份规则排除。")
                 Spacer(Modifier.height(8.dp))
-                Bullet("通知监听 / 无障碍权限只用于识别支付信息，捕获内容仅在本机解析与留存。")
+                Bullet("通知监听 / 无障碍 / 悬浮窗权限只用于识别支付信息与弹出确认卡片，捕获内容仅在本机解析与留存。")
                 Spacer(Modifier.height(8.dp))
                 Bullet("账单导入文件只在本机解析，识别与去重后写入本地账本。")
             }

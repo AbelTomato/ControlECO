@@ -34,6 +34,7 @@ import com.controleco.app.ui.common.SectionTitle
 import com.controleco.app.ui.common.SettingsPage
 import com.controleco.app.ui.common.SwitchRow
 import com.controleco.app.ui.common.a11yPathFor
+import com.controleco.app.ui.common.overlayPathFor
 import com.controleco.app.ui.theme.accBook
 
 /**
@@ -46,6 +47,7 @@ fun SettingsPermissionScreen(
     onBack: () -> Unit,
     onOpenNotificationAccess: () -> Unit,
     onOpenAccessibilitySettings: () -> Unit,
+    onOpenOverlayPermission: () -> Unit,
 ) {
     // 从系统设置页返回时重新探测授权状态
     var resumeTick by remember { mutableIntStateOf(0) }
@@ -61,6 +63,7 @@ fun SettingsPermissionScreen(
     SettingsPage(title = "权限", onBack = onBack) {
         NotificationSection(vm, resumeTick, onOpenNotificationAccess)
         A11ySection(vm, resumeTick, onOpenAccessibilitySettings)
+        OverlaySection(vm, resumeTick, onOpenOverlayPermission)
         BankSection(vm, resumeTick)
     }
 }
@@ -229,6 +232,48 @@ private fun BankPushSetting(vm: LedgerViewModel) {
             )
         }
         Switch(checked = enabled, onCheckedChange = { vm.setBankPushEnabled(it) })
+    }
+}
+
+/**
+ * 悬浮确认卡：捕获到动账时在支付页上方弹出底部确认卡片（预填金额/商户/分类/账户，
+ * 一键入账或忽略）。未授权悬浮窗权限时该通道自动回落横幅通知，功能不失效。
+ */
+@Composable
+private fun OverlaySection(vm: LedgerViewModel, resumeTick: Int, onOpenOverlayPermission: () -> Unit) {
+    val granted = remember(resumeTick) { vm.isOverlayGranted() }
+    val overlayOn by vm.overlayConfirmEnabled.collectAsStateWithLifecycle()
+
+    SectionTitle("悬浮确认卡")
+    PaneCard {
+        PermissionStatusRow(
+            title = "悬浮窗权限",
+            granted = granted,
+            grantedText = "已授权",
+            ungrantedText = "未授权",
+            actionText = "去授权",
+            onAction = onOpenOverlayPermission,
+        )
+        RowDivider()
+        SwitchRow(
+            title = "捕获时弹出确认卡",
+            subtitle = "支付页上方弹出底部卡片，预填识别结果，一键入账（未授权时自动回落通知）",
+            checked = overlayOn,
+            onCheckedChange = { vm.setOverlayConfirmEnabled(it) },
+        )
+        RowDivider()
+        PermissionTutorial(
+            "悬浮窗授权教程",
+            listOf(
+                "推荐：点上方「去授权」，直达「显示在其他应用上层 / 悬浮窗」开关，打开即可。" +
+                    "未授权不影响记账：动账提醒会自动走横幅通知。",
+                overlayPathFor(Brand.current()),
+                "若开关为灰色不可开：安卓 13+ 需先做「允许受限制的设置」（见通知监听教程第 1 步）。",
+                "小米/澎湃额外需要「后台弹出界面」类权限：设置 → 应用管理 → 我ECO → 权限 → 后台弹出界面，允许。",
+                "付款后若 Logcat 有 confirm card shown 但看不到卡片：是支付保护中心/支付保险箱拦截，" +
+                    "见保活设置；可在开发者功能里用「悬浮确认卡（立即）」测试。",
+            ),
+        )
     }
 }
 
