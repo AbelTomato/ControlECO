@@ -790,6 +790,8 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
     fun setAutoEntryEnabled(enabled: Boolean) {
         CaptureCenter.setAutoEntryEnabled(enabled)
         _autoEntryEnabled.value = enabled
+        // 互斥：开启自动入账即关闭悬浮窗入账（CaptureCenter 侧已写入，这里同步 UI 状态）
+        if (enabled) _overlayConfirmEnabled.value = false
     }
 
     // ---------- 银行动账（短信 / 银行 App 推送） ----------
@@ -821,6 +823,8 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
     fun setOverlayConfirmEnabled(enabled: Boolean) {
         CaptureCenter.setOverlayConfirmEnabled(enabled)
         _overlayConfirmEnabled.value = enabled
+        // 互斥：开启悬浮窗入账即关闭自动入账（CaptureCenter 侧已写入，这里同步 UI 状态）
+        if (enabled) _autoEntryEnabled.value = false
     }
 
     /** 悬浮窗权限（悬浮确认卡的前提；未授权自动回落通知） */

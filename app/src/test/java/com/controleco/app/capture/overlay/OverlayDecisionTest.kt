@@ -2,6 +2,7 @@ package com.controleco.app.capture.overlay
 
 import com.controleco.app.capture.NotificationRules
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -110,5 +111,40 @@ class OverlayDecisionTest {
                 ),
             ),
         )
+    }
+}
+
+/**
+ * 关闭卡片的处置判定：关闭（✕/点卡片外/长时间无操作）= 视为入账，只有点「忽略」才不入账；
+ * 金额缺失或分类/账户不全时不能入账，保留待确认。
+ */
+class OverlayDismissOutcomeTest {
+
+    private fun snapshot(
+        amountCents: Long = 2060L,
+        categoryId: Long? = 3L,
+        accountId: Long? = 1L,
+        counterparty: String = "示例商户",
+    ) = DismissSnapshot(amountCents, categoryId, accountId, counterparty)
+
+    @Test
+    fun `金额分类账户齐备时关闭即入账`() {
+        assertSame(DismissOutcome.ENTER, dismissOutcome(snapshot()))
+    }
+
+    @Test
+    fun `金额为 0 的待补录条目关闭不入账（保留待确认）`() {
+        assertSame(DismissOutcome.KEEP_PENDING, dismissOutcome(snapshot(amountCents = 0L)))
+    }
+
+    @Test
+    fun `缺分类或账户时保留待确认`() {
+        assertSame(DismissOutcome.KEEP_PENDING, dismissOutcome(snapshot(categoryId = null)))
+        assertSame(DismissOutcome.KEEP_PENDING, dismissOutcome(snapshot(accountId = null)))
+    }
+
+    @Test
+    fun `金额非法（负数）不入账`() {
+        assertSame(DismissOutcome.KEEP_PENDING, dismissOutcome(snapshot(amountCents = -1L)))
     }
 }

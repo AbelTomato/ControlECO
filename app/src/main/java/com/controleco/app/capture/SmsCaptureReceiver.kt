@@ -17,10 +17,10 @@ import kotlinx.coroutines.launch
  * 也不需要成为默认短信应用——因此不碰用户既有短信数据（最小必要权限）。
  * 非银行号码/非银行签名的短信在采集层就被丢弃（内容不入库，见 CaptureCenter.onSmsReceived）。
  *
- * 与自研方案的对照（各自缺陷都在这里修正，见未合并分支 feat/capture-refs-integration 的移植稿）：
+ * 自测中踩过的坑（见未合并分支 feat/capture-refs-integration 的早期草稿）：
  * - 用 `goAsync()` + IO 协程并把结果 await 完再 `finish()`：进程在写入前被杀也不会丢单
- *   （早期草稿一个自建 scope 从不取消、一个连运行时权限都没申请，通道形同虚设）；
- * - 长短信按 `originatingAddress` 拼接后再解析（早期草稿只取第一条）；
+ *   （自建 scope 从不取消就会丢单，通道形同虚设）；
+ * - 长短信按 `originatingAddress` 拼接后再解析（只取第一条会丢金额）；
  * - 时间取短信自带时间戳而非处理时刻（与通知通道的时间语义一致）；
  * - 不做任何 abortBroadcast：不干扰系统短信应用与用户的短信通知。
  */

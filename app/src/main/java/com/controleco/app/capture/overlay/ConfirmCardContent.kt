@@ -54,7 +54,7 @@ import com.controleco.app.util.Money
 /**
  * 悬浮确认卡的编辑状态。
  *
- * 用户改过的字段不再被后续富化覆盖（自动回填只在用户没有手改时生效），
+ * 自动回填只在用户没有手改过该字段时生效（用户改过的值不被后续富化覆盖），
  * 未改过的字段随后续捕获（页面合并/跨通道归并）刷新。
  */
 internal class ConfirmCardState {
@@ -169,15 +169,15 @@ internal class ConfirmCardState {
  * 底部确认卡内容（全部用应用自己的设计语言：白卡 + hairline 边框 + 大圆角，
  * 分类/账户均为下拉选择（并排一行），金额用 tabular 数字排版；整体字号紧凑，避免遮挡支付页）。
  *
- * 交互：点卡片上方空白 = 收起（保留待确认，由调用方补发通知）；点 ✕ 同收起；
- * 「忽略」= 丢弃该笔；「记一笔」= 以当前编辑值入账。
+ * 交互：点 ✕ 或卡片上方空白 = 关闭（关闭视为入账，由调用方按卡内当前值落账）；
+ * 「忽略」= 不入账（丢弃该笔）；「记一笔」= 以当前编辑值入账。
  */
 @Composable
 internal fun ConfirmCardContent(
     state: ConfirmCardState,
     onConfirm: (amountCents: Long, categoryId: Long, accountId: Long, counterparty: String) -> Unit,
     onIgnore: () -> Unit,
-    onCollapse: () -> Unit,
+    onDismiss: () -> Unit,
 ) {
     val colors = MaterialTheme.accBook
     var showTimeoutHint by remember { mutableStateOf(false) }
@@ -185,11 +185,11 @@ internal fun ConfirmCardContent(
     Box(
         Modifier
             .fillMaxSize()
-            // 上面全屏透明区：点按 = 收起（不丢弃）。indication=null 避免整屏水波纹
+            // 上面全屏透明区：点按 = 关闭卡片（视为入账；不入账请点卡内「忽略」）。indication=null 避免整屏水波纹
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
-            ) { onCollapse() },
+            ) { onDismiss() },
     ) {
         Column(
             Modifier
@@ -208,7 +208,7 @@ internal fun ConfirmCardContent(
                 tonalElevation = 0.dp,
             ) {
                 Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                    // 标题行：方向 + 来源 + 收起
+                    // 标题行：方向 + 来源 + 关闭（关闭视为入账）
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         val title = when {
                             state.isRefund -> "捕获到一笔退款"
@@ -231,10 +231,10 @@ internal fun ConfirmCardContent(
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                        IconButton(onClick = onCollapse) {
+                        IconButton(onClick = onDismiss) {
                             Icon(
                                 Icons.Filled.Close,
-                                contentDescription = "收起",
+                                contentDescription = "关闭并入账",
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(20.dp),
                             )

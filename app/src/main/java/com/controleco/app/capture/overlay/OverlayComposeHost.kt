@@ -27,7 +27,7 @@ import com.controleco.app.ui.theme.AccBookTheme
  * SavedStateRegistry 三类宿主；TYPE_APPLICATION_OVERLAY 窗口没有 Activity，这三类在这里手工补齐。
  *
  * 状态机刻意简化：attach 后直接 RESUMED（窗口已可见，没有 Activity 的 STARTED/STOPPED 语义），
- * destroy 时置 DESTROYED 并清空 ViewModelStore——生命周期只走一趟，避免被外部乱序驱动。
+ * destroy 时置 DESTROYED 并清空 ViewModelStore——生命周期只走一趟，避免乱序回调打乱状态。
  */
 internal class OverlayComposeHost : LifecycleOwner, ViewModelStoreOwner, SavedStateRegistryOwner {
 

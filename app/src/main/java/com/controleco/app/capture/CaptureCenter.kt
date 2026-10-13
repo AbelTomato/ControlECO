@@ -9,6 +9,8 @@ import android.provider.Settings
 import com.controleco.app.AccBookApp
 import com.controleco.app.BuildConfig
 import com.controleco.app.capture.overlay.ConfirmCardWindow
+import com.controleco.app.capture.overlay.DismissOutcome
+import com.controleco.app.capture.overlay.dismissOutcome
 import com.controleco.app.capture.overlay.OVERLAY_DELAY_MS
 import com.controleco.app.capture.overlay.OverlayConditions
 import com.controleco.app.capture.overlay.shouldShowOverlay
@@ -50,7 +52,10 @@ import kotlin.coroutines.resume
  * - 同源（通知⇄页面，10s 窗口，见 CaptureMerge）：只保留一条，**页面信息优先**；
  * - 异源（支付类⇄银行类，±130s，见 CrossChannelDedup）：同一笔消费被微信通知与银行卡
  *   短信/推送同时捕获时归并成一条，银行侧只补充账户线索。
- * 设置开启「自动入账」时识别到即直接记账（不再逐笔确认），条目留 AUTO 记录供页面回填。
+ * 捕获后的处置由三个设置开关决定（见各开关的注释）：
+ * - 「入账提醒」：捕获时发横幅通知（也是卡片弹不出时的兜底）；
+ * - 「悬浮窗入账」：弹出底部确认卡，关闭卡片/长时间无操作视为入账，点「忽略」才不入账；
+ * - 「自动入账」：识别到即直接记账（与悬浮窗入账互斥），条目留 AUTO 记录供页面回填。
  * debug 构建可全量记录（设置开关），Logcat tag=ControlECO 便于真实样本调试。
  * 开发者功能「记录记账来源」开启时，另把每次入账相关捕获的原始来源写入溯源表（见 traceCapture）。
  */
@@ -221,8 +226,9 @@ object CaptureCenter {
 
     /**
      * 捕获入队后的提醒（卡片/通知互斥）：
-     * 能弹悬浮确认卡就弹卡（人还在支付页，改完一键入账），否则回落横幅通知
-     * （IMPORTANCE_HIGH，点击进待确认队列）。两条路径的确定化 id 一致，同一笔处理时可直接撤销。
+     * 能弹悬浮确认卡就弹卡（人还在支付页，关掉卡片即按卡内值入账），否则回落横幅通知
+     * （IMPORTANCE_HIGH，点击进待确认队列；受「入账提醒」开关控制）。
+     * 两条路径的确定化 id 一致，同一笔处理时可直接撤销。
      */
     private suspend fun announceCapture(
         type: TxType,
@@ -503,13 +509,21 @@ object CaptureCenter {
 
     // ---------- 悬浮确认卡（卡片/通知互斥） ----------
 
-    /** 悬浮确认卡开关（默认开：授权了悬浮窗权限才生效，未授权自动回落通知） */
+    /**
+     * 悬浮窗入账（默认开：授权了悬浮窗权限才生效，未授权自动回落通知）：
+     * 捕获时弹出底部确认卡——关闭卡片（✕/点空白/长时间不操作）视为入账，点「忽略」才不入账。
+     * 与「自动入账」互斥（开启本项时自动关闭自动入账）。
+     */
     fun isOverlayConfirmEnabled(): Boolean = prefs().getBoolean(KEY_OVERLAY_CONFIRM_ENABLED, true)
 
     fun setOverlayConfirmEnabled(enabled: Boolean) {
         prefs().edit().putBoolean(KEY_OVERLAY_CONFIRM_ENABLED, enabled).apply()
-        if (!enabled) mainHandler.post { ConfirmCardWindow.dismissAll() }
-        AppLog.i("Overlay", "overlayConfirmEnabled=$enabled")
+        if (enabled) {
+            prefs().edit().putBoolean(KEY_AUTO_ENTRY_ENABLED, false).apply() // 互斥：关掉自动入账
+        } else {
+            mainHandler.post { ConfirmCardWindow.dismissAll() }
+        }
+        AppLog.i("Overlay", "overlayConfirmEnabled=$enabled (autoEntry=${isAutoEntryEnabled()})")
     }
 
     fun canDrawOverlays(): Boolean = initialized && Settings.canDrawOverlays(appContext)
@@ -602,12 +616,24 @@ object CaptureCenter {
                     mainHandler.post { ConfirmCardWindow.dismissConfirm() }
                     scope.launch { ignoreFromOverlay(pending.id, pending.dedupKey) }
                 },
-                onCollapse = {
-                    // 收起 = 移除卡片 + 保留待确认 + 补发通知（不丢单）；
-                    // 用户点 ✕/上方空白，以及 60 秒自动收起（窗口侧先取出回调再移除）都会走到这里
-                    AppLog.i("Overlay", "card collapsed, fallback to notification")
-                    mainHandler.post { ConfirmCardWindow.dismissConfirm() }
-                    postPendingNotification(pending.type, isRefund, pending.amountCents, sourceLabel, counterparty, dedupKey)
+                onDismiss = { snapshot ->
+                    // 关闭卡片（✕/点空白/长时间无操作）= 视为入账：卡内值齐备直接落账，
+                    // 否则（金额缺失/分类账户不全）保留待确认并按「入账提醒」补发通知，不丢单
+                    mainHandler.post { ConfirmCardWindow.dismissConfirm() } // 窗口侧已移除，幂等兜底
+                    val catId = snapshot.categoryId
+                    val accId = snapshot.accountId
+                    if (dismissOutcome(snapshot) == DismissOutcome.ENTER && catId != null && accId != null) {
+                        AppLog.i(
+                            "Overlay",
+                            "card dismissed -> enter #${pending.id} ${Money.formatYuan(snapshot.amountCents)}",
+                        )
+                        scope.launch { confirmFromOverlay(pending, snapshot.amountCents, catId, accId, snapshot.counterparty) }
+                    } else {
+                        AppLog.i("Overlay", "card dismissed -> keep pending #${pending.id} (amount/category/account incomplete)")
+                        scope.launch {
+                            postPendingNotification(pending.type, isRefund, pending.amountCents, sourceLabel, counterparty, dedupKey, pending.id)
+                        }
+                    }
                 },
             )
             if (cont.isActive) cont.resume(shown)
@@ -700,11 +726,11 @@ object CaptureCenter {
                     },
                     onIgnore = {
                         mainHandler.post { ConfirmCardWindow.dismissConfirm() }
-                        toast("测试卡片：已忽略")
+                        toast("测试卡片：已忽略（不入账）")
                     },
-                    onCollapse = {
+                    onDismiss = {
                         mainHandler.post { ConfirmCardWindow.dismissConfirm() }
-                        toast("测试卡片：已收起")
+                        toast("测试卡片：关闭（样例不入账）")
                     },
                 )
                 // Toast 是系统级窗口不受支付保护层拦截：Toast 可见而卡片不可见 = 卡片被系统/支付保护层拦截
@@ -803,13 +829,20 @@ object CaptureCenter {
         AppLog.i("Ntf", "captureNotifyEnabled=$enabled")
     }
 
-    /** 自动入账：识别到付款后按推测分类/账户直接记账，不再逐笔确认（默认关，可选开启） */
+    /**
+     * 自动入账：识别到付款后按推测分类/账户直接记账，不再逐笔确认（默认关）。
+     * 与「悬浮窗入账」互斥（开启本项时自动关闭悬浮窗入账并收起已弹出的卡片）。
+     */
     fun isAutoEntryEnabled(): Boolean =
         prefs().getBoolean(KEY_AUTO_ENTRY_ENABLED, false)
 
     fun setAutoEntryEnabled(enabled: Boolean) {
         prefs().edit().putBoolean(KEY_AUTO_ENTRY_ENABLED, enabled).apply()
-        AppLog.i("Ntf", "autoEntryEnabled=$enabled")
+        if (enabled) {
+            prefs().edit().putBoolean(KEY_OVERLAY_CONFIRM_ENABLED, false).apply() // 互斥：关掉悬浮窗入账
+            mainHandler.post { ConfirmCardWindow.dismissAll() }
+        }
+        AppLog.i("Ntf", "autoEntryEnabled=$enabled (overlay=${isOverlayConfirmEnabled()})")
     }
 
     /**
@@ -1697,7 +1730,7 @@ object CaptureCenter {
             AppLog.w("Ntf", "auto entry skipped (no category/account to use)")
             return false
         }
-        // 重复预检（±60s 数据库校验）：同来源+同方向+同金额在窗口内已有条目（待确认或自动入账）
+        // 重复预检（±60s 同笔数据库校验）：同来源+同方向+同金额在窗口内已有条目（待确认或自动入账）
         // → 不静默入账，回落"入队 + 提醒"（重复通知/分钟边界重发不会造成双记账，用户仍看得到这笔）
         if (hasRecentSameEntry(pendingDao.getMergeable(), sourcePackage, type, amountCents, System.currentTimeMillis())) {
             AppLog.i("Ntf", "auto entry skipped (recent same entry) $sourcePackage $type ${Money.formatYuan(amountCents)}")

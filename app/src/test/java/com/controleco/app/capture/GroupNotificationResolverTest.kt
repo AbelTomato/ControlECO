@@ -9,7 +9,7 @@ import org.junit.Test
 /**
  * 折叠摘要子通知补全的测试（GroupNotificationResolver + NotificationRules 的判定部分）。
  * 场景来自真实通知形态：微信把"退款到账通知"折叠成「[2条]」后摘要没有金额，金额只存在于子通知里
- * （实测样本见 docs/开发日志.md；方案对照见 docs/自动记账捕获机制.md 第一节）。
+ * （实测样本见 docs/开发日志.md；机制见 docs/自动记账捕获机制.md 第一节）。
  */
 class GroupNotificationResolverTest {
 
@@ -141,7 +141,7 @@ class GroupNotificationResolverTest {
 
     @Test
     fun `fallback rejects stale child outside window`() {
-        // 早期草稿用 5 分钟窗口，会把很久以前的支付通知配到当前摘要上（把旧金额记成新交易）；这里收紧到 90 秒
+        // 5 分钟级窗口会把很久以前的支付通知配到当前摘要上（把旧金额记成新交易）；这里收紧到 90 秒
         assertNull(
             GroupNotificationResolver.pickChild(
                 summary("[2条]微信支付: 退款到账通知", groupKey = null, group = null),

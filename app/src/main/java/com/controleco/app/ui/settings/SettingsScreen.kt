@@ -17,9 +17,9 @@ import com.controleco.app.util.AppLog
 
 /**
  * 设置（一级页）：以导航分发为主，各子页保持干净——
- * 自动记账（总开关 + 权限）、其他（自动更新/检查更新/开发者功能/关于）。
+ * 自动记账（三个入账方式开关 + 权限）、其他（自动更新/检查更新/开发者功能/关于）。
  * 「账本」两项（账户、账单导入）不在本页：入口已移到个人页「本月预算」下方。
- * 例外：「自动记账」段落顶部放一个总开关（自动入账），其余行仍只做导航、不放说明与取值。
+ * 例外：「自动记账」段落顶部放三个开关（入账提醒/悬浮窗入账/自动入账），其余行仍只做导航。
  */
 @Composable
 fun SettingsScreen(
@@ -34,6 +34,8 @@ fun SettingsScreen(
     LaunchedEffect(Unit) { AppLog.i("settings", "hub opened") }
 
     val context = LocalContext.current
+    val captureNotify by vm.captureNotifyEnabled.collectAsStateWithLifecycle()
+    val overlayConfirm by vm.overlayConfirmEnabled.collectAsStateWithLifecycle()
     val autoEntry by vm.autoEntryEnabled.collectAsStateWithLifecycle()
     val autoUpdate by vm.autoUpdateEnabled.collectAsStateWithLifecycle()
 
@@ -41,8 +43,23 @@ fun SettingsScreen(
         SectionTitle("自动记账")
         PaneCard {
             SwitchRow(
+                title = "入账提醒",
+                subtitle = "捕获到动账时发通知提醒，点通知进待确认列表处理",
+                checked = captureNotify,
+                onCheckedChange = { vm.setCaptureNotifyEnabled(it) },
+            )
+            RowDivider()
+            SwitchRow(
+                title = "悬浮窗入账",
+                subtitle = "捕获时弹出确认卡：关闭卡片或长时间不操作视为入账，点「忽略」不入账" +
+                    "（未授权悬浮窗时自动回落通知）",
+                checked = overlayConfirm,
+                onCheckedChange = { vm.setOverlayConfirmEnabled(it) },
+            )
+            RowDivider()
+            SwitchRow(
                 title = "自动入账",
-                subtitle = "识别到付款直接记账，不再逐笔确认（分类/账户自动推测，可再改）",
+                subtitle = "识别到付款直接记账，不再逐笔确认（分类/账户自动推测，可再改；与悬浮窗入账互斥）",
                 checked = autoEntry,
                 onCheckedChange = { vm.setAutoEntryEnabled(it) },
             )

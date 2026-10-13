@@ -10,7 +10,7 @@ import com.controleco.app.MainActivity
 import com.controleco.app.R
 
 /**
- * 快捷设置磁贴「记一笔」（参考 自研方案的「截屏记账」磁贴思路，见
+ * 快捷设置磁贴「记一笔」（手动入口，见
  * docs/自动记账捕获机制.md 第一节）：下拉快捷面板点一下就进快速记账页，
  * 无权限要求、无界面后台逻辑。
  */

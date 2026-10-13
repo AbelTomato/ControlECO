@@ -9,7 +9,7 @@ import com.controleco.app.util.Money
 
 /**
  * 通知栏「输入金额」的回复入口：方向可辨但金额缺失的捕获不再丢弃，用户在通知上直接打字补录
- * （吸收自研方案的通知栏 RemoteInput 闭环，见 docs/自动记账捕获机制.md）。
+ * （RemoteInput 回填闭环，见 docs/自动记账捕获机制.md）。
  *
  * 安全：PendingIntent 因为 RemoteInput 必须是 FLAG_MUTABLE（Android 12+ 起为硬要求），
  * 所以这里显式校验 intent 只可能是本应用组件触发的；清单里也声明了 exported="false"。

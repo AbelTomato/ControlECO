@@ -50,7 +50,7 @@ class AccBookAccessibilityService : AccessibilityService() {
          * 系统无障碍设置中是否已开启本服务（安卓 13+ 侧载需先「允许受限制的设置」才出现在列表里）。
          * **双源检测**：AccessibilityManager 的已启用服务列表 + Settings.Secure 字符串。
          * 只读 Settings 会在系统回写短组件名（`pkg/.Class` 与 `pkg/full.Class` 两种形态）时误报"未开启"
-         * （自研原型踩过的坑，见 docs/自动记账捕获机制.md）。
+         * （自测踩过的坑：单源读取在部分 ROM 上不稳定，见 docs/自动记账捕获机制.md）。
          */
         fun isEnabled(context: Context): Boolean {
             val component = serviceComponent(context)

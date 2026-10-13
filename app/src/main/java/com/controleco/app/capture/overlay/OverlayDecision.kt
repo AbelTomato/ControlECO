@@ -3,21 +3,41 @@ package com.controleco.app.capture.overlay
 import com.controleco.app.capture.CaptureDefaults
 
 /**
- * 悬浮确认卡的显示决策（纯函数，便于单测）与时间常量。
+ * 悬浮确认卡的显示决策与关闭处置（纯函数，便于单测）与时间常量。
  *
- * 卡片是"刚付完款、人还在支付页"场景的快速确认入口；不满足条件时**一律回落横幅通知**
- * （通知是兜底通道，永远保留）。参考自研方案的方案取舍见
- * docs/自动记账捕获机制.md 第二节。
+ * 卡片是"刚付完款、人还在支付页"场景的快速确认入口：关闭卡片（点 ✕ / 点卡片上方空白 /
+ * 长时间不操作）视为入账，只有点「忽略」才不入账；不满足弹出条件时**一律回落横幅通知**
+ * （通知是兜底通道，永远保留）。方案取舍见 docs/自动记账捕获机制.md 第二节。
  */
 
 /** 捕获到弹出卡片的延迟：支付保护层在支付页停留期会拦截悬浮窗，稍等更稳（失败仍回落通知） */
 internal const val OVERLAY_DELAY_MS = 3_000L
 
-/** 卡片无操作自动收起（收起 = 保留待确认 + 补发通知，不丢单） */
+/** 无操作自动关闭的时长（关闭 = 视为入账，用户可点「忽略」明确不入账） */
 internal const val OVERLAY_AUTO_DISMISS_MS = 60_000L
 
 /** 确认后的「已记入 · 撤销」细条停留时长 */
 internal const val SAVED_STRIP_DISMISS_MS = 6_000L
+
+/** 关闭卡片时的卡内当前值（关闭 = 视为入账，用这份值落账） */
+internal data class DismissSnapshot(
+    val amountCents: Long,
+    val categoryId: Long?,
+    val accountId: Long?,
+    val counterparty: String,
+)
+
+/**
+ * 关闭卡片的处置：金额/分类/账户齐备 → 入账；否则保留待确认
+ * （金额缺失的条目不能入账，按「入账提醒」开关补发横幅通知）。
+ */
+internal enum class DismissOutcome { ENTER, KEEP_PENDING }
+
+internal fun dismissOutcome(snapshot: DismissSnapshot): DismissOutcome = when {
+    snapshot.amountCents <= 0 -> DismissOutcome.KEEP_PENDING
+    snapshot.categoryId == null || snapshot.accountId == null -> DismissOutcome.KEEP_PENDING
+    else -> DismissOutcome.ENTER
+}
 
 /** 卡片显示条件（四个入参都可能变，弹出前需再判一次） */
 internal data class OverlayConditions(

@@ -182,7 +182,7 @@ private fun CaptureNotifySetting(vm: LedgerViewModel, resumeTick: Int) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            "动账通知提醒",
+            "入账提醒",
             style = MaterialTheme.typography.bodyLarge,
             modifier = Modifier.weight(1f),
         )
@@ -274,15 +274,15 @@ private fun AmountReplySetting(vm: LedgerViewModel) {
 }
 
 /**
- * 悬浮确认卡：捕获到动账时在支付页上方弹出底部确认卡片（预填金额/商户/分类/账户，
- * 一键入账或忽略）。未授权悬浮窗权限时该通道自动回落横幅通知，功能不失效。
+ * 悬浮窗入账：捕获到动账时在支付页上方弹出底部确认卡片（预填金额/商户/分类/账户），
+ * 关闭卡片或长时间不操作视为入账，点「忽略」才不入账。未授权悬浮窗权限时自动回落横幅通知。
  */
 @Composable
 private fun OverlaySection(vm: LedgerViewModel, resumeTick: Int, onOpenOverlayPermission: () -> Unit) {
     val granted = remember(resumeTick) { vm.isOverlayGranted() }
     val overlayOn by vm.overlayConfirmEnabled.collectAsStateWithLifecycle()
 
-    SectionTitle("悬浮确认卡")
+    SectionTitle("悬浮窗入账")
     PaneCard {
         PermissionStatusRow(
             title = "悬浮窗权限",
@@ -294,8 +294,8 @@ private fun OverlaySection(vm: LedgerViewModel, resumeTick: Int, onOpenOverlayPe
         )
         RowDivider()
         SwitchRow(
-            title = "捕获时弹出确认卡",
-            subtitle = "支付页上方弹出底部卡片，预填识别结果，一键入账（未授权时自动回落通知）",
+            title = "悬浮窗入账",
+            subtitle = "关闭卡片或长时间不操作视为入账，点「忽略」不入账（与「自动入账」互斥；未授权时回落通知）",
             checked = overlayOn,
             onCheckedChange = { vm.setOverlayConfirmEnabled(it) },
         )

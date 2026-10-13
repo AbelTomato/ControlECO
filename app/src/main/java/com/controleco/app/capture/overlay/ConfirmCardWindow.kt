@@ -21,15 +21,16 @@ import com.controleco.app.util.Money
 /**
  * 悬浮确认卡（底部卡片）与「已记入 · 撤销」细条的窗口宿主。
  *
- * 方案对照（见 docs/自动记账捕获机制.md 第二节）：
- * - **底部**卡片（顶部 placement 会被 MIUI 压到状态栏下方，这正是 v0.4.13 灵动岛失败的原因）；
- * - 全屏透明窗口 + `NOT_TOUCH_MODAL|LAYOUT_IN_SCREEN|LAYOUT_INSET_DECOR|WATCH_OUTSIDE_TOUCH`
- *   （自测验证过的参数组合）——上方透明区点按 = 收起卡片（保留待确认 + 由调用方补发通知），不是丢弃；
+ * 设计要点（见 docs/自动记账捕获机制.md 第二节）：
+ * - **底部**卡片：顶部 placement 在 MIUI 上会被压到状态栏下方（v0.4.13 灵动岛失败的原因），
+ *   底部卡片天然绕开该问题；
+ * - 全屏透明窗口 + `NOT_TOUCH_MODAL|LAYOUT_IN_SCREEN|LAYOUT_INSET_DECOR|WATCH_OUTSIDE_TOUCH`：
+ *   上方透明区点按 = 关闭卡片（关闭 = 视为入账，卡内当前值经 [showConfirm] 的 onDismiss 交回调用方）；
  * - 窗口可聚焦，卡内输入框可直接调键盘；
  * - `addView` 抛异常（无权限/被支付保护层拦截）→ [showConfirm] 返回 false，调用方回落横幅通知
- *   （`show():Boolean` 写法，v0.4.13 起验证）。
+ *   （Toast 可见而卡片不可见 = 被拦截的铁证，v0.4.13 起用这套判定）。
  *
- * UI 全部用本应用自己的 Compose 设计组件（[ConfirmCardContent]），不沿用任何一家的视觉。
+ * UI 全部用本应用自己的 Compose 设计组件（[ConfirmCardContent]）。
  */
 internal object ConfirmCardWindow {
 
@@ -45,7 +46,7 @@ internal object ConfirmCardWindow {
 
     private var autoDismiss: Runnable? = null
     private var savedDismiss: Runnable? = null
-    private var collapseCallback: (() -> Unit)? = null
+    private var dismissCallback: ((DismissSnapshot) -> Unit)? = null
 
     /** 卡片当前展示的待确认条目 id（-1 = 未展示） */
     var showingPendingId: Long = -1L
@@ -64,7 +65,9 @@ internal object ConfirmCardWindow {
 
     /**
      * 展示确认卡。返回 false = 窗口没弹出来（无权限/被拦截），调用方必须回落通知。
-     * [onConfirm] 的四个参数：金额分、分类 id、账户 id、商户/备注；[onCollapse] = 收起（不动数据）。
+     * [onConfirm] 的四个参数：金额分、分类 id、账户 id、商户/备注；
+     * [onDismiss] = 关闭（✕ / 点卡片上方空白 / 长时间无操作），携带卡内当前值 —— 关闭视为入账，
+     * 由调用方按 [dismissOutcome] 决定落账或保留待确认。
      */
     fun showConfirm(
         pending: PendingTransactionEntity,
@@ -73,7 +76,7 @@ internal object ConfirmCardWindow {
         learnedRules: List<com.controleco.app.data.db.MerchantRuleEntity> = emptyList(),
         onConfirm: (amountCents: Long, categoryId: Long, accountId: Long, counterparty: String) -> Unit,
         onIgnore: () -> Unit,
-        onCollapse: () -> Unit,
+        onDismiss: (DismissSnapshot) -> Unit,
     ): Boolean {
         if (!this::appContext.isInitialized) return false
         removeConfirmWindow() // 重入时先清旧窗口（新的一笔直接替换展示）
@@ -89,7 +92,7 @@ internal object ConfirmCardWindow {
                     onConfirm(amountCents, categoryId, accountId, counterparty)
                 },
                 onIgnore = onIgnore,
-                onCollapse = onCollapse,
+                onDismiss = { handleDismiss() },
             )
         }
         val params = WindowManager.LayoutParams(
@@ -115,7 +118,7 @@ internal object ConfirmCardWindow {
             confirmView = view
             confirmHost = host
             showingPendingId = pending.id
-            collapseCallback = onCollapse
+            dismissCallback = onDismiss
             scheduleAutoDismiss()
             AppLog.i(TAG, "confirm card shown pending=#${pending.id} ${pending.ruleName}")
             true
@@ -128,8 +131,8 @@ internal object ConfirmCardWindow {
     }
 
     /**
-     * 后续捕获把同笔条目富化后（页面合并/跨通道归并）刷新卡片；用户已改过的字段不覆盖
-     * （自研方案的写入规则：用户手改过的值优先）。
+     * 后续捕获把同笔条目富化后（页面合并/跨通道归并）刷新卡片；
+     * 自动回填只在用户没有手改过该字段时生效（用户手改过的值优先）。
      */
     fun updatePending(
         pending: PendingTransactionEntity,
@@ -142,7 +145,10 @@ internal object ConfirmCardWindow {
         AppLog.i(TAG, "confirm card updated pending=#${pending.id}")
     }
 
-    /** 收起确认卡（数据不动）。返回 true = 之前确实有卡片在展示 */
+    /**
+     * 移除确认卡，**不触发** onDismiss（数据不动）：进入应用、关闭「悬浮窗入账」开关等场景用。
+     * 返回 true = 之前确实有卡片在展示。用户主动关闭（✕/空白/超时）走 [handleDismiss]。
+     */
     fun dismissConfirm(): Boolean {
         val wasVisible = confirmView != null
         removeConfirmWindow()
@@ -207,13 +213,26 @@ internal object ConfirmCardWindow {
 
     // ---------- 内部 ----------
 
+    /**
+     * ✕ / 点卡片上方空白 / 长时间无操作：关闭卡片 = 视为入账。
+     * 卡内当前值打包成 [DismissSnapshot] 交给 onDismiss；窗口先移除再回调（回调可能要弹「已记入」细条）。
+     */
+    private fun handleDismiss() {
+        val cb = dismissCallback ?: return
+        val snapshot = DismissSnapshot(
+            amountCents = state.amountCents ?: 0L,
+            categoryId = state.categoryId,
+            accountId = state.accountId,
+            counterparty = state.counterparty,
+        )
+        if (dismissConfirm()) cb(snapshot)
+    }
+
     private fun scheduleAutoDismiss() {
         autoDismiss?.let { handler.removeCallbacks(it) }
         val r = Runnable {
-            AppLog.i(TAG, "confirm card auto dismiss (no interaction)")
-            // 先取出回调：dismissConfirm → removeConfirmWindow 会把它清空
-            val cb = collapseCallback
-            if (dismissConfirm()) cb?.invoke()
+            AppLog.i(TAG, "confirm card auto dismiss (no interaction, treated as entered)")
+            handleDismiss()
         }
         autoDismiss = r
         handler.postDelayed(r, OVERLAY_AUTO_DISMISS_MS)
@@ -227,7 +246,7 @@ internal object ConfirmCardWindow {
     private fun removeConfirmWindow() {
         autoDismiss?.let { handler.removeCallbacks(it) }
         autoDismiss = null
-        collapseCallback = null
+        dismissCallback = null
         val view = confirmView ?: return
         confirmView = null
         showingPendingId = -1L
