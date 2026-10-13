@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import com.controleco.app.capture.CaptureDefaults
+import com.controleco.app.capture.MerchantRules
 import com.controleco.app.data.db.AccountEntity
 import com.controleco.app.data.db.CategoryEntity
 import com.controleco.app.data.db.PendingTransactionEntity
@@ -75,6 +76,7 @@ internal class ConfirmCardState {
     var accountId by mutableStateOf<Long?>(null)
     var categories by mutableStateOf<List<CategoryEntity>>(emptyList())
     var accounts by mutableStateOf<List<AccountEntity>>(emptyList())
+    var learnedRules by mutableStateOf<List<com.controleco.app.data.db.MerchantRuleEntity>>(emptyList())
 
     private var amountUserEdited = false
     private var counterpartyUserEdited = false
@@ -83,7 +85,12 @@ internal class ConfirmCardState {
     val canSubmit: Boolean get() = amountCents != null && categoryId != null && accountId != null
 
     /** 首次绑定（新的待确认条目） */
-    fun bind(pending: PendingTransactionEntity, categories: List<CategoryEntity>, accounts: List<AccountEntity>) {
+    fun bind(
+        pending: PendingTransactionEntity,
+        categories: List<CategoryEntity>,
+        accounts: List<AccountEntity>,
+        learnedRules: List<com.controleco.app.data.db.MerchantRuleEntity> = emptyList(),
+    ) {
         amountUserEdited = false
         counterpartyUserEdited = false
         pendingId = pending.id
@@ -97,20 +104,32 @@ internal class ConfirmCardState {
         note = pending.note
         this.categories = categories
         this.accounts = accounts
+        this.learnedRules = learnedRules
         categoryId = CaptureDefaults.categoryId(
             categories,
             pending.type,
             pending.counterparty.ifBlank { pending.note },
+            learnedRules = learnedRules,
+            counterparty = pending.counterparty,
+            note = pending.note,
         )
         accountId = CaptureDefaults.accountId(
             accounts,
             pending.sourcePackage,
             CaptureDefaults.bankNameOf(pending.sourcePackage, pending.ruleName),
+            learnedAccountId = MerchantRules.accountIdFrom(
+                learnedRules, accounts, pending.type, pending.counterparty, pending.note,
+            ),
         )
     }
 
     /** 富化刷新（页面合并/跨通道归并后）：用户改过的字段不动 */
-    fun mergeFrom(pending: PendingTransactionEntity, categories: List<CategoryEntity>, accounts: List<AccountEntity>) {
+    fun mergeFrom(
+        pending: PendingTransactionEntity,
+        categories: List<CategoryEntity>,
+        accounts: List<AccountEntity>,
+        learnedRules: List<com.controleco.app.data.db.MerchantRuleEntity> = emptyList(),
+    ) {
         if (pendingId != pending.id) return
         if (!amountUserEdited && pending.amountCents > 0) {
             amountText = Money.formatCents(pending.amountCents)
@@ -123,8 +142,12 @@ internal class ConfirmCardState {
         timestamp = pending.timestamp
         this.categories = categories
         this.accounts = accounts
+        this.learnedRules = learnedRules
         if (categoryId == null) {
-            categoryId = CaptureDefaults.categoryId(categories, pending.type, pending.counterparty.ifBlank { pending.note })
+            categoryId = CaptureDefaults.categoryId(
+                categories, pending.type, pending.counterparty.ifBlank { pending.note },
+                learnedRules = learnedRules, counterparty = pending.counterparty, note = pending.note,
+            )
         }
         if (accountId == null) {
             accountId = CaptureDefaults.accountId(

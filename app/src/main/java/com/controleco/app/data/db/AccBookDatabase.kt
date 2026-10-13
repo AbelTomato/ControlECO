@@ -15,8 +15,9 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         CapturedNotificationEntity::class,
         PendingTransactionEntity::class,
         CaptureTraceEntity::class,
+        MerchantRuleEntity::class,
     ],
-    version = 7,
+    version = 8,
     exportSchema = true,
 )
 abstract class AccBookDatabase : RoomDatabase() {
@@ -27,6 +28,7 @@ abstract class AccBookDatabase : RoomDatabase() {
     abstract fun captureDao(): CaptureDao
     abstract fun pendingDao(): PendingDao
     abstract fun traceDao(): TraceDao
+    abstract fun merchantRuleDao(): MerchantRuleDao
 
     companion object {
         /** v2：交易表新增退款标记列 */
@@ -122,6 +124,27 @@ abstract class AccBookDatabase : RoomDatabase() {
             }
         }
 
+
+        /** v8：商户归类学习规则表（确认/编辑捕获交易时学习，越用越准） */
+        private val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `merchant_rules` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`matchKey` TEXT NOT NULL, " +
+                        "`type` TEXT NOT NULL, " +
+                        "`categoryId` INTEGER NOT NULL, " +
+                        "`accountId` INTEGER, " +
+                        "`hits` INTEGER NOT NULL, " +
+                        "`updatedAt` INTEGER NOT NULL)",
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS `index_merchant_rules_matchKey_type` " +
+                        "ON `merchant_rules` (`matchKey`, `type`)",
+                )
+            }
+        }
+
         @Volatile
         private var instance: AccBookDatabase? = null
 
@@ -134,7 +157,7 @@ abstract class AccBookDatabase : RoomDatabase() {
                 )
                     .addMigrations(
                         MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6,
-                        MIGRATION_6_7,
+                        MIGRATION_6_7, MIGRATION_7_8,
                     )
                     .build().also { instance = it }
             }

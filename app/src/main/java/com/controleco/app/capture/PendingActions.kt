@@ -1,5 +1,6 @@
 package com.controleco.app.capture
 
+import com.controleco.app.data.db.MerchantRuleDao
 import com.controleco.app.data.db.PendingDao
 import com.controleco.app.data.db.PendingTransactionEntity
 import com.controleco.app.data.db.TransactionDao
@@ -11,18 +12,20 @@ import com.controleco.app.util.AppLog
  *
  * 为什么抽共享层：悬浮确认卡没有 Activity/ViewModel 宿主，确认动作必须在采集层独立可执行；
  * 待确认列表（ViewModel）也要做同一件事。放一处，保证两侧口径一致——
- * externalId 规则、来源标记（TxSource）、退款标记、重复插入的处理方式都只有一份。
+ * externalId 规则、来源标记（TxSource）、退款标记、重复插入的处理方式、**商户归类学习**都只有一份。
  */
 internal object PendingActions {
 
     /**
-     * 确认入账：写交易（externalId = "NTF:" + dedupKey，唯一索引兜底防重）+ 删除待确认条目。
+     * 确认入账：写交易（externalId = "NTF:" + dedupKey，唯一索引兜底防重）+ 删除待确认条目
+     * + 学习商户归类（越用越准）。
      * 返回新交易 id；若该笔已经入过账（重复通知/双通道竞态），唯一索引冲突按"已记录"处理，
      * 返回 null 且不抛异常、不重复写账。
      */
     suspend fun confirm(
         txDao: TransactionDao,
         pendingDao: PendingDao,
+        merchantRuleDao: MerchantRuleDao? = null,
         item: PendingTransactionEntity,
         categoryId: Long,
         accountId: Long,
@@ -30,6 +33,7 @@ internal object PendingActions {
         amountCents: Long = item.amountCents,
     ): Long? {
         val externalId = "NTF:${item.dedupKey}"
+        val counterpartyValue = counterparty.trim().ifBlank { item.counterparty }
         val txId = try {
             txDao.insert(
                 TransactionEntity(
@@ -39,7 +43,7 @@ internal object PendingActions {
                     accountId = accountId,
                     timestamp = item.timestamp,
                     note = item.note.ifBlank { item.ruleName },
-                    counterparty = counterparty.trim().ifBlank { item.counterparty },
+                    counterparty = counterpartyValue,
                     source = CaptureDefaults.txSource(item.sourcePackage),
                     externalId = externalId,
                     refundMark = item.refundMark,
@@ -54,6 +58,9 @@ internal object PendingActions {
             }
         }
         pendingDao.deleteById(item.id)
+        merchantRuleDao?.let {
+            MerchantRules.learn(it, item.type, categoryId, accountId, counterpartyValue, item.note)
+        }
         AppLog.i("pending", "confirmed #${item.id} externalId=$externalId tx=$txId")
         return txId
     }

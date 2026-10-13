@@ -106,6 +106,38 @@ class CaptureDefaultsTest {
     }
 
     @Test
+    fun `学到的商户规则优先于关键词猜测`() {
+        val rules = listOf(
+            com.controleco.app.data.db.MerchantRuleEntity(
+                id = 0, matchKey = "瑞幸咖啡", type = TxType.EXPENSE, categoryId = 2, accountId = 3,
+            ),
+        )
+        // "瑞幸咖啡"没有关键词规则会落到"其他"(3)；学到的规则指向"购物"(2) 且优先
+        assertEquals(
+            2L,
+            CaptureDefaults.categoryId(
+                categories, TxType.EXPENSE, "瑞幸咖啡",
+                learnedRules = rules, counterparty = "瑞幸咖啡", note = "",
+            ),
+        )
+        // 学到的账户同样优先
+        assertEquals(
+            3L,
+            CaptureDefaults.accountId(
+                accounts, NotificationRules.WECHAT, null,
+                learnedAccountId = com.controleco.app.capture.MerchantRules.accountIdFrom(
+                    rules, accounts, TxType.EXPENSE, "瑞幸咖啡", "",
+                ),
+            ),
+        )
+        // 没有规则时退回关键词猜测（滴滴→交通）
+        assertEquals(
+            6L,
+            CaptureDefaults.categoryId(categories, TxType.EXPENSE, "滴滴出行"),
+        )
+    }
+
+    @Test
     fun `银行来源标记与支付来源标记`() {
         assertEquals(TxSource.BANK, CaptureDefaults.txSource("SMS:工商银行"))
         assertEquals(TxSource.BANK, CaptureDefaults.txSource(NotificationRules.UNIONPAY))

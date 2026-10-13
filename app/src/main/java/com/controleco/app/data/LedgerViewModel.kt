@@ -13,6 +13,7 @@ import com.controleco.app.capture.AccBookAccessibilityService
 import com.controleco.app.capture.CaptureCenter
 import com.controleco.app.capture.CaptureDefaults
 import com.controleco.app.capture.NotificationRules
+import com.controleco.app.capture.MerchantRules
 import com.controleco.app.capture.PendingActions
 import com.controleco.app.csv.BillParsers
 import com.controleco.app.data.db.AccountBalanceRow
@@ -66,6 +67,7 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
     private val pendingDao = db.pendingDao()
     private val captureDao = db.captureDao()
     private val traceDao = db.traceDao()
+    private val merchantRuleDao = db.merchantRuleDao()
 
     private val zone: ZoneId = ZoneId.systemDefault()
 
@@ -402,6 +404,10 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
                             counterparty = counterparty,
                         )
                     )
+                    // 编辑的是捕获来的交易 → 学习这次归类（"越用越准"；手动记账不学习）
+                    if (old.source != TxSource.MANUAL) {
+                        MerchantRules.learn(merchantRuleDao, type, categoryId, accountId, counterparty, note)
+                    }
                 }
             } else {
                 txDao.insert(
@@ -725,6 +731,21 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
         _traceEnabled.value = enabled
     }
 
+    // ---------- 商户归类学习（越用越准） ----------
+
+    /** 学到的规则（最近在前） */
+    val merchantRules: StateFlow<List<com.controleco.app.data.db.MerchantRuleEntity>> =
+        merchantRuleDao.observeRecent()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun deleteMerchantRule(id: Long) {
+        viewModelScope.launch(Dispatchers.IO) { merchantRuleDao.deleteById(id) }
+    }
+
+    fun clearMerchantRules() {
+        viewModelScope.launch(Dispatchers.IO) { merchantRuleDao.clearAll() }
+    }
+
     /** 溯源记录（最新在前，联查已带对应账单 id 与待确认状态） */
     val traceRows: StateFlow<List<CaptureTraceRow>> =
         traceDao.observeRecent(300).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -919,7 +940,7 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         viewModelScope.launch(Dispatchers.IO) {
-            PendingActions.confirm(txDao, pendingDao, item, categoryId, accountId, counterparty)
+            PendingActions.confirm(txDao, pendingDao, merchantRuleDao, item, categoryId, accountId, counterparty)
         }
     }
 

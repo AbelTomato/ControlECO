@@ -70,6 +70,7 @@ internal object ConfirmCardWindow {
         pending: PendingTransactionEntity,
         categories: List<CategoryEntity>,
         accounts: List<AccountEntity>,
+        learnedRules: List<com.controleco.app.data.db.MerchantRuleEntity> = emptyList(),
         onConfirm: (amountCents: Long, categoryId: Long, accountId: Long, counterparty: String) -> Unit,
         onIgnore: () -> Unit,
         onCollapse: () -> Unit,
@@ -77,7 +78,7 @@ internal object ConfirmCardWindow {
         if (!this::appContext.isInitialized) return false
         removeConfirmWindow() // 重入时先清旧窗口（新的一笔直接替换展示）
 
-        state.bind(pending, categories, accounts)
+        state.bind(pending, categories, accounts, learnedRules)
 
         val wm = appContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
         val host = OverlayComposeHost()
@@ -130,9 +131,14 @@ internal object ConfirmCardWindow {
      * 后续捕获把同笔条目富化后（页面合并/跨通道归并）刷新卡片；用户已改过的字段不覆盖
      * （自研方案的写入规则：用户手改过的值优先）。
      */
-    fun updatePending(pending: PendingTransactionEntity, categories: List<CategoryEntity>, accounts: List<AccountEntity>) {
+    fun updatePending(
+        pending: PendingTransactionEntity,
+        categories: List<CategoryEntity>,
+        accounts: List<AccountEntity>,
+        learnedRules: List<com.controleco.app.data.db.MerchantRuleEntity> = emptyList(),
+    ) {
         if (confirmView == null || showingPendingId != pending.id) return
-        state.mergeFrom(pending, categories, accounts)
+        state.mergeFrom(pending, categories, accounts, learnedRules)
         AppLog.i(TAG, "confirm card updated pending=#${pending.id}")
     }
 

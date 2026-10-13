@@ -18,6 +18,7 @@ import com.controleco.app.data.db.CaptureChannel
 import com.controleco.app.data.db.CaptureDao
 import com.controleco.app.data.db.CaptureTraceEntity
 import com.controleco.app.data.db.CapturedNotificationEntity
+import com.controleco.app.data.db.MerchantRuleDao
 import com.controleco.app.data.db.CategoryDao
 import com.controleco.app.data.db.CategoryEntity
 import com.controleco.app.data.db.PendingDao
@@ -109,6 +110,7 @@ object CaptureCenter {
     private lateinit var categoryDao: CategoryDao
     private lateinit var accountDao: AccountDao
     private lateinit var traceDao: TraceDao
+    private lateinit var merchantRuleDao: MerchantRuleDao
     private val initialized get() = this::appContext.isInitialized
 
     private val _connected = MutableStateFlow(false)
@@ -137,6 +139,7 @@ object CaptureCenter {
         categoryDao = db.categoryDao()
         accountDao = db.accountDao()
         traceDao = db.traceDao()
+        merchantRuleDao = db.merchantRuleDao()
         ConfirmCardWindow.init(appContext)
         createNotificationChannel()
         cleanup()
@@ -560,7 +563,8 @@ object CaptureCenter {
         if (fresh.dedupKey != dedupKey) return false
         val categories = categoryDao.getAll()
         val accounts = accountDao.getAll()
-        val shown = showCardOnMain(fresh, categories, accounts, isRefund, sourceLabel, counterparty, dedupKey)
+        val learned = merchantRuleDao.getAll()
+        val shown = showCardOnMain(fresh, categories, accounts, learned, isRefund, sourceLabel, counterparty, dedupKey)
         AppLog.i("Overlay", if (shown) "confirm card shown for #${pending.id}" else "confirm card unavailable, fallback to notification")
         return shown
     }
@@ -570,6 +574,7 @@ object CaptureCenter {
         pending: PendingTransactionEntity,
         categories: List<com.controleco.app.data.db.CategoryEntity>,
         accounts: List<com.controleco.app.data.db.AccountEntity>,
+        learned: List<com.controleco.app.data.db.MerchantRuleEntity>,
         isRefund: Boolean,
         sourceLabel: String,
         counterparty: String,
@@ -580,6 +585,7 @@ object CaptureCenter {
                 pending = pending,
                 categories = categories,
                 accounts = accounts,
+                learnedRules = learned,
                 onConfirm = { amountCents, categoryId, accountId, counterpartyText ->
                     mainHandler.post { ConfirmCardWindow.dismissConfirm() }
                     scope.launch { confirmFromOverlay(pending, amountCents, categoryId, accountId, counterpartyText) }
@@ -607,7 +613,7 @@ object CaptureCenter {
         counterparty: String,
     ) {
         val txId = try {
-            PendingActions.confirm(txDao, pendingDao, pending, categoryId, accountId, counterparty, amountCents)
+            PendingActions.confirm(txDao, pendingDao, merchantRuleDao, pending, categoryId, accountId, counterparty, amountCents)
         } catch (e: Exception) {
             AppLog.e("Overlay", "confirm from overlay failed", e)
             toast("入账失败：${e.message ?: "未知错误"}")
@@ -642,7 +648,8 @@ object CaptureCenter {
         val fresh = pendingDao.getById(pendingId) ?: return
         val categories = categoryDao.getAll()
         val accounts = accountDao.getAll()
-        mainHandler.post { ConfirmCardWindow.updatePending(fresh, categories, accounts) }
+        val learned = merchantRuleDao.getAll()
+        mainHandler.post { ConfirmCardWindow.updatePending(fresh, categories, accounts, learned) }
     }
 
     /** debug：立即或延迟弹一张样例卡片（配置页开发者功能用；不落库） */
@@ -676,6 +683,7 @@ object CaptureCenter {
                     pending = sample,
                     categories = categories,
                     accounts = accounts,
+                    learnedRules = emptyList(),
                     onConfirm = { _, _, _, _ ->
                         mainHandler.post { ConfirmCardWindow.dismissConfirm() }
                         toast("测试卡片：未入账")
@@ -923,6 +931,7 @@ object CaptureCenter {
             traceDao.keepNewest(TRACE_KEEP_ROWS)
             // 自动入账条目只在合并窗口（10s）内有意义，留一天足够，避免长期堆积
             pendingDao.deleteAutoOlderThan(System.currentTimeMillis() - 24 * 3_600_000)
+            merchantRuleDao.keepNewest(MerchantRules.MAX_RULES)
         }
     }
 
@@ -961,12 +970,15 @@ object CaptureCenter {
             }
         }
 
-        val interested = NotificationRules.isInterested(packageName)
+        // 采集范围 = 规则认识的来源 ∩ 用户开启的目录应用（设置页「监听的 App」）
+        val interested = NotificationRules.isInterested(packageName) &&
+            CaptureAppCatalog.isWatched(appContext, packageName)
         val captureAll = isDebugCaptureAll(isDebugBuild)
         // 银行 App 动账推送：不在支付白名单里，走「正文【银行名】签名 / 银行包名短名单」两道线索。
         // 是否真的入库要在解析通过后决定（银行 App 的营销/通知类推送极密集，未命中不入库）。
         // 与 debug 全量记录无关：签名线索在就尝试解析，避免采样模式下银行通道失效。
         val bankCandidate = !interested && isBankPushEnabled() && isCaptureEnabled() &&
+            CaptureAppCatalog.isWatchedOrUnknown(appContext, packageName) &&
             (BankLedgerRules.detectBankName("$title $text $bigText") != null ||
                 BankLedgerRules.bankNameOfPackage(packageName) != null)
         if (!interested && !captureAll && !bankCandidate) {
@@ -1442,6 +1454,12 @@ object CaptureCenter {
         _lastEventAt.value = System.currentTimeMillis()
 
         if (!initialized || texts.isEmpty()) return
+        if (packageName != appContext.packageName &&
+            !CaptureAppCatalog.isWatched(appContext, packageName)
+        ) {
+            AppLog.d("Page", "skip (app not watched) pkg=$packageName")
+            return
+        }
         val captureAll = isDebugCaptureAllPages(isDebugBuild)
         if (!isA11yCaptureEnabled() && !captureAll) {
             AppLog.d("Page", "skip (a11y capture disabled) pkg=$packageName")
@@ -1651,8 +1669,17 @@ object CaptureCenter {
         source: TxSource = TxSource.NOTIFICATION,
         bankName: String? = null,
     ): Boolean {
-        val categoryId = CaptureDefaults.categoryId(categoryDao.getAll(), type, counterparty.ifBlank { note })
-        val accountId = CaptureDefaults.accountId(accountDao.getAll(), sourcePackage, bankName)
+        val learned = merchantRuleDao.getAll()
+        val categories = categoryDao.getAll()
+        val accounts = accountDao.getAll()
+        val categoryId = CaptureDefaults.categoryId(
+            categories, type, counterparty.ifBlank { note },
+            learnedRules = learned, counterparty = counterparty, note = note,
+        )
+        val accountId = CaptureDefaults.accountId(
+            accounts, sourcePackage, bankName,
+            learnedAccountId = MerchantRules.accountIdFrom(learned, accounts, type, counterparty, note),
+        )
         if (categoryId == null || accountId == null) {
             AppLog.w("Ntf", "auto entry skipped (no category/account to use)")
             return false
