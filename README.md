@@ -1,6 +1,7 @@
 # 我ECO（ ControlECO）
 
-安卓记账应用，目标是逐步实现"自动记账"：自动捕获微信支付、支付宝、银行动账短信等交易事件生成账单。
+安卓记账应用，目标是逐步实现"自动记账"：自动捕获微信/支付宝/云闪付通知、电商收银台、银行动账短信与银行 App 推送、
+支付页文字（无障碍）等交易事件；底部悬浮确认卡与待确认队列双通道确认；商户归类越用越准。
 数据全部保存在本机；唯一联网用途是更新检查与更新包下载（只访问 GitHub，不上传任何数据）。
 
 ## 开发环境
@@ -34,7 +35,7 @@ ADB="D:/AndroidSDK/platform-tools/adb.exe"
 "$ADB" devices                 # 确认设备已连接（状态 device；显示 unauthorized 要回手机重新授权）
 "$ADB" install -r app/build/outputs/apk/debug/app-debug.apk   # 装机
 "$ADB" logcat -c               # 清空旧日志
-"$ADB" logcat -v time -s ControlECO          # 实时日志：本应用全部（[Ntf] 通知 / [Page] 页面）
+"$ADB" logcat -v time -s ControlECO          # 实时日志：本应用全部（[Ntf] 通知 / [Page] 页面 / [Sms] 短信 / [Overlay] 悬浮卡 / [learn] 归类学习）
 "$ADB" logcat -v time -s ControlECO | grep Page    # 只看页面通道（页面快照/规则判定/悬浮窗原因）
 "$ADB" logcat -v time -s ControlECO > controleco.log  # 边看边存文件，方便把样本发给开发会话
 ```
