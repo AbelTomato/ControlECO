@@ -123,6 +123,8 @@ private fun NotificationSection(vm: LedgerViewModel, resumeTick: Int, onOpenNoti
         RowDivider()
         BankPushSetting(vm)
         RowDivider()
+        AmountReplySetting(vm)
+        RowDivider()
         CaptureNotifySetting(vm, resumeTick)
         RowDivider()
         SwitchRow(
@@ -232,6 +234,26 @@ private fun BankPushSetting(vm: LedgerViewModel) {
             )
         }
         Switch(checked = enabled, onCheckedChange = { vm.setBankPushEnabled(it) })
+    }
+}
+
+/** 金额待补录：方向可辨但金额缺失的通知不再丢弃，入队 0 元条目 + 通知栏直接输入金额回填 */
+@Composable
+private fun AmountReplySetting(vm: LedgerViewModel) {
+    val enabled by vm.amountReplyEnabled.collectAsStateWithLifecycle()
+    Row(
+        Modifier.padding(horizontal = 16.dp, vertical = 15.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("金额待补录", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                "金额缺失的交易进待确认队列，下拉通知栏点「输入金额」直接补录",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(checked = enabled, onCheckedChange = { vm.setAmountReplyEnabled(it) })
     }
 }
 

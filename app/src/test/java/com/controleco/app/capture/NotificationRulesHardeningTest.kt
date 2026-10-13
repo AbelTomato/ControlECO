@@ -138,4 +138,99 @@ class NotificationRulesHardeningTest {
             NotificationRules.dedupKey(NotificationRules.WECHAT, TxType.INCOME, true, 1280, postTime),
         )
     }
+
+    @Test
+    fun `dedup key can be rebuilt with a new amount`() {
+        // 金额待补录回填：只替换金额段，来源/方向/退款段与分钟桶保持不变
+        val key = NotificationRules.dedupKey(NotificationRules.WECHAT, TxType.EXPENSE, false, 0L, postTime)
+        assertEquals(
+            "com.tencent.mm|EXPENSE|1280|${postTime / 60_000}",
+            dedupKeyWithAmount(key, 1280),
+        )
+        val refundKey = NotificationRules.dedupKey(NotificationRules.ALIPAY, TxType.INCOME, true, 0L, postTime)
+        assertEquals(
+            "com.eg.android.AlipayGphone|INCOME|R|990|${postTime / 60_000}",
+            dedupKeyWithAmount(refundKey, 990),
+        )
+        // 残缺键不重算
+        assertNull(dedupKeyWithAmount("com.tencent.mm|EXPENSE", 100))
+    }
+
+    // ---------- 电商/外卖收银台（比支付三包多一道确认短语硬闸门） ----------
+
+    @Test
+    fun `checkout payment success is captured`() {
+        val r = parse("com.jingdong.app.mall", "京东", "您的订单支付成功，已支付¥59.00")!!
+        assertEquals(TxType.EXPENSE, r.type)
+        assertEquals(5900L, r.amountCents)
+        assertEquals("京东", r.sourceLabel)
+    }
+
+    @Test
+    fun `checkout pending payment is not captured`() {
+        // 未完成状态绝不能记账
+        assertNull(parse("com.jingdong.app.mall", "京东", "您有一笔订单待支付¥59.00，请尽快完成付款"))
+        assertNull(parse("com.taobao.taobao", "淘宝", "订单已提交，待付款 128.00元"))
+    }
+
+    @Test
+    fun `checkout delivery notice is not captured`() {
+        assertNull(parse("com.jingdong.app.mall", "京东", "您的包裹已发货，预计明天送达"))
+    }
+
+    @Test
+    fun `checkout marketing is not captured`() {
+        assertNull(parse("com.xunmeng.pinduoduo", "拼多多", "限时优惠券已到账，点击领取 20元券"))
+    }
+
+    @Test
+    fun `checkout packages are marked interested`() {
+        assertTrue(NotificationRules.isInterested("com.jingdong.app.mall"))
+        assertTrue(NotificationRules.isInterested(NotificationRules.WECHAT))
+        assertFalse(NotificationRules.isInterested("com.example.unknown"))
+    }
+
+    // ---------- 方向可辨但金额缺失 → 通知栏补录 ----------
+
+    @Test
+    fun `direction only expense is detected`() {
+        val hint = NotificationRules.parseDirectionOnly(NotificationRules.WECHAT, "微信支付", "已支付")!!
+        assertEquals(TxType.EXPENSE, hint.type)
+        assertEquals("微信", hint.sourceLabel)
+        assertNull(parse(NotificationRules.WECHAT, "微信支付", "已支付"))
+    }
+
+    @Test
+    fun `direction only income is detected`() {
+        val hint = NotificationRules.parseDirectionOnly(NotificationRules.UNIONPAY, "云闪付", "您的账户已到账")!!
+        assertEquals(TxType.INCOME, hint.type)
+    }
+
+    @Test
+    fun `generic service notice is not treated as a transaction`() {
+        // 没有交易确认短语就不该打扰用户
+        assertNull(NotificationRules.parseDirectionOnly(NotificationRules.WECHAT, "微信支付", "微信支付服务通知"))
+        assertNull(NotificationRules.parseDirectionOnly(NotificationRules.ALIPAY, "支付宝", "您的账单已出，请及时还款"))
+    }
+
+    @Test
+    fun `refund does not go to amount reply`() {
+        // 退款走既有的"退款关联"流程（金额常由原账单承载）
+        assertNull(NotificationRules.parseDirectionOnly(NotificationRules.WECHAT, "微信支付", "退款到账通知"))
+    }
+
+    @Test
+    fun `grouped summary does not go to amount reply`() {
+        assertNull(NotificationRules.parseDirectionOnly(NotificationRules.WECHAT, "微信支付", "[2条]微信支付: 已支付"))
+    }
+
+    @Test
+    fun `grouped summary detection helpers`() {
+        assertTrue(NotificationRules.looksLikeGroupedSummary("[2条]微信支付: 退款到账通知"))
+        assertTrue(NotificationRules.looksLikeGroupedSummary("微信支付 共3条"))
+        assertFalse(NotificationRules.looksLikeGroupedSummary("已支付¥12.80"))
+        // 账务明细判定：有方向动词 + 可解析金额
+        assertTrue(NotificationRules.looksLikeLedgerDetail("已支付¥12.80"))
+        assertFalse(NotificationRules.looksLikeLedgerDetail("微信支付服务通知"))
+    }
 }
