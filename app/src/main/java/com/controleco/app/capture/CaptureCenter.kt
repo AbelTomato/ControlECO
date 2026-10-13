@@ -421,7 +421,8 @@ object CaptureCenter {
         val captureAll = isDebugCaptureAll(isDebugBuild)
         // 银行 App 动账推送：不在支付白名单里，走「正文【银行名】签名 / 银行包名短名单」两道线索。
         // 是否真的入库要在解析通过后决定（银行 App 的营销/通知类推送极密集，未命中不入库）。
-        val bankCandidate = !interested && !captureAll && isBankPushEnabled() && isCaptureEnabled() &&
+        // 与 debug 全量记录无关：签名线索在就尝试解析，避免采样模式下银行通道失效。
+        val bankCandidate = !interested && isBankPushEnabled() && isCaptureEnabled() &&
             (BankLedgerRules.detectBankName("$title $text $bigText") != null ||
                 BankLedgerRules.bankNameOfPackage(packageName) != null)
         if (!interested && !captureAll && !bankCandidate) {
@@ -432,7 +433,20 @@ object CaptureCenter {
         scope.launch {
             try {
                 if (!interested) {
-                    handleBankPush(packageName, title, text, bigText, postTime)
+                    // 银行推送优先：签名闸门命中即走银行通道；未命中且是 debug 全量模式时，
+                    // 仍留原始快照（扩规则的样本池），否则直接丢弃
+                    if (bankCandidate && handleBankPush(packageName, title, text, bigText, postTime)) return@launch
+                    if (!captureAll) return@launch
+                    val rawOnlyId = captureDao.insert(
+                        CapturedNotificationEntity(
+                            packageName = packageName,
+                            title = title,
+                            text = text,
+                            bigText = bigText,
+                            postTime = postTime,
+                        ),
+                    )
+                    AppLog.d("Ntf", "captured #$rawOnlyId (debug all) pkg=$packageName title=[$title]")
                     return@launch
                 }
                 val rawId = captureDao.insert(
@@ -606,6 +620,7 @@ object CaptureCenter {
     /**
      * 银行 App 动账推送：与短信共用 BankLedgerRules。推送没有号码闸门，
      * 用「正文签名 + 包名短名单」两道线索；解析不通过就不落快照（营销推送不入库）。
+     * 返回 true = 命中并已走入账流程。
      */
     private suspend fun handleBankPush(
         packageName: String,
@@ -613,7 +628,7 @@ object CaptureCenter {
         text: String,
         bigText: String,
         postTime: Long,
-    ) {
+    ): Boolean {
         val body = NotificationRules.normalize(
             listOf(title, text, bigText).filter { it.isNotBlank() }.joinToString(" "),
         )
@@ -621,7 +636,7 @@ object CaptureCenter {
         val ledger = BankLedgerRules.parse(body, packageName, "通知", postTime, fallbackBankName)
         if (ledger == null) {
             AppLog.d("Ntf", "bank push not matched pkg=$packageName body=[${body.take(160)}]")
-            return
+            return false
         }
         val rawId = captureDao.insert(
             CapturedNotificationEntity(
@@ -633,6 +648,7 @@ object CaptureCenter {
             ),
         )
         enqueueBankLedger(ledger, rawId, postTime, CaptureChannel.NOTIFICATION)
+        return true
     }
 
     /** 银行动账统一入队：跨通道归并 → 自动入账 → 待确认（与通知/页面通道同一套下游） */
