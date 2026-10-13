@@ -788,6 +788,23 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
     /** 收短信权限（银行短信通道的前提） */
     fun isSmsPermissionGranted(): Boolean = CaptureCenter.hasSmsPermission()
 
+    // ---------- 悬浮确认卡 ----------
+
+    private val _overlayConfirmEnabled = MutableStateFlow(CaptureCenter.isOverlayConfirmEnabled())
+    val overlayConfirmEnabled: StateFlow<Boolean> = _overlayConfirmEnabled
+
+    fun setOverlayConfirmEnabled(enabled: Boolean) {
+        CaptureCenter.setOverlayConfirmEnabled(enabled)
+        _overlayConfirmEnabled.value = enabled
+    }
+
+    /** 悬浮窗权限（悬浮确认卡的前提；未授权自动回落通知） */
+    fun isOverlayGranted(): Boolean = CaptureCenter.canDrawOverlays()
+
+    /** debug：弹一张样例确认卡（立即/延迟；不落库） */
+    fun showOverlayTest(delayMs: Long = 0, onResult: (String) -> Unit) =
+        CaptureCenter.showOverlayTest(delayMs, onResult)
+
     private val _autoUpdateEnabled = MutableStateFlow(AppUpdate.isAutoUpdateEnabled(getApplication()))
     val autoUpdateEnabled: StateFlow<Boolean> = _autoUpdateEnabled
 

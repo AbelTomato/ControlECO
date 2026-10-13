@@ -5,8 +5,13 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.provider.Settings
 import com.controleco.app.AccBookApp
 import com.controleco.app.BuildConfig
+import com.controleco.app.capture.overlay.ConfirmCardWindow
+import com.controleco.app.capture.overlay.OVERLAY_DELAY_MS
+import com.controleco.app.capture.overlay.OverlayConditions
+import com.controleco.app.capture.overlay.shouldShowOverlay
 import com.controleco.app.data.db.AccountDao
 import com.controleco.app.data.db.AccountEntity
 import com.controleco.app.data.db.CaptureChannel
@@ -30,9 +35,12 @@ import com.controleco.app.util.Money
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
 
 /**
  * 采集中心：通知监听、无障碍页面、银行动账短信三条通道的唯一入口。
@@ -58,6 +66,7 @@ object CaptureCenter {
     private const val KEY_TRACE_ENABLED = "capture_trace_enabled"
     private const val KEY_BANK_PUSH_ENABLED = "bank_push_enabled"
     private const val KEY_SMS_CAPTURE_ENABLED = "sms_capture_enabled"
+    private const val KEY_OVERLAY_CONFIRM_ENABLED = "overlay_confirm_enabled"
 
     /** 点击通知跳转的路由（MainActivity intent extra） */
     const val EXTRA_ROUTE = "controleco.route"
@@ -105,6 +114,14 @@ object CaptureCenter {
     private val _lastEventAt = MutableStateFlow(0L)
     val lastEventAt: StateFlow<Long> = _lastEventAt
 
+    /** 本应用是否在前台（MainActivity onResume/onPause 维护）：前台时不弹悬浮卡，用应用内列表 */
+    @Volatile
+    private var appInForeground = false
+
+    /** 无障碍服务跟踪到的当前前台应用包名（未开无障碍时为 null）：悬浮卡的前台匹配用 */
+    @Volatile
+    private var foregroundPackage: String? = null
+
     fun init(context: Context) {
         appContext = context.applicationContext
         val db = (appContext as AccBookApp).db
@@ -114,6 +131,7 @@ object CaptureCenter {
         categoryDao = db.categoryDao()
         accountDao = db.accountDao()
         traceDao = db.traceDao()
+        ConfirmCardWindow.init(appContext)
         createNotificationChannel()
         cleanup()
     }
@@ -173,14 +191,22 @@ object CaptureCenter {
     /** 待确认入账通知的确定性 id（同一笔被处理时按 id 撤销通知） */
     private fun pendingNotifId(dedupKey: String): Int = "pending|$dedupKey".hashCode()
 
+    /** 撤销捕获提醒通知（卡片里确认/忽略后调用；通知没发过则静默失败） */
+    private fun cancelCaptureNotification(notifId: Int) {
+        runCatching {
+            androidx.core.app.NotificationManagerCompat.from(appContext).cancel(NOTIF_TAG, notifId)
+        }.onFailure { AppLog.w("Ntf", "cancel notification failed", it) }
+    }
+
     private fun pendingNotifText(sourceLabel: String, amountCents: Long, counterparty: String): String =
         "$sourceLabel ${Money.formatYuan(amountCents)}" +
             (if (counterparty.isNotBlank()) " · $counterparty" else "") +
             " · 点击确认入账"
 
     /**
-     * 捕获入队后的提醒：发一条横幅通知（IMPORTANCE_HIGH），点击进待确认队列。
-     * 确定化 id（pending|dedupKey），同一笔在待确认里被处理时可直接撤销对应通知。
+     * 捕获入队后的提醒（卡片/通知互斥）：
+     * 能弹悬浮确认卡就弹卡（人还在支付页，改完一键入账），否则回落横幅通知
+     * （IMPORTANCE_HIGH，点击进待确认队列）。两条路径的确定化 id 一致，同一笔处理时可直接撤销。
      */
     private suspend fun announceCapture(
         type: TxType,
@@ -193,8 +219,26 @@ object CaptureCenter {
         ruleName: String,
         txTime: Long?,
         note: String,
+        pendingId: Long = -1L,
     ) {
-        val notifId = pendingNotifId(dedupKey)
+        if (pendingId > 0) {
+            val pending = pendingDao.getById(pendingId)
+            if (pending != null && tryShowConfirmCard(pending, type, isRefund, sourceLabel, counterparty, dedupKey)) {
+                return
+            }
+        }
+        postPendingNotification(type, isRefund, amountCents, sourceLabel, counterparty, dedupKey)
+    }
+
+    /** 横幅通知（卡片不可用/收起后的兜底提醒；「已自动入账」等其它提醒另走 postCaptureNotification） */
+    private fun postPendingNotification(
+        type: TxType,
+        isRefund: Boolean,
+        amountCents: Long,
+        sourceLabel: String,
+        counterparty: String,
+        dedupKey: String,
+    ) {
         val kind = when {
             isRefund -> "退款"
             type == TxType.EXPENSE -> "支出"
@@ -204,8 +248,208 @@ object CaptureCenter {
             "捕获到一笔$kind",
             pendingNotifText(sourceLabel, amountCents, counterparty),
             ROUTE_PENDING,
-            notifId,
+            pendingNotifId(dedupKey),
         )
+    }
+
+    // ---------- 悬浮确认卡（卡片/通知互斥） ----------
+
+    /** 悬浮确认卡开关（默认开：授权了悬浮窗权限才生效，未授权自动回落通知） */
+    fun isOverlayConfirmEnabled(): Boolean = prefs().getBoolean(KEY_OVERLAY_CONFIRM_ENABLED, true)
+
+    fun setOverlayConfirmEnabled(enabled: Boolean) {
+        prefs().edit().putBoolean(KEY_OVERLAY_CONFIRM_ENABLED, enabled).apply()
+        if (!enabled) mainHandler.post { ConfirmCardWindow.dismissAll() }
+        AppLog.i("Overlay", "overlayConfirmEnabled=$enabled")
+    }
+
+    fun canDrawOverlays(): Boolean = initialized && Settings.canDrawOverlays(appContext)
+
+    /** MainActivity 前台变化：进入前台立即收起卡片（应用内用待确认列表，卡片悬在本应用上会挡操作） */
+    fun setAppForeground(foreground: Boolean) {
+        appInForeground = foreground
+        if (foreground) mainHandler.post { ConfirmCardWindow.dismissAll() }
+    }
+
+    /** 通知点击进入应用时收起卡片（同 setAppForeground，兜底路由入口） */
+    fun onRouteOpened(route: String) {
+        AppLog.d("Overlay", "route opened: $route")
+        mainHandler.post { ConfirmCardWindow.dismissAll() }
+    }
+
+    /** 无障碍服务上报前台应用（悬浮卡只在"人还在支付页"时弹） */
+    fun noteForegroundPackage(packageName: String) {
+        foregroundPackage = packageName
+    }
+
+    /** 卡片显示条件（每次弹出前重新判定：延迟期间用户可能已锁屏/切走/进入本应用） */
+    private fun overlayConditionsOk(sourcePackage: String): Boolean {
+        val pm = appContext.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+        val km = appContext.getSystemService(Context.KEYGUARD_SERVICE) as android.app.KeyguardManager
+        return shouldShowOverlay(
+            OverlayConditions(
+                enabled = isOverlayConfirmEnabled(),
+                canDrawOverlays = Settings.canDrawOverlays(appContext),
+                appInForeground = appInForeground,
+                screenInteractive = pm.isInteractive,
+                keyguardLocked = km.isKeyguardLocked,
+                foregroundPackage = foregroundPackage,
+                sourcePackage = sourcePackage,
+            ),
+        )
+    }
+
+    /**
+     * 尝试弹确认卡。返回 true = 卡片已展示（本次不再发通知）。
+     * 延迟 [OVERLAY_DELAY_MS] 再弹：支付保护层在支付页停留期会拦截悬浮窗（阶段三旧结论），
+     * 延迟后重新判定条件与条目（可能已被确认/丢弃）；`addView` 失败同样回落通知。
+     */
+    private suspend fun tryShowConfirmCard(
+        pending: PendingTransactionEntity,
+        type: TxType,
+        isRefund: Boolean,
+        sourceLabel: String,
+        counterparty: String,
+        dedupKey: String,
+    ): Boolean {
+        if (!overlayConditionsOk(pending.sourcePackage)) return false
+        delay(OVERLAY_DELAY_MS)
+        if (!overlayConditionsOk(pending.sourcePackage)) return false
+        // 延迟期间条目可能已被确认/丢弃/被同笔富化改写（dedupKey 变化即视为已处理）
+        val fresh = pendingDao.getById(pending.id) ?: return false
+        if (fresh.dedupKey != dedupKey) return false
+        val categories = categoryDao.getAll()
+        val accounts = accountDao.getAll()
+        val shown = showCardOnMain(fresh, categories, accounts, isRefund, sourceLabel, counterparty, dedupKey)
+        AppLog.i("Overlay", if (shown) "confirm card shown for #${pending.id}" else "confirm card unavailable, fallback to notification")
+        return shown
+    }
+
+    /** WindowManager 必须在主线程操作；DAO 数据已在 IO 侧取好 */
+    private suspend fun showCardOnMain(
+        pending: PendingTransactionEntity,
+        categories: List<com.controleco.app.data.db.CategoryEntity>,
+        accounts: List<com.controleco.app.data.db.AccountEntity>,
+        isRefund: Boolean,
+        sourceLabel: String,
+        counterparty: String,
+        dedupKey: String,
+    ): Boolean = suspendCancellableCoroutine { cont ->
+        mainHandler.post {
+            val shown = ConfirmCardWindow.showConfirm(
+                pending = pending,
+                categories = categories,
+                accounts = accounts,
+                onConfirm = { amountCents, categoryId, accountId, counterpartyText ->
+                    mainHandler.post { ConfirmCardWindow.dismissConfirm() }
+                    scope.launch { confirmFromOverlay(pending, amountCents, categoryId, accountId, counterpartyText) }
+                },
+                onIgnore = {
+                    mainHandler.post { ConfirmCardWindow.dismissConfirm() }
+                    scope.launch { ignoreFromOverlay(pending.id, pending.dedupKey) }
+                },
+                onCollapse = {
+                    // 收起 = 保留待确认 + 补发通知（不丢单）
+                    AppLog.i("Overlay", "card collapsed, fallback to notification")
+                    postPendingNotification(pending.type, isRefund, pending.amountCents, sourceLabel, counterparty, dedupKey)
+                },
+            )
+            if (cont.isActive) cont.resume(shown)
+        }
+    }
+
+    /** 卡片确认入账：写账 + 撤销细条 + 撤销即删除该笔 */
+    private suspend fun confirmFromOverlay(
+        pending: PendingTransactionEntity,
+        amountCents: Long,
+        categoryId: Long,
+        accountId: Long,
+        counterparty: String,
+    ) {
+        val txId = try {
+            PendingActions.confirm(txDao, pendingDao, pending, categoryId, accountId, counterparty, amountCents)
+        } catch (e: Exception) {
+            AppLog.e("Overlay", "confirm from overlay failed", e)
+            toast("入账失败：${e.message ?: "未知错误"}")
+            return
+        }
+        cancelCaptureNotification(pendingNotifId(pending.dedupKey))
+        val kindType = pending.type
+        toast("已记入")
+        if (txId == null) return // 已入过账（重复通知/双通道竞态）
+        mainHandler.post {
+            ConfirmCardWindow.showSaved(kindType, amountCents) {
+                scope.launch {
+                    runCatching { txDao.deleteById(txId) }
+                        .onSuccess { AppLog.i("Overlay", "undo confirmed entry tx=#$txId") }
+                        .onFailure { AppLog.w("Overlay", "undo failed", it) }
+                    toast("已撤销")
+                }
+            }
+        }
+    }
+
+    /** 卡片「忽略」：丢弃待确认条目（误报纠错，一条点击） */
+    private suspend fun ignoreFromOverlay(pendingId: Long, dedupKey: String) {
+        PendingActions.discard(pendingDao, pendingId)
+        cancelCaptureNotification(pendingNotifId(dedupKey))
+        AppLog.i("Overlay", "ignored from card #$pendingId")
+    }
+
+    /** 条目被后续捕获富化后刷新卡片（用户已改过的字段由卡片状态自行保护） */
+    private suspend fun refreshCardIfShowing(pendingId: Long) {
+        if (ConfirmCardWindow.showingPendingId != pendingId) return
+        val fresh = pendingDao.getById(pendingId) ?: return
+        val categories = categoryDao.getAll()
+        val accounts = accountDao.getAll()
+        mainHandler.post { ConfirmCardWindow.updatePending(fresh, categories, accounts) }
+    }
+
+    /** debug：立即或延迟弹一张样例卡片（配置页开发者功能用；不落库） */
+    fun showOverlayTest(delayMs: Long, onResult: (String) -> Unit) {
+        if (!initialized) return
+        if (!isOverlayConfirmEnabled()) {
+            onResult("「悬浮确认卡」开关未开：设置 → 权限 → 悬浮确认卡")
+            return
+        }
+        if (!Settings.canDrawOverlays(appContext)) {
+            onResult("未授权悬浮窗权限：设置 → 权限 → 悬浮确认卡 → 去授权")
+            return
+        }
+        scope.launch {
+            val categories = categoryDao.getAll()
+            val accounts = accountDao.getAll()
+            if (delayMs > 0) delay(delayMs)
+            mainHandler.post {
+                val sample = PendingTransactionEntity(
+                    id = -1L,
+                    type = TxType.EXPENSE,
+                    amountCents = 1L,
+                    timestamp = System.currentTimeMillis(),
+                    counterparty = "测试商户（样例，不入账）",
+                    note = "悬浮确认卡测试",
+                    sourcePackage = NotificationRules.WECHAT,
+                    ruleName = "微信·支出/消费（测试）",
+                    dedupKey = "overlay-test",
+                )
+                val shown = ConfirmCardWindow.showConfirm(
+                    pending = sample,
+                    categories = categories,
+                    accounts = accounts,
+                    onConfirm = { _, _, _, _ ->
+                        mainHandler.post { ConfirmCardWindow.dismissConfirm() }
+                        toast("测试卡片：未入账")
+                    },
+                    onIgnore = {
+                        mainHandler.post { ConfirmCardWindow.dismissConfirm() }
+                        toast("测试卡片：已忽略")
+                    },
+                    onCollapse = { toast("测试卡片：已收起") },
+                )
+                // Toast 是系统级窗口不受支付保护层拦截：Toast 可见而卡片不可见 = 卡片被系统/支付保护层拦截
+                toast(if (shown) "悬浮确认卡已弹出（若看不到，看本 Toast：卡片被支付保护层拦截）" else "卡片弹不出来：检查悬浮窗权限/支付保护")
+            }
+        }
     }
 
     fun markConnected(connected: Boolean) {
@@ -530,7 +774,7 @@ object CaptureCenter {
                     )
                     return@launch
                 }
-                pendingDao.insert(
+                val pendingId = pendingDao.insert(
                     PendingTransactionEntity(
                         type = parsed.type,
                         amountCents = parsed.amountCents,
@@ -572,6 +816,7 @@ object CaptureCenter {
                     ruleName = parsed.ruleName,
                     txTime = null,
                     note = parsed.note,
+                    pendingId = pendingId,
                 )
             } catch (e: Exception) {
                 AppLog.e("Ntf", "capture handling failed", e)
@@ -665,6 +910,8 @@ object CaptureCenter {
         val related = findCrossChannelPending(ledger, sourceAt)
         if (related != null) {
             mergeBankInfoIntoPending(related, ledger)
+            // 同笔的悬浮卡正在展示时同步刷新（银行侧只补账户线索，卡片可见）
+            refreshCardIfShowing(related.id)
             captureDao.updateMatch(rawId, ledger.ruleName + "·并入待确认", true)
             traceCapture(
                 channel = channel,
@@ -722,7 +969,7 @@ object CaptureCenter {
             return
         }
 
-        pendingDao.insert(
+        val bankPendingId = pendingDao.insert(
             PendingTransactionEntity(
                 type = ledger.type,
                 amountCents = ledger.amountCents,
@@ -768,6 +1015,7 @@ object CaptureCenter {
             ruleName = ledger.ruleName,
             txTime = sourceAt,
             note = ledger.note,
+            pendingId = bankPendingId,
         )
     }
 
@@ -985,6 +1233,8 @@ object CaptureCenter {
                         dedupKey = related.pending.dedupKey,
                         outcome = TraceOutcome.MERGED_PAGE,
                     )
+                    // 页面富化：若同笔的悬浮卡正在展示，同步刷新卡片内容
+                    refreshCardIfShowing(related.pending.id)
                     // 页面富化无需再次提醒：同笔通知在入队时已发出，这里只更新待确认数据
                     return@launch
                 }
@@ -1024,7 +1274,7 @@ object CaptureCenter {
                     return@launch
                 }
 
-                pendingDao.insert(
+                val pendingId = pendingDao.insert(
                     PendingTransactionEntity(
                         type = parsed.type,
                         amountCents = parsed.amountCents,
@@ -1065,6 +1315,7 @@ object CaptureCenter {
                     ruleName = parsed.ruleName,
                     txTime = parsed.txTime,
                     note = parsed.note,
+                    pendingId = pendingId,
                 )
             } catch (e: Exception) {
                 AppLog.e("Page", "page capture handling failed", e)
@@ -1094,6 +1345,12 @@ object CaptureCenter {
         val accountId = CaptureDefaults.accountId(accountDao.getAll(), sourcePackage, bankName)
         if (categoryId == null || accountId == null) {
             AppLog.w("Ntf", "auto entry skipped (no category/account to use)")
+            return false
+        }
+        // 重复预检（±60s 数据库校验）：同来源+同方向+同金额在窗口内已有条目（待确认或自动入账）
+        // → 不静默入账，回落"入队 + 提醒"（重复通知/分钟边界重发不会造成双记账，用户仍看得到这笔）
+        if (hasRecentSameEntry(pendingDao.getMergeable(), sourcePackage, type, amountCents, System.currentTimeMillis())) {
+            AppLog.i("Ntf", "auto entry skipped (recent same entry) $sourcePackage $type ${Money.formatYuan(amountCents)}")
             return false
         }
         return try {

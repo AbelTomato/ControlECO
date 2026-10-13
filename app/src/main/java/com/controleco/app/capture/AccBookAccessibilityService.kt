@@ -94,6 +94,10 @@ class AccBookAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
         val pkg = event.packageName?.toString() ?: return
+        // 前台应用跟踪（悬浮确认卡只在"人还在支付页"时弹）：只记窗口级事件，噪音小
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && pkg != packageName) {
+            CaptureCenter.noteForegroundPackage(pkg)
+        }
         // 包名过滤（config 不限包名，运行时判断）：只收微信/支付宝，
         // 「捕获所有页面（调试）」开启时放行其他应用（采样支付页）；本应用自己的页面不采
         val debugAllPages = CaptureCenter.isDebugCaptureAllPages(BuildConfig.DEBUG) && pkg != packageName
