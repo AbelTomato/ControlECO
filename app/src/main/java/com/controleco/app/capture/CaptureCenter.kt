@@ -68,6 +68,8 @@ object CaptureCenter {
     private const val KEY_SMS_CAPTURE_ENABLED = "sms_capture_enabled"
     private const val KEY_OVERLAY_CONFIRM_ENABLED = "overlay_confirm_enabled"
     private const val KEY_AMOUNT_REPLY_ENABLED = "amount_reply_enabled"
+    private const val KEY_NEEDS_REAUTH = "needs_reauth_after_update"
+    private const val KEY_LAST_VERSION_CODE = "last_version_code"
 
     /** 点击通知跳转的路由（MainActivity intent extra） */
     const val EXTRA_ROUTE = "controleco.route"
@@ -694,6 +696,54 @@ object CaptureCenter {
         _connected.value = connected
         AppLog.i("Ntf", "listener connected=$connected")
     }
+
+    /**
+     * 收到通知即证明监听活着（进程被杀后状态可能显示未连接/假死）：直接自愈为已连接，
+     * 修掉"状态显示已连接但实际假死"与"实际活着而状态为假"两类误报。
+     */
+    fun markAliveFromNotification() {
+        if (!_connected.value) {
+            _connected.value = true
+            AppLog.i("Ntf", "listener self-healed (notification received)")
+        }
+    }
+
+    /** 监听重连成功：清掉"更新后需重新授权"提示 */
+    fun onListenerHealthy() {
+        if (isReauthNeeded()) {
+            clearReauthNeeded()
+            AppLog.i("Ntf", "reauth flag cleared (listener healthy)")
+        }
+    }
+
+    // ---------- 更新后需重新授权提示（MIUI 等 ROM 更新应用后通知使用权会静默失效） ----------
+
+    fun isReauthNeeded(): Boolean = initialized && prefs().getBoolean(KEY_NEEDS_REAUTH, false)
+
+    private fun setReauthNeeded(needed: Boolean) {
+        prefs().edit().putBoolean(KEY_NEEDS_REAUTH, needed).apply()
+    }
+
+    fun clearReauthNeeded() = setReauthNeeded(false)
+
+    /**
+     * 覆盖安装后调用（PackageReplacedReceiver）：versionCode 变化即视为"应用更新了"，
+     * 若通知监听有授权则提示复查——系统不保证更新后监听仍被绑定（小米系尤为常见）。
+     */
+    fun checkAppUpdated(versionCode: Int) {
+        if (!initialized) return
+        val last = prefs().getInt(KEY_LAST_VERSION_CODE, 0)
+        if (last == versionCode) return
+        prefs().edit().putInt(KEY_LAST_VERSION_CODE, versionCode).apply()
+        if (last != 0 && wasListenerGranted()) {
+            setReauthNeeded(true)
+            AppLog.w("Ntf", "app updated ($last -> $versionCode), reauth hint set")
+        }
+    }
+
+    private fun wasListenerGranted(): Boolean =
+        androidx.core.app.NotificationManagerCompat.getEnabledListenerPackages(appContext)
+            .contains(appContext.packageName)
 
     fun markA11yConnected(connected: Boolean) {
         _a11yConnected.value = connected
@@ -1400,7 +1450,9 @@ object CaptureCenter {
 
         scope.launch {
             try {
+                // 支出方向优先（支付成功页/账单详情页），没有则试收入方向（转账收款/红包/收款到账）
                 val parsed = PageRules.parse(packageName, texts, capturedAt)
+                    ?: PageRules.parseIncome(packageName, texts, capturedAt)
                 // 感兴趣的页面（或调试全量）才落快照，聊天/朋友圈等噪音不进捕获日志
                 if (parsed == null && !captureAll && !PageRules.looksInteresting(texts)) {
                     AppLog.d("Page", "skip (not interesting) pkg=$packageName nodes=${texts.size}")

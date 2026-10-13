@@ -15,20 +15,47 @@ import com.controleco.app.util.AppLog
  */
 class NotificationCaptureService : NotificationListenerService() {
 
+    /**
+     * 分级重连的延迟档位：0 / 1.5s / 6s——进程被杀后系统未必自动重连，
+     * 多打几拍把监听拉回来（`requestRebind` 是官方允许的软重连方式，不做禁用/启用组件的硬重启）。
+     */
+    private val rebindHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var rebindAttempt = 0
+
     override fun onListenerConnected() {
         super.onListenerConnected()
+        rebindAttempt = 0
         CaptureCenter.markConnected(true)
+        CaptureCenter.onListenerHealthy()
     }
 
     override fun onListenerDisconnected() {
         super.onListenerDisconnected()
         CaptureCenter.markConnected(false)
-        AppLog.w("Ntf", "listener disconnected, requesting rebind")
-        runCatching { requestRebind(ComponentName(this, NotificationCaptureService::class.java)) }
+        AppLog.w("Ntf", "listener disconnected, requesting rebind (attempt=${rebindAttempt + 1})")
+        scheduleStaggeredRebind()
+    }
+
+    private fun scheduleStaggeredRebind() {
+        val delays = REBIND_DELAYS
+        if (rebindAttempt >= delays.size) {
+            AppLog.w("Ntf", "rebind attempts exhausted (${delays.size})")
+            return
+        }
+        val delay = delays[rebindAttempt]
+        rebindAttempt++
+        rebindHandler.postDelayed({
+            if (CaptureCenter.connected.value) return@postDelayed
+            AppLog.i("Ntf", "rebind attempt #$rebindAttempt delay=$delay")
+            runCatching { requestRebind(ComponentName(this, NotificationCaptureService::class.java)) }
+            scheduleStaggeredRebind()
+        }, delay)
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         if (sbn.packageName == packageName) return
+        // 收到通知本身就是"监听活着"的铁证（状态显示已连接但实际假死的情况由此自愈）
+        CaptureCenter.markAliveFromNotification()
         val snapshot = snapshotOf(sbn)
         var title = snapshot.title
         var text = snapshot.mergedText()
@@ -66,8 +93,7 @@ class NotificationCaptureService : NotificationListenerService() {
     }
 
     /** 一条通知的文本快照（与 GroupNotificationResolver 的纯数据类共用同一形态） */
-    private fun snapshotOf(sbn: StatusBarNotification): NotificationText {
-        val extras = sbn.notification.extras
+    private fun snapshotOf(sbn: StatusBarNotification): NotificationText {        val extras = sbn.notification.extras
         val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim().orEmpty()
         val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim().orEmpty()
         val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()?.trim().orEmpty()
@@ -100,5 +126,10 @@ class NotificationCaptureService : NotificationListenerService() {
             bigText = bigText,
             ticker = sbn.notification.tickerText?.toString()?.trim().orEmpty(),
         )
+    }
+
+    private companion object {
+        /** 分级重连延迟档位（毫秒）：立刻 / 1.5s / 6s */
+        val REBIND_DELAYS = longArrayOf(0L, 1_500L, 6_000L)
     }
 }

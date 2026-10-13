@@ -1,6 +1,7 @@
 package com.controleco.app.capture
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -77,5 +78,29 @@ class CapturePermissionsTest {
         assertEquals("通知权限", CapturePermission.NOTIFY.label)
         assertEquals("短信权限", CapturePermission.SMS.label)
         assertEquals("悬浮窗", CapturePermission.OVERLAY.label)
+    }
+
+    @Test
+    fun `无障碍启用判定同时接受长短组件名`() {
+        // 系统回写的形态可能是长组件名或短形态（pkg/.Class）——只比长名会误报"未开启"
+        val long = "com.controleco.app/com.controleco.app.capture.AccBookAccessibilityService"
+        val short = "com.controleco.app/.capture.AccBookAccessibilityService"
+        assertTrue(
+            AccBookAccessibilityService.a11yEnabledFromSetting(
+                "hello.litiaotiao.app/.LttService:$long", long, short,
+            ),
+        )
+        assertTrue(
+            AccBookAccessibilityService.a11yEnabledFromSetting(
+                "hello.litiaotiao.app/.LttService:$short", long, short,
+            ),
+        )
+        assertFalse(
+            AccBookAccessibilityService.a11yEnabledFromSetting(
+                "hello.litiaotiao.app/.LttService", long, short,
+            ),
+        )
+        assertFalse(AccBookAccessibilityService.a11yEnabledFromSetting(null, long, short))
+        assertFalse(AccBookAccessibilityService.a11yEnabledFromSetting("", long, short))
     }
 }

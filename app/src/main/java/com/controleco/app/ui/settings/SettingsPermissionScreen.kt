@@ -103,6 +103,7 @@ private fun NotificationSection(vm: LedgerViewModel, resumeTick: Int, onOpenNoti
     val granted = remember(resumeTick) { vm.isListenerGranted() }
     val captureEnabled by vm.captureEnabled.collectAsStateWithLifecycle()
     val refundLinkEnabled by vm.refundLinkEnabled.collectAsStateWithLifecycle()
+    val reeauthNeeded = remember(resumeTick) { vm.isReauthNeeded() }
 
     SectionTitle("通知监听")
     PaneCard {
@@ -114,6 +115,21 @@ private fun NotificationSection(vm: LedgerViewModel, resumeTick: Int, onOpenNoti
             actionText = "去开启",
             onAction = onOpenNotificationAccess,
         )
+        if (reeauthNeeded) {
+            RowDivider()
+            Row(
+                Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "应用刚更新过：通知监听可能已被系统静默关闭，若收不到动账请重新开关一次授权。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.accBook.warning,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = onOpenNotificationAccess) { Text("去检查") }
+            }
+        }
         RowDivider()
         SwitchRow(
             title = "自动记录收款/动账通知",

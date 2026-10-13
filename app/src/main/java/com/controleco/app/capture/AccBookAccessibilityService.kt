@@ -1,6 +1,7 @@
 package com.controleco.app.capture
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -10,6 +11,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityManager
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import com.controleco.app.BuildConfig
@@ -44,14 +46,42 @@ class AccBookAccessibilityService : AccessibilityService() {
         fun serviceComponent(context: Context): ComponentName =
             ComponentName(context, AccBookAccessibilityService::class.java)
 
-        /** 系统无障碍设置中是否已开启本服务（安卓 13+ 侧载需先「允许受限制的设置」才出现在列表里） */
+        /**
+         * 系统无障碍设置中是否已开启本服务（安卓 13+ 侧载需先「允许受限制的设置」才出现在列表里）。
+         * **双源检测**：AccessibilityManager 的已启用服务列表 + Settings.Secure 字符串。
+         * 只读 Settings 会在系统回写短组件名（`pkg/.Class` 与 `pkg/full.Class` 两种形态）时误报"未开启"
+         * （自研原型踩过的坑，见 docs/自动记账捕获机制.md）。
+         */
         fun isEnabled(context: Context): Boolean {
+            val component = serviceComponent(context)
+            val am = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as? AccessibilityManager
+            val fromManager = am?.getEnabledAccessibilityServiceList(
+                AccessibilityServiceInfo.FEEDBACK_ALL_MASK,
+            )?.any { it.resolveInfo?.serviceInfo?.let { si ->
+                ComponentName(si.packageName, si.name) == component
+            } == true } == true
+            if (fromManager) return true
             val enabled = Settings.Secure.getString(
                 context.contentResolver,
                 Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
-            ) ?: return false
-            val me = serviceComponent(context).flattenToString()
-            return enabled.split(':').any { it.trim().equals(me, ignoreCase = true) }
+            )
+            return a11yEnabledFromSetting(
+                enabled,
+                longName = component.flattenToString(),
+                shortName = component.flattenToShortString(),
+            )
+        }
+
+        /**
+         * Settings 字符串里的启用判定（纯函数便于单测）：系统写入的可能是长组件名
+         * （`pkg/full.Class`）也可能是短形态（`pkg/.Class`），两种都要比对。
+         */
+        internal fun a11yEnabledFromSetting(value: String?, longName: String, shortName: String): Boolean {
+            if (value.isNullOrBlank()) return false
+            return value.split(':').any { entry ->
+                val trimmed = entry.trim()
+                trimmed.equals(longName, ignoreCase = true) || trimmed.equals(shortName, ignoreCase = true)
+            }
         }
     }
 

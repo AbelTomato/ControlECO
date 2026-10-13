@@ -744,6 +744,9 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
         return NotificationManagerCompat.getEnabledListenerPackages(app).contains(app.packageName)
     }
 
+    /** 覆盖安装后系统可能静默关闭通知监听：权限页据此显示复查提示（监听重连后自动清除） */
+    fun isReauthNeeded(): Boolean = CaptureCenter.isReauthNeeded()
+
     private val _refundLinkEnabled = MutableStateFlow(CaptureCenter.isRefundLinkEnabled())
     val refundLinkEnabled: StateFlow<Boolean> = _refundLinkEnabled
 
