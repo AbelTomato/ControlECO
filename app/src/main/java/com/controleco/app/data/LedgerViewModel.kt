@@ -13,6 +13,7 @@ import com.controleco.app.capture.AccBookAccessibilityService
 import com.controleco.app.capture.CaptureCenter
 import com.controleco.app.capture.CaptureDefaults
 import com.controleco.app.capture.NotificationRules
+import com.controleco.app.capture.PendingActions
 import com.controleco.app.csv.BillParsers
 import com.controleco.app.data.db.AccountBalanceRow
 import com.controleco.app.data.db.AccountEntity
@@ -743,6 +744,9 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
         return NotificationManagerCompat.getEnabledListenerPackages(app).contains(app.packageName)
     }
 
+    /** 覆盖安装后系统可能静默关闭通知监听：权限页据此显示复查提示（监听重连后自动清除） */
+    fun isReauthNeeded(): Boolean = CaptureCenter.isReauthNeeded()
+
     private val _refundLinkEnabled = MutableStateFlow(CaptureCenter.isRefundLinkEnabled())
     val refundLinkEnabled: StateFlow<Boolean> = _refundLinkEnabled
 
@@ -874,8 +878,32 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
 
     fun discardPending(id: Long) {
         viewModelScope.launch(Dispatchers.IO) {
-            pendingDao.deleteById(id)
-            AppLog.i("pending", "discarded #$id")
+            PendingActions.discard(pendingDao, id)
+        }
+    }
+
+    // ---------- 金额待补录 ----------
+
+    private val _amountReplyEnabled = MutableStateFlow(CaptureCenter.isAmountReplyEnabled())
+    val amountReplyEnabled: StateFlow<Boolean> = _amountReplyEnabled
+
+    fun setAmountReplyEnabled(enabled: Boolean) {
+        CaptureCenter.setAmountReplyEnabled(enabled)
+        _amountReplyEnabled.value = enabled
+    }
+
+    /**
+     * 待确认列表里补录金额（0 元占位条）：重算去重键；同笔完整捕获已到则占位条退场。
+     * 回调带说明文本（失败/已处理），供 UI 提示。
+     */
+    fun setPendingAmount(id: Long, amountCents: Long, onDone: (String?) -> Unit = {}) {
+        CaptureCenter.applyPendingAmount(id, amountCents) { result ->
+            val message = when (result) {
+                is CaptureCenter.AmountUpdateResult.Ok -> null
+                CaptureCenter.AmountUpdateResult.NotFound -> "这条已处理过（同笔的完整记录已到）"
+                CaptureCenter.AmountUpdateResult.Invalid -> "金额无效，请重新输入"
+            }
+            onDone(message)
         }
     }
 
@@ -885,30 +913,20 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
         accountId: Long,
         counterparty: String = item.counterparty,
     ) {
+        // 金额待补条（0 元）不能直接入账：先在列表里补金额
+        if (item.amountCents <= 0) {
+            AppLog.w("pending", "confirm rejected (amount missing) #${item.id}")
+            return
+        }
         viewModelScope.launch(Dispatchers.IO) {
-            val externalId = "NTF:${item.dedupKey}"
-            txDao.insert(
-                TransactionEntity(
-                    type = item.type,
-                    amountCents = item.amountCents,
-                    categoryId = categoryId,
-                    accountId = accountId,
-                    timestamp = item.timestamp,
-                    note = item.note.ifBlank { item.ruleName },
-                    counterparty = counterparty.trim().ifBlank { item.counterparty },
-                    source = CaptureDefaults.txSource(item.sourcePackage),
-                    externalId = externalId,
-                    refundMark = item.refundMark,
-                ),
-            )
-            pendingDao.deleteById(item.id)
-            AppLog.i("pending", "confirmed #${item.id} externalId=$externalId")
+            PendingActions.confirm(txDao, pendingDao, item, categoryId, accountId, counterparty)
         }
     }
 
     fun confirmAllPending() {
         viewModelScope.launch(Dispatchers.IO) {
-            val items = pendingDao.getAllPending()
+            // 只确认金额完整的条目；金额待补的必须逐条补录或丢弃
+            val items = pendingDao.getAllPending().filter { it.amountCents > 0 }
             if (items.isEmpty()) return@launch
             val cats = categoryDao.getAll()
             val accs = accountDao.getAll()

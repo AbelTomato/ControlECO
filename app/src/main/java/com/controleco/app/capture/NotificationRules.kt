@@ -33,10 +33,40 @@ object NotificationRules {
 
     val knownPackages = setOf(WECHAT, ALIPAY, UNIONPAY)
 
+    /**
+     * 电商/外卖收银台渠道（京东、淘宝、拼多多、抖音、美团…）。
+     *
+     * 为什么单独一组：这些都是真实付款渠道，但**营销与物流推送极其密集**，文案随版本变化大。
+     * 所以它们比支付三包多一道**硬闸门**——必须命中明确的交易确认短语才解析
+     * （"支付成功¥59.00"✓ / "您有一笔订单待支付¥59.00"✗），
+     * 把"待支付/待付款/订单已提交"这类**未完成状态**挡在外面。
+     * 包名清单只做"值得看一眼"的筛选，正文确认短语才是闸门。
+     */
+    val checkoutPackages: Map<String, String> = mapOf(
+        "com.jingdong.app.mall" to "京东",
+        "com.jd.jr.jdpay" to "京东支付",
+        "com.jd.jrapp" to "京东金融",
+        "com.taobao.taobao" to "淘宝",
+        "com.tmall.wireless" to "天猫",
+        "com.xunmeng.pinduoduo" to "拼多多",
+        "com.ss.android.ugc.aweme" to "抖音",
+        "com.ss.android.ugc.live" to "抖音",
+        "com.sankuai.meituan" to "美团",
+        "com.sankuai.meituan.takeaway" to "美团外卖",
+        "me.ele" to "饿了么",
+    )
+
+    fun isCheckoutPackage(packageName: String): Boolean = packageName in checkoutPackages
+
+    /** 是否为本引擎负责的来源：支付三包 + 电商/外卖收银台 */
+    private fun isKnownSource(packageName: String): Boolean =
+        packageName in knownPackages || packageName in checkoutPackages
+
     /** 短信来源前缀（见 CaptureCenter.onSmsReceived）：来源键形如 `SMS:工商银行` */
     const val SMS_SOURCE_PREFIX = "SMS:"
 
-    fun isInterested(packageName: String): Boolean = packageName in knownPackages
+    fun isInterested(packageName: String): Boolean =
+        packageName in knownPackages || packageName in checkoutPackages
 
     /** 全渠道统一金额捕获组：优先匹配带千分位的写法（6,064.76），否则普通写法（0.01 / 100） */
     private const val AMT = "([0-9]{1,3}(?:,[0-9]{3})+(?:\\.[0-9]{1,2})?|[0-9]+(?:\\.[0-9]{1,2})?)"
@@ -58,6 +88,7 @@ object NotificationRules {
         packageName == WECHAT -> "微信"
         packageName == ALIPAY -> "支付宝"
         packageName == UNIONPAY -> "云闪付"
+        checkoutPackages.containsKey(packageName) -> checkoutPackages.getValue(packageName)
         // 银行 App 推送（动账通知）走 BankLedgerRules 的签名闸门，包名 → 银行名
         BankLedgerRules.bankNameOfPackage(packageName) != null ->
             BankLedgerRules.bankNameOfPackage(packageName) + "通知"
@@ -154,6 +185,81 @@ object NotificationRules {
     fun isNoise(text: String): Boolean =
         confirmPhrases.none { text.contains(it) } && noiseKeywords.any { text.contains(it) }
 
+    // ---------- 折叠摘要与「金额待补」（方向可辨、金额缺失） ----------
+
+    private val groupedSummary = Regex(
+        """[\[［【(（]\s*\d+\s*条\s*[\]］】)）]|共\s*\d+\s*条|\d+\s*条(?:新)?(?:消息|通知)?""",
+    )
+
+    private val ledgerVerbs = listOf(
+        "已支付", "支付成功", "付款", "支出", "消费", "扣款", "收款", "到账", "入账", "退款", "退回", "收入",
+    )
+
+    private val incomePhrases = listOf(
+        "收款成功", "已收款", "收款到账", "已到账", "入账成功", "成功入账", "转账到账", "收到转账",
+    )
+    private val expensePhrases = listOf(
+        "已支付", "支付成功", "付款成功", "支付完成", "交易成功", "已付款", "扣款成功", "已扣款", "消费成功",
+    )
+
+    /** 文本是否像折叠摘要（`[2条]`/`共3条`/`2条新消息`）；摘要自身常不含金额，需要子通知补全 */
+    fun looksLikeGroupedSummary(text: String): Boolean = groupedSummary.containsMatchIn(text)
+
+    /** 分组候选判定：像一条**账务明细**（同时有方向动词和可解析金额），用于从兄弟通知里挑出真正那笔 */
+    fun looksLikeLedgerDetail(text: String): Boolean {
+        if (text.isBlank() || isNoise(text)) return false
+        val masked = maskCardTails(normalize(text))
+        val hasAmount = reversedAmount.containsMatchIn(masked) ||
+            currencyAmount.containsMatchIn(masked) ||
+            incomeAmount.containsMatchIn(masked) ||
+            expenseAmount.containsMatchIn(masked)
+        return hasAmount && ledgerVerbs.any { masked.contains(it) }
+    }
+
+    /**
+     * 方向可辨、金额缺失的通知 → 通知栏「输入金额」补录。
+     * 判定刻意收紧：必须命中明确的**交易确认短语**，否则不打扰用户（服务通知、账单提醒一律不弹）。
+     * 退款不走这里（金额常由原账单承载，用既有的"退款关联"流程）。
+     */
+    data class DirectionHint(
+        val type: TxType,
+        val sourceLabel: String,
+        val ruleName: String,
+        val note: String,
+    )
+
+    fun parseDirectionOnly(
+        packageName: String,
+        title: String,
+        text: String,
+        bigText: String = "",
+    ): DirectionHint? {
+        if (!isKnownSource(packageName)) return null
+        val raw = listOf(title, text, bigText).filter { it.isNotBlank() }.joinToString(" ")
+        // 折叠摘要自身没有明细，交给分组补全；补不出就不该让用户对着"[2条]"手输金额。
+        // 注意要在归一化**之前**判断——归一化会把「[2条]」这个标记本身剥掉。
+        if (looksLikeGroupedSummary(raw)) return null
+        val body = normalize(raw)
+        if (body.isBlank()) return null
+        if (isNoise(body)) return null
+        if (body.contains("退款") || body.contains("退回")) return null
+
+        val income = incomePhrases.any { body.contains(it) }
+        val expense = expensePhrases.any { body.contains(it) }
+        val type = when {
+            income && !expense -> TxType.INCOME
+            expense && !income -> TxType.EXPENSE
+            else -> return null
+        }
+        val label = sourceLabel(packageName)
+        return DirectionHint(
+            type = type,
+            sourceLabel = label,
+            ruleName = "$label·${if (type == TxType.INCOME) "待补收款" else "待补支出"}",
+            note = body.take(200),
+        )
+    }
+
     // ---------- 金额与方向 ----------
 
     /**
@@ -196,7 +302,7 @@ object NotificationRules {
         bigText: String,
         postTime: Long,
     ): ParsedNotification? {
-        if (packageName !in knownPackages) return null
+        if (!isKnownSource(packageName)) return null
         // 归一化 + 卡尾号遮罩后才做匹配：规则只面对干净输入
         val body = maskCardTails(
             normalize(sequenceOf(title, text, bigText).filter { it.isNotBlank() }.joinToString(" ")),
@@ -205,6 +311,12 @@ object NotificationRules {
 
         if (isNoise(body)) {
             AppLog.d("Ntf", "skip noise pkg=$packageName body=$body")
+            return null
+        }
+
+        // 电商/外卖收银台：额外要求明确的交易确认短语，挡住"待支付/待付款/订单已提交"等未完成状态
+        if (packageName in checkoutPackages && confirmPhrases.none { body.contains(it) }) {
+            AppLog.d("Ntf", "checkout notice without confirmation phrase, skip pkg=$packageName body=$body")
             return null
         }
 

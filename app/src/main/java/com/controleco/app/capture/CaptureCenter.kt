@@ -67,6 +67,9 @@ object CaptureCenter {
     private const val KEY_BANK_PUSH_ENABLED = "bank_push_enabled"
     private const val KEY_SMS_CAPTURE_ENABLED = "sms_capture_enabled"
     private const val KEY_OVERLAY_CONFIRM_ENABLED = "overlay_confirm_enabled"
+    private const val KEY_AMOUNT_REPLY_ENABLED = "amount_reply_enabled"
+    private const val KEY_NEEDS_REAUTH = "needs_reauth_after_update"
+    private const val KEY_LAST_VERSION_CODE = "last_version_code"
 
     /** 点击通知跳转的路由（MainActivity intent extra） */
     const val EXTRA_ROUTE = "controleco.route"
@@ -80,6 +83,9 @@ object CaptureCenter {
     const val CHANNEL_CAPTURE = "capture_alert"
     private const val CHANNEL_LEGACY = "capture"
     private const val NOTIF_TAG = "capture"
+
+    /** 「输入金额」通知的动作前缀（同一个意图按 pendingId 区分） */
+    private const val ACTION_AMOUNT_REPLY = "com.controleco.app.action.AMOUNT_REPLY"
 
     /** 同一内容通知的重发窗口（微信/支付宝常会更新同一条通知导致重复回调） */
     private const val REPOST_WINDOW_MS = 10_000L
@@ -152,12 +158,13 @@ object CaptureCenter {
         }.onFailure { AppLog.w("Ntf", "create channel failed", it) }
     }
 
-    /** 系统通知（横幅）：点击跳转 App 内对应页面（待确认队列 / 退款关联） */
+    /** 系统通知（横幅）：点击跳转 App 内对应页面（待确认队列 / 退款关联）；可带「忽略」动作 */
     private fun postCaptureNotification(
         title: String,
         text: String,
         route: String,
         notifId: Int = title.hashCode(),
+        ignore: IgnoreTarget? = null,
     ) {
         if (!isCaptureNotifyEnabled()) return
         if (!canPostNotifications()) {
@@ -173,7 +180,7 @@ object CaptureCenter {
             intent,
             android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        val notification = androidx.core.app.NotificationCompat.Builder(appContext, CHANNEL_CAPTURE)
+        val builder = androidx.core.app.NotificationCompat.Builder(appContext, CHANNEL_CAPTURE)
             .setSmallIcon(android.R.drawable.ic_menu_add)
             .setContentTitle(title)
             .setContentText(text)
@@ -181,9 +188,9 @@ object CaptureCenter {
             .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
             .setCategory(androidx.core.app.NotificationCompat.CATEGORY_REMINDER)
             .setAutoCancel(true)
-            .build()
+        ignore?.let { builder.addAction(ignoreAction(it)) }
         runCatching {
-            androidx.core.app.NotificationManagerCompat.from(appContext).notify(NOTIF_TAG, notifId, notification)
+            androidx.core.app.NotificationManagerCompat.from(appContext).notify(NOTIF_TAG, notifId, builder.build())
             AppLog.i("Ntf", "capture notification posted: $title")
         }.onFailure { AppLog.w("Ntf", "post notification failed", it) }
     }
@@ -238,18 +245,251 @@ object CaptureCenter {
         sourceLabel: String,
         counterparty: String,
         dedupKey: String,
+        pendingId: Long = -1L,
     ) {
         val kind = when {
             isRefund -> "退款"
             type == TxType.EXPENSE -> "支出"
             else -> "收入"
         }
+        val text = if (amountCents > 0) {
+            pendingNotifText(sourceLabel, amountCents, counterparty)
+        } else {
+            "$sourceLabel 金额待补 · 点击补录或忽略"
+        }
         postCaptureNotification(
             "捕获到一笔$kind",
-            pendingNotifText(sourceLabel, amountCents, counterparty),
+            text,
             ROUTE_PENDING,
             pendingNotifId(dedupKey),
+            ignore = pendingId.takeIf { it > 0 }?.let { IgnoreTarget(it, dedupKey) },
         )
+    }
+
+    // ---------- 金额待补录（方向可辨、金额缺失） ----------
+
+    /** 「忽略」动作的目标（通知栏一键丢弃用） */
+    private data class IgnoreTarget(val pendingId: Long, val dedupKey: String)
+
+    /**
+     * 方向可辨、金额缺失 → 入队 0 元条目 + 发「输入金额」通知。
+     * 0 元条目不参与「全部确认」（见 LedgerViewModel），必须补录或忽略。
+     */
+    private suspend fun handleAmountMissing(
+        packageName: String,
+        rawId: Long,
+        postTime: Long,
+        title: String,
+        text: String,
+        bigText: String,
+        hint: NotificationRules.DirectionHint,
+    ) {
+        val keyTime = if (postTime > 0) postTime else System.currentTimeMillis()
+        val dedupKey = NotificationRules.dedupKey(packageName, hint.type, false, 0L, keyTime)
+        val pendingId = pendingDao.insert(
+            PendingTransactionEntity(
+                type = hint.type,
+                amountCents = 0L,
+                timestamp = keyTime,
+                note = hint.note,
+                sourcePackage = packageName,
+                ruleName = hint.ruleName,
+                dedupKey = dedupKey,
+                rawNotificationId = rawId,
+            ),
+        )
+        captureDao.updateMatch(rawId, hint.ruleName + "·金额待补", true)
+        AppLog.i("Ntf", "amount missing, queued stub #$pendingId ${hint.ruleName} pkg=$packageName")
+        if (pendingId > 0) {
+            postAmountRequestNotification(pendingId, dedupKey, hint)
+        }
+        traceCapture(
+            channel = CaptureChannel.NOTIFICATION,
+            packageName = packageName,
+            title = title,
+            text = text,
+            bigText = bigText,
+            capturedAt = keyTime,
+            matchedRule = hint.ruleName,
+            type = hint.type,
+            amountCents = 0,
+            note = hint.note,
+            dedupKey = dedupKey,
+            outcome = TraceOutcome.PENDING,
+        )
+    }
+
+    /** 「输入金额」通知：RemoteInput 直接回复（先落库后回填，零跳转） + 「忽略」一键丢弃 */
+    private fun postAmountRequestNotification(
+        pendingId: Long,
+        dedupKey: String,
+        hint: NotificationRules.DirectionHint,
+    ) {
+        if (!isCaptureNotifyEnabled() || !canPostNotifications()) return
+        val replyIntent = android.content.Intent(appContext, AmountReplyReceiver::class.java).apply {
+            action = "$ACTION_AMOUNT_REPLY.$pendingId"
+            putExtra(AmountReplyReceiver.EXTRA_PENDING_ID, pendingId)
+            putExtra(AmountReplyReceiver.EXTRA_DEDUP_KEY, dedupKey)
+        }
+        // RemoteInput 要求可变 PendingIntent（Android 12+ 硬要求）；接收器里做组件来源校验兜底
+        val replyPi = android.app.PendingIntent.getBroadcast(
+            appContext,
+            ("amount|$dedupKey").hashCode(),
+            replyIntent,
+            android.app.PendingIntent.FLAG_MUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val remoteInput = androidx.core.app.RemoteInput.Builder(AmountReplyReceiver.KEY_TEXT_REPLY)
+            .setLabel("输入金额")
+            .build()
+        val contentIntent = android.content.Intent(appContext, com.controleco.app.MainActivity::class.java)
+            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            .putExtra(EXTRA_ROUTE, ROUTE_PENDING)
+        val contentPi = android.app.PendingIntent.getActivity(
+            appContext,
+            ("amount-content|$dedupKey").hashCode(),
+            contentIntent,
+            android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val kind = if (hint.type == TxType.EXPENSE) "支出" else "收入"
+        val builder = androidx.core.app.NotificationCompat.Builder(appContext, CHANNEL_CAPTURE)
+            .setSmallIcon(android.R.drawable.ic_menu_add)
+            .setContentTitle("${hint.sourceLabel} 有一笔${kind}金额待补")
+            .setContentText("直接在通知里输入金额，或点进待确认列表处理")
+            .setContentIntent(contentPi)
+            .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
+            .setCategory(androidx.core.app.NotificationCompat.CATEGORY_REMINDER)
+            .setAutoCancel(true)
+            .addAction(
+                androidx.core.app.NotificationCompat.Action.Builder(
+                    android.R.drawable.ic_menu_save,
+                    "输入金额",
+                    replyPi,
+                ).addRemoteInput(remoteInput).build(),
+            )
+            .addAction(ignoreAction(IgnoreTarget(pendingId, dedupKey)))
+        runCatching {
+            androidx.core.app.NotificationManagerCompat.from(appContext)
+                .notify(NOTIF_TAG, pendingNotifId(dedupKey), builder.build())
+        }.onFailure { AppLog.w("Ntf", "post amount request failed", it) }
+    }
+
+    /** 「忽略」action：广播到 CaptureActionReceiver（显式组件、非导出） */
+    private fun ignoreAction(
+        target: IgnoreTarget,
+    ): androidx.core.app.NotificationCompat.Action {
+        val intent = android.content.Intent(appContext, CaptureActionReceiver::class.java).apply {
+            action = CaptureActionReceiver.ACTION_IGNORE
+            putExtra(CaptureActionReceiver.EXTRA_PENDING_ID, target.pendingId)
+            putExtra(CaptureActionReceiver.EXTRA_DEDUP_KEY, target.dedupKey)
+        }
+        val pi = android.app.PendingIntent.getBroadcast(
+            appContext,
+            ("ignore|${target.dedupKey}").hashCode(),
+            intent,
+            android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        return androidx.core.app.NotificationCompat.Action.Builder(android.R.drawable.ic_menu_close_clear_cancel, "忽略", pi).build()
+    }
+
+    /** 通知栏「忽略」入口（CaptureActionReceiver 调用） */
+    fun ignoreFromNotification(pendingId: Long, dedupKey: String) {
+        if (!initialized) return
+        scope.launch {
+            if (pendingId > 0) {
+                PendingActions.discard(pendingDao, pendingId)
+            } else {
+                pendingDao.deleteByDedupKey(dedupKey)
+            }
+            cancelCaptureNotification(pendingNotifId(dedupKey))
+            if (ConfirmCardWindow.showingPendingId == pendingId) {
+                mainHandler.post { ConfirmCardWindow.dismissConfirm() }
+            }
+            AppLog.i("Ntf", "ignored from notification pending#$pendingId key=$dedupKey")
+        }
+    }
+
+    /** 金额补录结果（供通知栏回执与调试） */
+    sealed interface AmountUpdateResult {
+        data class Ok(val amountCents: Long, val newDedupKey: String) : AmountUpdateResult
+        object NotFound : AmountUpdateResult
+        object Invalid : AmountUpdateResult
+    }
+
+    /**
+     * 把补录金额写回 0 元占位条：重算去重键（保留分钟桶）。
+     * 若新键对应的条目已存在（同笔的完整捕获先到了）→ 删除占位条，以既有条目为准。
+     */
+    fun applyPendingAmount(pendingId: Long, amountCents: Long, onResult: (AmountUpdateResult) -> Unit) {
+        if (!initialized) return
+        if (amountCents <= 0 || amountCents > NotificationRules.MAX_AMOUNT_CENTS) {
+            onResult(AmountUpdateResult.Invalid)
+            return
+        }
+        scope.launch {
+            try {
+                val stub = pendingDao.getById(pendingId)
+                if (stub == null || stub.amountCents != 0L) {
+                    onResult(AmountUpdateResult.NotFound)
+                    return@launch
+                }
+                val newKey = dedupKeyWithAmount(stub.dedupKey, amountCents)
+                if (newKey == null) {
+                    onResult(AmountUpdateResult.Invalid)
+                    return@launch
+                }
+                if (pendingDao.countByDedupKey(newKey) > 0) {
+                    // 同笔的完整捕获已入队：占位条退场
+                    pendingDao.deleteById(pendingId)
+                    AppLog.i("Ntf", "amount stub superseded by existing entry key=$newKey")
+                    onResult(AmountUpdateResult.NotFound)
+                    return@launch
+                }
+                pendingDao.updateAmountAndKey(pendingId, amountCents, newKey)
+                AppLog.i("Ntf", "amount backfilled pending#$pendingId -> ${Money.formatYuan(amountCents)}")
+                onResult(AmountUpdateResult.Ok(amountCents, newKey))
+            } catch (e: Exception) {
+                AppLog.e("Ntf", "apply pending amount failed", e)
+                onResult(AmountUpdateResult.Invalid)
+            }
+        }
+    }
+
+    /** 通知栏回执：撤销「输入金额」通知，补录成功后重新提醒（可弹卡，走正常待确认流程） */
+    fun onAmountReplied(pendingId: Long, stubDedupKey: String, result: AmountUpdateResult) {
+        if (!initialized) return
+        when (result) {
+            is AmountUpdateResult.Ok -> {
+                cancelCaptureNotification(pendingNotifId(stubDedupKey))
+                toast("已补录 " + Money.formatYuan(result.amountCents))
+                scope.launch {
+                    val row = pendingDao.getById(pendingId) ?: return@launch
+                    announceCapture(
+                        type = row.type,
+                        isRefund = row.refundMark == RefundMark.REFUND_INCOME,
+                        amountCents = row.amountCents,
+                        sourceLabel = NotificationRules.sourceLabel(row.sourcePackage),
+                        counterparty = row.counterparty,
+                        paymentMethod = null,
+                        dedupKey = row.dedupKey,
+                        ruleName = row.ruleName,
+                        txTime = row.timestamp,
+                        note = row.note,
+                        pendingId = row.id,
+                    )
+                }
+            }
+            AmountUpdateResult.NotFound -> {
+                cancelCaptureNotification(pendingNotifId(stubDedupKey))
+                toast("这条已处理过")
+            }
+            AmountUpdateResult.Invalid -> toast("金额无效，请重新输入")
+        }
+    }
+
+    /** 完整捕获到达时清掉同笔的"金额待补"占位条（占位条只用于兜底提醒，不保留） */
+    private suspend fun supersedeAmountStubs(packageName: String, type: TxType, timeMillis: Long) {
+        val removed = pendingDao.deleteAmountStubs(packageName, type, timeMillis - 10 * 60_000, timeMillis + 60_000)
+        if (removed > 0) AppLog.i("Ntf", "superseded $removed amount stub(s) pkg=$packageName")
     }
 
     // ---------- 悬浮确认卡（卡片/通知互斥） ----------
@@ -457,6 +697,54 @@ object CaptureCenter {
         AppLog.i("Ntf", "listener connected=$connected")
     }
 
+    /**
+     * 收到通知即证明监听活着（进程被杀后状态可能显示未连接/假死）：直接自愈为已连接，
+     * 修掉"状态显示已连接但实际假死"与"实际活着而状态为假"两类误报。
+     */
+    fun markAliveFromNotification() {
+        if (!_connected.value) {
+            _connected.value = true
+            AppLog.i("Ntf", "listener self-healed (notification received)")
+        }
+    }
+
+    /** 监听重连成功：清掉"更新后需重新授权"提示 */
+    fun onListenerHealthy() {
+        if (isReauthNeeded()) {
+            clearReauthNeeded()
+            AppLog.i("Ntf", "reauth flag cleared (listener healthy)")
+        }
+    }
+
+    // ---------- 更新后需重新授权提示（MIUI 等 ROM 更新应用后通知使用权会静默失效） ----------
+
+    fun isReauthNeeded(): Boolean = initialized && prefs().getBoolean(KEY_NEEDS_REAUTH, false)
+
+    private fun setReauthNeeded(needed: Boolean) {
+        prefs().edit().putBoolean(KEY_NEEDS_REAUTH, needed).apply()
+    }
+
+    fun clearReauthNeeded() = setReauthNeeded(false)
+
+    /**
+     * 覆盖安装后调用（PackageReplacedReceiver）：versionCode 变化即视为"应用更新了"，
+     * 若通知监听有授权则提示复查——系统不保证更新后监听仍被绑定（小米系尤为常见）。
+     */
+    fun checkAppUpdated(versionCode: Int) {
+        if (!initialized) return
+        val last = prefs().getInt(KEY_LAST_VERSION_CODE, 0)
+        if (last == versionCode) return
+        prefs().edit().putInt(KEY_LAST_VERSION_CODE, versionCode).apply()
+        if (last != 0 && wasListenerGranted()) {
+            setReauthNeeded(true)
+            AppLog.w("Ntf", "app updated ($last -> $versionCode), reauth hint set")
+        }
+    }
+
+    private fun wasListenerGranted(): Boolean =
+        androidx.core.app.NotificationManagerCompat.getEnabledListenerPackages(appContext)
+            .contains(appContext.packageName)
+
     fun markA11yConnected(connected: Boolean) {
         _a11yConnected.value = connected
         AppLog.i("Page", "a11y service connected=$connected")
@@ -534,6 +822,17 @@ object CaptureCenter {
         initialized && androidx.core.content.ContextCompat.checkSelfPermission(
             appContext, android.Manifest.permission.RECEIVE_SMS,
         ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+    /**
+     * 金额待补录（默认开）：方向可辨但金额缺失的通知（如无金额的支付骨架通知）不再直接丢弃，
+     * 入队 0 元条目并发「输入金额」通知，用户下拉通知栏直接打字补录。
+     */
+    fun isAmountReplyEnabled(): Boolean = prefs().getBoolean(KEY_AMOUNT_REPLY_ENABLED, true)
+
+    fun setAmountReplyEnabled(enabled: Boolean) {
+        prefs().edit().putBoolean(KEY_AMOUNT_REPLY_ENABLED, enabled).apply()
+        AppLog.i("Ntf", "amountReplyEnabled=$enabled")
+    }
 
     /** 横幅通知提醒确认入账（安卓 13+ 需 POST_NOTIFICATIONS 运行时授权） */
     fun canPostNotifications(): Boolean =
@@ -637,6 +936,7 @@ object CaptureCenter {
         bigText: String,
         postTime: Long,
         isDebugBuild: Boolean,
+        groupEnriched: Boolean = false,
     ) {
         _lastEventAt.value = System.currentTimeMillis()
 
@@ -709,14 +1009,22 @@ object CaptureCenter {
                 val parsed = NotificationRules.parse(packageName, title, text, bigText, postTime)
                 if (parsed == null) {
                     AppLog.d("Ntf", "no rule matched pkg=$packageName title=[$title] text=[$text]")
-                    // 无金额的退款到账通知（微信折叠通知实测样本）→ 转退款关联提醒
-                    if (interested && isCaptureEnabled() &&
-                        NotificationRules.isAmountlessRefundNotice(packageName, title, text)
-                    ) {
-                        handleRefundNotice(packageName, rawId, postTime, title, text, bigText)
+                    if (interested && isCaptureEnabled()) {
+                        // 无金额的退款到账通知（微信折叠通知实测样本）→ 转退款关联提醒
+                        if (NotificationRules.isAmountlessRefundNotice(packageName, title, text)) {
+                            handleRefundNotice(packageName, rawId, postTime, title, text, bigText)
+                            return@launch
+                        }
+                        // 方向可辨但金额缺失（如支付骨架通知）→ 入队 0 元条目 + 通知栏「输入金额」补录
+                        val hint = NotificationRules.parseDirectionOnly(packageName, title, text, bigText)
+                        if (hint != null && isAmountReplyEnabled()) {
+                            handleAmountMissing(packageName, rawId, postTime, title, text, bigText, hint)
+                        }
                     }
                     return@launch
                 }
+                // 同笔的"金额待补"占位条被完整捕获取代（占位条只用于兜底提醒，不保留）
+                supersedeAmountStubs(packageName, parsed.type, postTime)
                 // 溯源用来源时刻：通知的 when 偶有异常值，退回落库时刻（只影响展示，不回写通知流程）
                 val sourceAt = if (postTime > 0) postTime else System.currentTimeMillis()
                 // 跨通道去重（10s 窗口）：页面通道先捕获/自动入账了同一笔 → 通知侧信息更少，不覆盖。
@@ -1142,7 +1450,9 @@ object CaptureCenter {
 
         scope.launch {
             try {
+                // 支出方向优先（支付成功页/账单详情页），没有则试收入方向（转账收款/红包/收款到账）
                 val parsed = PageRules.parse(packageName, texts, capturedAt)
+                    ?: PageRules.parseIncome(packageName, texts, capturedAt)
                 // 感兴趣的页面（或调试全量）才落快照，聊天/朋友圈等噪音不进捕获日志
                 if (parsed == null && !captureAll && !PageRules.looksInteresting(texts)) {
                     AppLog.d("Page", "skip (not interesting) pkg=$packageName nodes=${texts.size}")

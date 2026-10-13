@@ -97,6 +97,26 @@
                 <action android:name="android.provider.Telephony.SMS_RECEIVED" />
             </intent-filter>
         </receiver>
+
+        <!-- 金额待补录：通知栏「输入金额」的 RemoteInput 回复入口（不导出；接收器内做来源校验） -->
+        <receiver
+            android:name=".capture.AmountReplyReceiver"
+            android:exported="false" />
+
+        <!-- 通知栏「忽略」action：一键丢弃误报的待确认条目（不导出） -->
+        <receiver
+            android:name=".capture.CaptureActionReceiver"
+            android:exported="false" />
+
+        <!-- 覆盖安装后：检测 versionCode 变化，提示复查通知使用权（更新后监听可能静默失效） -->
+        <receiver
+            android:name=".capture.PackageReplacedReceiver"
+            android:exported="false"
+            android:enabled="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

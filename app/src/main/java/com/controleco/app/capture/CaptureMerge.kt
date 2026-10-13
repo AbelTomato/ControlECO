@@ -78,6 +78,18 @@ internal fun parseDedupKey(key: String): DedupKey? {
 }
 
 /**
+ * 去重键换金额：金额待补录回填后重算键（保留来源段/方向段/退款段与分钟桶，只替换金额段）。
+ * 返回 null = 键格式不对（调用方放弃重算、按原键处理）。
+ */
+internal fun dedupKeyWithAmount(key: String, amountCents: Long): String? {
+    val parts = key.split('|')
+    if (parts.size < 4) return null
+    val head = parts.dropLast(2)
+    val minute = parts.last()
+    return (head + amountCents.toString() + minute).joinToString("|")
+}
+
+/**
  * 同笔家族：同包名 + 同方向 + 分钟相差 ≤1，**不比金额**——
  * 页面优先合并会改写通知侧条目的金额（通知误解析 ¥1.00），完整键就不再相等；
  * 确认/忽略时按家族清理，保证不会留下同一笔的第二条待确认。

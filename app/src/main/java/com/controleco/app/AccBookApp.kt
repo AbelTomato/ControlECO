@@ -25,6 +25,8 @@ class AccBookApp : Application() {
         Money.symbol = getSharedPreferences("settings", MODE_PRIVATE)
             .getString("currency_symbol", Money.DEFAULT_SYMBOL) ?: Money.DEFAULT_SYMBOL
         CaptureCenter.init(this)
+        // 覆盖安装后提示复查通知使用权（广播可能被系统吞掉，冷启动再兜一次）
+        CaptureCenter.checkAppUpdated(BuildConfig.VERSION_CODE)
         applicationScope.launch { DefaultData.seedIfNeeded(db) }
     }
 }

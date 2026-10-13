@@ -23,6 +23,15 @@ object PageRules {
     /** 收银台页（还没付）关键词：出现即跳过——"支付成功得xx券"这类营销文案会让收银台页误判成支付成功页 */
     private val cashierKeywords = listOf("确认付款", "使用密码", "请验证")
 
+    /**
+     * 失败/取消短语（对照自测整理的拒绝表，见 docs/自动记账捕获机制.md）：
+     * 出现即跳过——失败与取消的页面绝不能记成账。
+     */
+    private val failureKeywords = listOf(
+        "支付失败", "付款失败", "交易失败", "扣款失败",
+        "交易已取消", "交易已关闭", "订单已取消", "订单已关闭", "已撤销", "支付已取消",
+    )
+
     /** 页面类型判定关键词 */
     private val billDetailKeywords = listOf("账单详情", "交易详情")
     private val successKeywords = listOf("支付成功", "付款成功", "支付完成", "支付详情")
@@ -93,6 +102,11 @@ object PageRules {
         // 收银台页（还没付）：含"确认付款/使用密码/请验证"，直接跳过
         if (cashierKeywords.any { joined.contains(it) }) {
             AppLog.i("Page", "skip (cashier page, payment not completed) pkg=$packageName")
+            return null
+        }
+        // 失败/取消页：绝不能记成账
+        if (failureKeywords.any { joined.contains(it) }) {
+            AppLog.i("Page", "skip (failure/cancelled page) pkg=$packageName")
             return null
         }
 
@@ -182,8 +196,134 @@ object PageRules {
      */
     fun looksInteresting(texts: List<String>): Boolean {
         val joined = texts.joinToString(" ")
-        return (successKeywords + billDetailKeywords + counterpartyLabels + paymentMethodLabels +
-            listOf("交易金额", "付款金额", "交易时间", "交易单号")).any { joined.contains(it) }
+        return (successKeywords + billDetailKeywords + incomeAnchors + counterpartyLabels + paymentMethodLabels +
+            listOf("交易金额", "付款金额", "收款金额", "交易时间", "交易单号")).any { joined.contains(it) }
+    }
+
+    // ---------- 收入方向（转账收款 / 红包 / 收款到账） ----------
+
+    /**
+     * 收入页锚点：出现即说明这是一笔"到账"页。通知通道覆盖不到这些场景
+     * （微信转账收款、拆红包只有页面没有通知），页面通道是唯一线索。
+     * "待确认收款"是**收款方**的待收款态（与付款方的"等待对方确认收款"不同，后者在排除项里）。
+     */
+    private val incomeAnchors = listOf("已收钱", "收款到账", "收款成功", "已存入零钱", "已转入", "待确认收款")
+
+    /**
+     * 收入页排除项：**"对方已收钱"是付款方的支出页状态**（付款完成后显示），
+     * 不是收入信号——自研原型曾把它当收入信号，被这里显式排除；
+     * 退款与"等待对方确认"（付款方的待收款态）同样排除；
+     * 明细/列表类页面（零钱明细等）不是某笔交易的结果页，也不能记。
+     */
+    private val incomeExcludes = listOf(
+        "对方已收钱", "待收钱", "待对方确认", "等待对方", "退款", "退回", "已退还",
+        "零钱明细", "交易明细", "账单列表", "收支统计",
+    )
+
+    /** 付款方提取（收入页的"对方"）：来自张三 / 张三向你转账 / 领取了王五的红包 */
+    private val payerPatterns = listOf(
+        Regex("""来自\s*([^\s，,。;；]{1,12})"""),
+        Regex("""([^\s，,。;；]{1,12})\s*向你转账"""),
+        Regex("""领取了\s*([^\s，,。;；]{1,12})\s*的红包"""),
+        Regex("""([^\s，,。;；]{1,12})\s*(?:的红包|发的红包)"""),
+    )
+
+    /** 收入页的付款方标签（"付款方/付款人/来自"这类键值对写法） */
+    private val incomePayerLabels = listOf("付款方", "付款人", "转账方", "来自") + counterpartyLabels
+
+    /** 兜底商户的通用词：这些词出现在收入页但不是付款方（转账/红包本身） */
+    private val incomeGenericWords = listOf("转账", "红包", "微信红包", "收款", "零钱", "微信支付", "支付宝", "支付")
+
+    /**
+     * 收入方向页面解析（转账收款 / 红包 / 收款到账）。
+     * 与支出路径同为"宁漏勿错"：方向互斥（含"对方已收钱"一律跳过）、金额提不到就放弃、
+     * 只看 24 小时内的新鲜页面。返回 null = 不是可安全记账的收入页。
+     */
+    fun parseIncome(packageName: String, texts: List<String>, capturedAt: Long): ParsedPage? {
+        if (packageName !in NotificationRules.knownPackages) return null
+        val nodes = texts.asSequence().map { it.trim() }.filter { it.isNotEmpty() }.take(MAX_TEXTS).toList()
+        if (nodes.isEmpty()) return null
+        val joined = nodes.joinToString(" ")
+
+        if (cashierKeywords.any { joined.contains(it) }) return null
+        if (failureKeywords.any { joined.contains(it) }) {
+            AppLog.i("Page", "skip income (failure/cancelled page) pkg=$packageName")
+            return null
+        }
+        if (incomeExcludes.any { joined.contains(it) }) {
+            // 转账支出页（对方已收钱）/待收款/退款页：不是收入
+            AppLog.d("Page", "skip income (excluded phrase) pkg=$packageName head=${joined.take(120)}")
+            return null
+        }
+        val anchor = incomeAnchors.firstOrNull { joined.contains(it) }
+        if (anchor == null) {
+            AppLog.d("Page", "skip income (no income anchor) pkg=$packageName head=${joined.take(120)}")
+            return null
+        }
+
+        // 金额优先级与支出路径一致：锚点节点内的实付/实收金额 → "金额"标签行 → 独立 ¥ 节点 → 任意 ¥
+        val anchorIdx = nodes.indexOfFirst { node -> incomeAnchors.any { node.contains(it) } }
+        val amountText = (if (anchorIdx >= 0) paidAmountInAnchor(nodes[anchorIdx]) else null)
+            ?: labeledAmount.find(joined)?.groupValues?.get(1)
+            ?: nodes.firstNotNullOfOrNull { standaloneAmount.find(it)?.groupValues?.get(1) }
+            ?: anyAmount.find(joined)?.groupValues?.get(1)
+        if (amountText == null) {
+            AppLog.d("Page", "skip income (amount not found) pkg=$packageName anchor=$anchor head=${joined.take(160)}")
+            return null
+        }
+        val amountCents = Money.parseCents(amountText)
+        if (amountCents == null || amountCents <= 0) {
+            AppLog.i("Page", "skip income (zero amount) pkg=$packageName amount=$amountText")
+            return null
+        }
+
+        val counterparty = payerFromPage(nodes)
+            ?: valueAfterLabel(nodes, incomePayerLabels)
+            ?: guessCounterparty(nodes)?.takeIf { guess -> incomeGenericWords.none { guess == it } }
+            ?: ""
+        val txTimeText = valueAfterLabel(nodes, timeLabels) ?: joined
+        val txTime = timePattern.find(txTimeText)?.let { m ->
+            runCatching {
+                LocalDateTime.of(
+                    m.groupValues[1].toInt(), m.groupValues[2].toInt(), m.groupValues[3].toInt(),
+                    m.groupValues[4].toInt(), m.groupValues[5].toInt(),
+                    m.groupValues[6].ifEmpty { "0" }.toInt(),
+                ).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+            }.getOrNull()
+        }
+        if (txTime != null && capturedAt - txTime > MAX_AGE_MS) {
+            AppLog.d("Page", "skip income (old page) pkg=$packageName ageHours=${(capturedAt - txTime) / 3_600_000}")
+            return null
+        }
+
+        val label = NotificationRules.sourceLabel(packageName)
+        // 红包与普通收款分开命名（"微信·红包" / "微信·收款"），待确认与溯源页据此显示
+        val kind = if (joined.contains("红包")) "红包" else "收款"
+        return ParsedPage(
+            type = TxType.INCOME,
+            amountCents = amountCents,
+            counterparty = counterparty,
+            paymentMethod = null,
+            txTime = txTime,
+            sourceLabel = label,
+            ruleName = "$label·$kind",
+            note = "",
+            dedupKey = NotificationRules.dedupKey(packageName, TxType.INCOME, false, amountCents, txTime ?: capturedAt),
+        )
+    }
+
+    /** 付款方提取：按常见句式找"来自 X / X 向你转账 / 领取了 X 的红包"，找不到返回 null */
+    private fun payerFromPage(nodes: List<String>): String? {
+        for (node in nodes) {
+            for (pattern in payerPatterns) {
+                val v = pattern.find(node)?.groupValues?.getOrNull(1)?.trim().orEmpty()
+                if (v.isEmpty()) continue
+                if (v.all { it.isDigit() }) continue
+                if (incomeGenericWords.any { v == it }) continue
+                return v.take(20)
+            }
+        }
+        return null
     }
 
     /**

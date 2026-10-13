@@ -103,6 +103,7 @@ private fun NotificationSection(vm: LedgerViewModel, resumeTick: Int, onOpenNoti
     val granted = remember(resumeTick) { vm.isListenerGranted() }
     val captureEnabled by vm.captureEnabled.collectAsStateWithLifecycle()
     val refundLinkEnabled by vm.refundLinkEnabled.collectAsStateWithLifecycle()
+    val reeauthNeeded = remember(resumeTick) { vm.isReauthNeeded() }
 
     SectionTitle("通知监听")
     PaneCard {
@@ -114,6 +115,21 @@ private fun NotificationSection(vm: LedgerViewModel, resumeTick: Int, onOpenNoti
             actionText = "去开启",
             onAction = onOpenNotificationAccess,
         )
+        if (reeauthNeeded) {
+            RowDivider()
+            Row(
+                Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "应用刚更新过：通知监听可能已被系统静默关闭，若收不到动账请重新开关一次授权。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.accBook.warning,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = onOpenNotificationAccess) { Text("去检查") }
+            }
+        }
         RowDivider()
         SwitchRow(
             title = "自动记录收款/动账通知",
@@ -122,6 +138,8 @@ private fun NotificationSection(vm: LedgerViewModel, resumeTick: Int, onOpenNoti
         )
         RowDivider()
         BankPushSetting(vm)
+        RowDivider()
+        AmountReplySetting(vm)
         RowDivider()
         CaptureNotifySetting(vm, resumeTick)
         RowDivider()
@@ -232,6 +250,26 @@ private fun BankPushSetting(vm: LedgerViewModel) {
             )
         }
         Switch(checked = enabled, onCheckedChange = { vm.setBankPushEnabled(it) })
+    }
+}
+
+/** 金额待补录：方向可辨但金额缺失的通知不再丢弃，入队 0 元条目 + 通知栏直接输入金额回填 */
+@Composable
+private fun AmountReplySetting(vm: LedgerViewModel) {
+    val enabled by vm.amountReplyEnabled.collectAsStateWithLifecycle()
+    Row(
+        Modifier.padding(horizontal = 16.dp, vertical = 15.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("金额待补录", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                "金额缺失的交易进待确认队列，下拉通知栏点「输入金额」直接补录",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(checked = enabled, onCheckedChange = { vm.setAmountReplyEnabled(it) })
     }
 }
 

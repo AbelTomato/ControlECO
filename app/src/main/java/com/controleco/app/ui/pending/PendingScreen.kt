@@ -1,5 +1,6 @@
 package com.controleco.app.ui.pending
 
+import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
@@ -34,6 +36,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -57,7 +61,10 @@ fun PendingScreen(vm: LedgerViewModel, onBack: () -> Unit) {
     val categories by vm.categories.collectAsStateWithLifecycle()
 
     var confirming by remember { mutableStateOf<PendingTransactionEntity?>(null) }
+    var amountEditing by remember { mutableStateOf<PendingTransactionEntity?>(null) }
     var confirmAllAsk by remember { mutableStateOf(false) }
+    val amountMissing = pending.count { it.amountCents <= 0 }
+    val context = LocalContext.current
 
     Scaffold(
         topBar = {
@@ -67,7 +74,7 @@ fun PendingScreen(vm: LedgerViewModel, onBack: () -> Unit) {
                     IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回") }
                 },
                 actions = {
-                    if (pending.isNotEmpty()) {
+                    if (pending.any { it.amountCents > 0 }) {
                         TextButton(onClick = { confirmAllAsk = true }) { Text("全部确认") }
                     }
                 },
@@ -84,10 +91,22 @@ fun PendingScreen(vm: LedgerViewModel, onBack: () -> Unit) {
             }
         } else {
             LazyColumn(Modifier.padding(padding)) {
+                if (amountMissing > 0) {
+                    item {
+                        Text(
+                            "有 $amountMissing 条金额待补录：点「补金额」输入，" +
+                                "或从通知栏通知直接回复（「全部确认」会跳过它们）",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.accBook.warning,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        )
+                    }
+                }
                 items(pending, key = { it.id }) { p ->
                     PendingRow(
                         item = p,
                         onConfirm = { confirming = p },
+                        onFillAmount = { amountEditing = p },
                         onDiscard = { vm.discardPending(p.id) },
                     )
                     HorizontalDivider()
@@ -111,12 +130,31 @@ fun PendingScreen(vm: LedgerViewModel, onBack: () -> Unit) {
         )
     }
 
+    amountEditing?.let { p ->
+        PendingAmountDialog(
+            item = p,
+            onSave = { cents ->
+                vm.setPendingAmount(p.id, cents) { message ->
+                    if (message != null) {
+                        Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                    }
+                }
+                amountEditing = null
+            },
+            onDismiss = { amountEditing = null },
+        )
+    }
+
     if (confirmAllAsk) {
         AlertDialog(
             onDismissRequest = { confirmAllAsk = false },
             title = { Text("全部确认") },
             text = {
-                Text("将把 ${pending.size} 条待确认按默认分类（其他）与推测账户入账，之后可在流水中修改。")
+                val confirmable = pending.count { it.amountCents > 0 }
+                Text(
+                    "将把 $confirmable 条按默认分类（其他）与推测账户入账，之后可在流水中修改。" +
+                        if (amountMissing > 0) "另有 $amountMissing 条金额待补录，不会被确认。" else "",
+                )
             },
             confirmButton = {
                 TextButton(onClick = {
@@ -129,20 +167,100 @@ fun PendingScreen(vm: LedgerViewModel, onBack: () -> Unit) {
     }
 }
 
+/**
+ * 金额待补录弹窗：0 元占位条（方向可辨但金额缺失）补金额后重算去重键，
+ * 与通知栏「输入金额」是同一套逻辑（CaptureCenter.applyPendingAmount）。
+ */
 @Composable
-private fun PendingRow(item: PendingTransactionEntity, onConfirm: () -> Unit, onDiscard: () -> Unit) {
+private fun PendingAmountDialog(
+    item: PendingTransactionEntity,
+    onSave: (Long) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var text by remember(item.id) { mutableStateOf("") }
+    var error by remember { mutableStateOf<String?>(null) }
+    val kind = if (item.type == TxType.EXPENSE) "支出" else "收入"
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("补录$kind 金额") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "${NotificationRules.sourceLabel(item.sourcePackage)} · ${item.ruleName}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (item.note.isNotBlank()) {
+                    Text(
+                        item.note,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    label = { Text("金额（元）") },
+                    prefix = { Text(Money.symbol) },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                )
+                Text(
+                    "两条路都行：下拉通知栏点「输入金额」直接回复，或在这里补。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                error?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                val cents = Money.parseCents(text)
+                if (cents == null || cents <= 0) {
+                    error = "请输入有效金额"
+                    return@TextButton
+                }
+                onSave(cents)
+            }) { Text("保存") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
+}
+
+@Composable
+private fun PendingRow(
+    item: PendingTransactionEntity,
+    onConfirm: () -> Unit,
+    onFillAmount: () -> Unit,
+    onDiscard: () -> Unit,
+) {
+    val amountMissing = item.amountCents <= 0
     Row(
         Modifier
             .fillMaxWidth()
-            .clickable(onClick = onConfirm)
+            .clickable(onClick = if (amountMissing) onFillAmount else onConfirm)
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
+            val amountText = if (amountMissing) {
+                "金额待补"
+            } else {
+                (if (item.type == TxType.EXPENSE) "-" else "+") + Money.formatYuan(item.amountCents)
+            }
             Text(
-                (if (item.type == TxType.EXPENSE) "-" else "+") + Money.formatYuan(item.amountCents),
+                amountText,
                 style = MaterialTheme.typography.titleSmall,
-                color = if (item.type == TxType.INCOME) MaterialTheme.accBook.income else MaterialTheme.colorScheme.onSurface,
+                color = when {
+                    amountMissing -> MaterialTheme.accBook.warning
+                    item.type == TxType.INCOME -> MaterialTheme.accBook.income
+                    else -> MaterialTheme.colorScheme.onSurface
+                },
             )
             Text(
                 "${NotificationRules.sourceLabel(item.sourcePackage)} · ${item.ruleName}",
@@ -173,7 +291,9 @@ private fun PendingRow(item: PendingTransactionEntity, onConfirm: () -> Unit, on
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        TextButton(onClick = onConfirm) { Text("确认") }
+        TextButton(onClick = if (amountMissing) onFillAmount else onConfirm) {
+            Text(if (amountMissing) "补金额" else "确认")
+        }
         TextButton(onClick = onDiscard) { Text("丢弃") }
     }
 }

@@ -277,6 +277,19 @@ interface PendingDao {
     )
     suspend fun updateFromPage(id: Long, amountCents: Long, timestamp: Long, counterparty: String, note: String, ruleName: String)
 
+    /** 金额待补录回填：写金额并重算去重键（来源段/方向段/分钟桶不变） */
+    @Query("UPDATE pending_transactions SET amountCents = :amountCents, dedupKey = :dedupKey WHERE id = :id")
+    suspend fun updateAmountAndKey(id: Long, amountCents: Long, dedupKey: String)
+
+    /** 完整捕获到达时清掉同笔的 0 元占位条（返回删除条数） */
+    @Query(
+        """DELETE FROM pending_transactions
+           WHERE status = 'PENDING' AND amountCents = 0
+             AND sourcePackage = :sourcePackage AND type = :type
+             AND timestamp BETWEEN :from AND :to"""
+    )
+    suspend fun deleteAmountStubs(sourcePackage: String, type: TxType, from: Long, to: Long): Int
+
     /** 自动入账条目的合并窗口很短，次日清理（dedupKey 仍是交易的 externalId，删除不影响去重） */
     @Query("DELETE FROM pending_transactions WHERE status = 'AUTO' AND createdAt < :cutoff")
     suspend fun deleteAutoOlderThan(cutoff: Long)
