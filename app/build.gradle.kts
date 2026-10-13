@@ -14,8 +14,8 @@ android {
         minSdk = 26
         targetSdk = 35
         // 每次带修改的构建把第三位 +1；beta 阶段版本名带 -beta 后缀
-        versionCode = 22
-        versionName = "0.4.19-beta"
+        versionCode = 23
+        versionName = "0.4.20-beta"
     }
 
     buildTypes {

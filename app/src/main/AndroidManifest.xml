@@ -52,6 +52,42 @@
             </intent-filter>
         </activity>
 
+        <!-- 长按图标快捷方式：记一笔 / 待确认 / 账单导入（复用通知跳转的 route 契约） -->
+        <meta-data
+            android:name="android.app.shortcuts"
+            android:resource="@xml/shortcuts" />
+
+        <!-- 分享入口：把账单文件（csv/xlsx）分享到 我ECO → 落盘缓存 → 跳账单导入并预解析 -->
+        <activity
+            android:name=".ShareImportActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/csv" />
+                <data android:mimeType="text/comma-separated-values" />
+                <data android:mimeType="application/csv" />
+                <data android:mimeType="application/vnd.ms-excel" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
+            </intent-filter>
+        </activity>
+
+        <!-- 快捷设置磁贴「记一笔」 -->
+        <service
+            android:name=".capture.QuickAddTileService"
+            android:exported="true"
+            android:icon="@android:drawable/ic_menu_add"
+            android:label="记一笔"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
         <!-- 应用内更新：把下载的 APK 通过 content:// 交给系统安装器（不导出、按需授权） -->
         <provider
             android:name="androidx.core.content.FileProvider"
