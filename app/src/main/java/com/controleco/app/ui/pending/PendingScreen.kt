@@ -187,7 +187,7 @@ private fun PendingAmountDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    "${NotificationRules.sourceLabelOrRule(item.sourcePackage, item.ruleName)} · ${item.ruleName}",
+                    sourceLine(item),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -232,6 +232,15 @@ private fun PendingAmountDialog(
     )
 }
 
+/**
+ * 来源行：来源标签与规则名可能重复（"微信" + "微信·支出/消费"、银行推送的
+ * "工商银行通知" + "工商银行通知·支出"）——规则名已含前缀时只显示规则名。
+ */
+private fun sourceLine(item: PendingTransactionEntity): String {
+    val label = NotificationRules.sourceLabelOrRule(item.sourcePackage, item.ruleName)
+    return if (item.ruleName.startsWith(label)) item.ruleName else "$label · ${item.ruleName}"
+}
+
 @Composable
 private fun PendingRow(
     item: PendingTransactionEntity,
@@ -263,7 +272,7 @@ private fun PendingRow(
                 },
             )
             Text(
-                "${NotificationRules.sourceLabelOrRule(item.sourcePackage, item.ruleName)} · ${item.ruleName}",
+                sourceLine(item),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -321,7 +330,7 @@ private fun ConfirmPendingDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    "${NotificationRules.sourceLabelOrRule(item.sourcePackage, item.ruleName)} · ${item.ruleName} · ${formatTimestamp(item.timestamp)}",
+                    "${sourceLine(item)} · ${formatTimestamp(item.timestamp)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
