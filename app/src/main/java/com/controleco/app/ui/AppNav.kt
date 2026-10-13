@@ -133,6 +133,14 @@ fun AccBookNav(
             route == CaptureCenter.ROUTE_REFUND_LINK -> navController.navigate("refundLink")
             // 「已自动入账」横幅：直达该笔记录的编辑页（追加路由：edit/{txId}）
             route.startsWith(CaptureCenter.ROUTE_EDIT_PREFIX) -> navController.navigate(route)
+            // 快捷方式/磁贴：直接进快速记账
+            route == "quickAdd" -> navController.navigate("quickAdd")
+            // 分享导入：文件已在缓存里，跳到导入页并预解析
+            route.startsWith(CaptureCenter.ROUTE_IMPORT_FILE_PREFIX) -> {
+                val fileUri = route.removePrefix(CaptureCenter.ROUTE_IMPORT_FILE_PREFIX)
+                vm.parseBillFile(fileUri)
+                navController.navigate("import")
+            }
         }
     }
     // 转场：默认的 700ms 淡入淡出太慢，改成 180ms 淡入 + 轻微横向位移（层级更清楚、手感利落）

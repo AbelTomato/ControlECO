@@ -80,6 +80,9 @@ object CaptureCenter {
     /** 「已自动入账」横幅直达该笔记录的编辑页（route = 前缀 + 交易 id，追加路由，不改既有契约） */
     const val ROUTE_EDIT_PREFIX = "edit/"
 
+    /** 分享导入：route = 前缀 + 文件 uri（ShareImportActivity 落盘后跳转，AppNav 解析并预解析账单） */
+    const val ROUTE_IMPORT_FILE_PREFIX = "import?file="
+
     /** 渠道 v2：横幅提醒（IMPORTANCE_HIGH 才会弹屏幕上方横幅）；旧渠道 capture（DEFAULT 静默）删除 */
     const val CHANNEL_CAPTURE = "capture_alert"
     private const val CHANNEL_LEGACY = "capture"

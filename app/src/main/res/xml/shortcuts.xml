@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  长按图标快捷方式（手动入口，见 docs/自动记账捕获机制.md）：
+  复用通知跳转的 route 契约（CaptureCenter.EXTRA_ROUTE），主界面启动后按 route 导航。
+-->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <shortcut
+        android:enabled="true"
+        android:icon="@android:drawable/ic_menu_add"
+        android:shortcutId="quick_add"
+        android:shortcutLongLabel="@string/shortcut_quick_add_long"
+        android:shortcutShortLabel="@string/shortcut_quick_add_short">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetClass="com.controleco.app.MainActivity"
+            android:targetPackage="com.controleco.app">
+            <extra
+                android:name="controleco.route"
+                android:value="quickAdd" />
+        </intent>
+    </shortcut>
+
+    <shortcut
+        android:enabled="true"
+        android:icon="@android:drawable/ic_menu_agenda"
+        android:shortcutId="pending"
+        android:shortcutLongLabel="@string/shortcut_pending_long"
+        android:shortcutShortLabel="@string/shortcut_pending_short">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetClass="com.controleco.app.MainActivity"
+            android:targetPackage="com.controleco.app">
+            <extra
+                android:name="controleco.route"
+                android:value="pending" />
+        </intent>
+    </shortcut>
+
+    <shortcut
+        android:enabled="true"
+        android:icon="@android:drawable/ic_menu_upload"
+        android:shortcutId="import_bill"
+        android:shortcutLongLabel="@string/shortcut_import_long"
+        android:shortcutShortLabel="@string/shortcut_import_short">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetClass="com.controleco.app.MainActivity"
+            android:targetPackage="com.controleco.app">
+            <extra
+                android:name="controleco.route"
+                android:value="settings/import" />
+        </intent>
+    </shortcut>
+</shortcuts>
