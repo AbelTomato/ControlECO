@@ -57,14 +57,16 @@ private const val GITHUB_REPO_PATH = "ArrogHie/ControlECO"
 private const val GITHUB_REPO_URL = "https://github.com/$GITHUB_REPO_PATH"
 
 /**
- * 个人页：身份卡 + 本月预算（预算总结 + 入口）+ 账本（账户/账单导入）+ 设置入口 + 开源仓库链接。
- * 账本两项从设置页移来（2026-10-12）：预算下方的位置与"账户/分类"的使用频次更匹配。
+ * 个人页：身份卡 + 本月预算（预算总结 + 入口）+ 账本（待确认账单/账户/账单导入）+ 设置入口 + 开源仓库链接。
+ * 账本两项从设置页移来（2026-10-12）：预算下方的位置与"账户/分类"的使用频次更匹配；
+ * 待确认账单入口从首页顶部徽章移来（有笔数时行尾显示警示色笔数）。
  */
 @Composable
 fun ProfileScreen(
     vm: LedgerViewModel,
     onOpenAccount: () -> Unit,
     onOpenImport: () -> Unit,
+    onOpenPending: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenCategories: () -> Unit,
 ) {
@@ -72,6 +74,7 @@ fun ProfileScreen(
     val budget by vm.monthlyBudgetCents.collectAsStateWithLifecycle()
     val spent by vm.homeNetSpent.collectAsStateWithLifecycle()
     val currency by vm.currencySymbol.collectAsStateWithLifecycle()
+    val pendingCount by vm.pendingCount.collectAsStateWithLifecycle()
 
     // 与首页同口径：本月净支出未到位前整页不画（避免预算卡先显示 0 再跳数）
     val spentReady = spent ?: return
@@ -134,9 +137,17 @@ fun ProfileScreen(
 
         Spacer(Modifier.height(18.dp))
 
-        // ---- 账本（从设置页移来：账户与账单导入） ----
+        // ---- 账本（待确认账单 / 账户 / 账单导入） ----
         SectionTitle("账本")
         PaneCard {
+            // 待确认账单（从首页顶部徽章移来）：有笔数时行尾用警示色显示，一眼看出要处理
+            InfoRow(
+                title = "待确认账单",
+                trailing = if (pendingCount > 0) "$pendingCount 笔" else null,
+                trailingColor = if (pendingCount > 0) MaterialTheme.accBook.warning else null,
+                onClick = onOpenPending,
+            )
+            RowDivider()
             InfoRow(title = "账户", onClick = onOpenAccount)
             RowDivider()
             InfoRow(title = "账单导入", onClick = onOpenImport)

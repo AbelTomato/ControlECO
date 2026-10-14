@@ -323,11 +323,10 @@ private fun MainScaffold(
     ) { padding ->
         Box(Modifier.padding(padding).fillMaxSize()) {
             when (tab) {
-                0 -> HomeScreen(vm = vm, onOpenPending = onOpenPending)
+                0 -> HomeScreen(vm = vm)
                 1 -> TransactionListScreen(
                     vm = vm,
                     onEditTransaction = onEditTransaction,
-                    onOpenPending = onOpenPending,
                     scrollToTopTick = reenterTick,
                 )
                 2 -> StatsScreen(vm = vm, scrollToTopTick = reenterTick)
@@ -335,6 +334,7 @@ private fun MainScaffold(
                     vm = vm,
                     onOpenAccount = onOpenAccount,
                     onOpenImport = onOpenImport,
+                    onOpenPending = onOpenPending,
                     onOpenSettings = onOpenSettings,
                     onOpenCategories = onOpenCategories,
                 )

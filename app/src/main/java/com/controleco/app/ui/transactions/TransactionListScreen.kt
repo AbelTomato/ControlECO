@@ -187,7 +187,6 @@ internal fun headerIndexForDay(
 fun TransactionListScreen(
     vm: LedgerViewModel,
     onEditTransaction: (Long) -> Unit,
-    onOpenPending: () -> Unit,
     scrollToTopTick: Int = 0,
 ) {
     val rows by vm.periodRows.collectAsStateWithLifecycle()

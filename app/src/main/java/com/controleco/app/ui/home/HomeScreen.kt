@@ -118,11 +118,10 @@ internal data class CategoryRingData(
 )
 
 @Composable
-fun HomeScreen(vm: LedgerViewModel, onOpenPending: () -> Unit) {
+fun HomeScreen(vm: LedgerViewModel) {
     val budgetCents by vm.monthlyBudgetCents.collectAsStateWithLifecycle()
     val spentCents by vm.homeNetSpent.collectAsStateWithLifecycle()
     val todaySpentCents by vm.homeTodayNetSpent.collectAsStateWithLifecycle()
-    val pendingCount by vm.pendingCount.collectAsStateWithLifecycle()
     val categoryBudgets by vm.categoryBudgets.collectAsStateWithLifecycle()
     val categorySums by vm.homeCategorySums.collectAsStateWithLifecycle()
     val categories by vm.categories.collectAsStateWithLifecycle()
@@ -224,10 +223,6 @@ fun HomeScreen(vm: LedgerViewModel, onOpenPending: () -> Unit) {
         Spacer(Modifier.height(10.dp))
         Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
             MonthChip("${today.year}年${today.monthValue}月")
-            Spacer(Modifier.weight(1f))
-            if (pendingCount > 0) {
-                PendingBadge(count = pendingCount, onClick = onOpenPending)
-            }
         }
 
         Box(
@@ -683,20 +678,6 @@ private fun ModeIndicator(current: Int, onSelect: (Int) -> Unit) {
                 Box(Modifier.height(8.dp).width(width).clip(CircleShape).background(color))
             }
         }
-    }
-}
-
-@Composable
-private fun PendingBadge(count: Int, onClick: () -> Unit) {
-    val ab = MaterialTheme.accBook
-    Box(
-        Modifier
-            .clip(MaterialTheme.shapes.small)
-            .background(ab.warning.copy(alpha = 0.14f))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-    ) {
-        Text("待确认 $count", style = MaterialTheme.typography.labelMedium, color = ab.warning)
     }
 }
 

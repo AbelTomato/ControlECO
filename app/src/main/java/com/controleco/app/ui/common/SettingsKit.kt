@@ -86,12 +86,14 @@ fun RowDivider(startPadding: Int = 16) {
 /**
  * 通用设置行：标题行（标题 + 右侧取值 + 箭头）在上，说明文字整行折行在下。
  * onClick 为 null 时是不可点击的纯展示行（无箭头）；没有说明时行高自动收紧。
+ * [trailingColor] 用于需要强调的取值（如待确认笔数的警示色），缺省用次要文字色。
  */
 @Composable
 fun InfoRow(
     title: String,
     subtitle: String? = null,
     trailing: String? = null,
+    trailingColor: androidx.compose.ui.graphics.Color? = null,
     onClick: (() -> Unit)? = null,
 ) {
     Column(
@@ -112,7 +114,7 @@ fun InfoRow(
                 Text(
                     it,
                     style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = trailingColor ?: MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     modifier = Modifier.padding(start = 8.dp),
                 )
