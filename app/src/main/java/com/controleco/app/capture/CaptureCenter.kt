@@ -130,6 +130,16 @@ object CaptureCenter {
     private val _a11yConnected = MutableStateFlow(false)
     val a11yConnected: StateFlow<Boolean> = _a11yConnected
 
+    private val _overlayDecision = MutableStateFlow<String?>(null)
+
+    /** 最近一次弹卡判定（"已弹出"或未弹原因）：权限页展示，便于回看"为什么没弹卡" */
+    val overlayDecision: StateFlow<String?> = _overlayDecision
+    private var lastOverlayDecision: String?
+        get() = _overlayDecision.value
+        set(value) {
+            _overlayDecision.value = value
+        }
+
     private val _lastEventAt = MutableStateFlow(0L)
     val lastEventAt: StateFlow<Long> = _lastEventAt
 
@@ -152,8 +162,34 @@ object CaptureCenter {
         traceDao = db.traceDao()
         merchantRuleDao = db.merchantRuleDao()
         ConfirmCardWindow.init(appContext)
+        reconcileEntryModePrefs()
         createNotificationChannel()
         cleanup()
+    }
+
+    /**
+     * 启动时校正入账方式（升级迁移，纯判定见 [reconcileEntryModes]）：
+     * 旧版本两个开关彼此独立，机内可能同时为开（互斥只在切换时生效）——
+     * 按定稿默认取向（自动入账优先）清掉悬浮窗入账；
+     * 例外：悬浮窗是显式开启、自动入账从未设置过（旧版默认关）时，尊重用户的悬浮窗选择。
+     */
+    private fun reconcileEntryModePrefs() {
+        val p = prefs()
+        val fix = entryModeFix(
+            autoSet = p.contains(KEY_AUTO_ENTRY_ENABLED),
+            overlaySet = p.contains(KEY_OVERLAY_CONFIRM_ENABLED),
+            autoEntry = isAutoEntryEnabled(),
+            overlayConfirm = isOverlayConfirmEnabled(),
+        )
+        when (fix) {
+            EntryModeFix.DISABLE_OVERLAY ->
+                p.edit().putBoolean(KEY_OVERLAY_CONFIRM_ENABLED, false).apply()
+                    .also { AppLog.i("Overlay", "entry modes reconciled: overlayConfirm=false (auto entry wins)") }
+            EntryModeFix.DISABLE_AUTO ->
+                p.edit().putBoolean(KEY_AUTO_ENTRY_ENABLED, false).apply()
+                    .also { AppLog.i("Ntf", "entry modes reconciled: autoEntry=false (explicit overlay mode)") }
+            EntryModeFix.NONE -> Unit
+        }
     }
 
     private fun createNotificationChannel() {
@@ -510,11 +546,11 @@ object CaptureCenter {
     // ---------- 悬浮确认卡（卡片/通知互斥） ----------
 
     /**
-     * 悬浮窗入账（默认开：授权了悬浮窗权限才生效，未授权自动回落通知）：
+     * 悬浮窗入账（默认关：定稿默认取向是自动入账；授权了悬浮窗权限才生效，未授权自动回落通知）：
      * 捕获时弹出底部确认卡——关闭卡片（✕/点空白/长时间不操作）视为入账，点「忽略」才不入账。
      * 与「自动入账」互斥（开启本项时自动关闭自动入账）。
      */
-    fun isOverlayConfirmEnabled(): Boolean = prefs().getBoolean(KEY_OVERLAY_CONFIRM_ENABLED, true)
+    fun isOverlayConfirmEnabled(): Boolean = prefs().getBoolean(KEY_OVERLAY_CONFIRM_ENABLED, false)
 
     fun setOverlayConfirmEnabled(enabled: Boolean) {
         prefs().edit().putBoolean(KEY_OVERLAY_CONFIRM_ENABLED, enabled).apply()
@@ -545,23 +581,52 @@ object CaptureCenter {
         foregroundPackage = packageName
     }
 
-    /** 卡片显示条件（每次弹出前重新判定：延迟期间用户可能已锁屏/切走/进入本应用） */
-    private fun overlayConditionsOk(sourcePackage: String): Boolean {
+    /**
+     * 卡片显示条件（每次弹出前重新判定：延迟期间用户可能已锁屏/切走/进入本应用）。
+     * [requireForegroundMatch] = false 时忽略"前台匹配"这一条（延迟前预检用：此刻的前台窗口
+     * 可能还是支付保护/安全键盘等系统弹层，等 3 秒后再看用户到底在哪）。
+     * 不满足时把原因写进 [lastOverlayDecision]，权限页/日志可直接回看"为什么没弹卡"。
+     */
+    private fun overlayConditionsOk(sourcePackage: String, requireForegroundMatch: Boolean): Boolean {
         val pm = appContext.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
         val km = appContext.getSystemService(Context.KEYGUARD_SERVICE) as android.app.KeyguardManager
         val fg = foregroundPackage
-        return shouldShowOverlay(
+        val enabled = isOverlayConfirmEnabled()
+        val canDraw = Settings.canDrawOverlays(appContext)
+        val screenOn = pm.isInteractive
+        val locked = km.isKeyguardLocked
+        val matchable = requireForegroundMatch && fg != null
+        val contextMatch = fg != null && CaptureAppCatalog.isWatched(appContext, fg)
+        val ok = shouldShowOverlay(
             OverlayConditions(
-                enabled = isOverlayConfirmEnabled(),
-                canDrawOverlays = Settings.canDrawOverlays(appContext),
+                enabled = enabled,
+                canDrawOverlays = canDraw,
                 appInForeground = appInForeground,
-                screenInteractive = pm.isInteractive,
-                keyguardLocked = km.isKeyguardLocked,
-                foregroundPackage = fg,
+                screenInteractive = screenOn,
+                keyguardLocked = locked,
+                foregroundPackage = if (requireForegroundMatch) fg else null,
                 sourcePackage = sourcePackage,
-                foregroundIsPaymentContext = fg != null && CaptureAppCatalog.isWatched(appContext, fg),
+                foregroundIsPaymentContext = contextMatch,
             ),
         )
+        if (!ok) {
+            val reason = when {
+                !enabled -> "「悬浮窗入账」开关未开"
+                !canDraw -> "未授权悬浮窗权限"
+                appInForeground -> "本应用在前台（用应用内列表）"
+                !screenOn -> "屏幕未点亮"
+                locked -> "已锁屏"
+                matchable -> "当时前台是 $fg，与捕获来源 $sourcePackage 不符"
+                else -> "条件不满足"
+            }
+            lastOverlayDecision = reason
+            AppLog.i(
+                "Overlay",
+                "conditions not met: $reason (enabled=$enabled canDraw=$canDraw appInForeground=$appInForeground " +
+                    "screen=$screenOn locked=$locked fg=$fg source=$sourcePackage)",
+            )
+        }
+        return ok
     }
 
     /**
@@ -577,18 +642,44 @@ object CaptureCenter {
         counterparty: String,
         dedupKey: String,
     ): Boolean {
-        if (!overlayConditionsOk(pending.sourcePackage)) return false
+        // 预检只判"硬条件"（开关/权限/本应用前台/屏幕），不看前台匹配：支付完成瞬间的前台窗口
+        // 可能还是支付保护/安全键盘等系统弹层，等 3 秒后再看用户到底在哪（实测：预检查前台匹配会把卡拒掉）
+        if (!overlayConditionsOk(pending.sourcePackage, requireForegroundMatch = false)) return false
         delay(OVERLAY_DELAY_MS)
-        if (!overlayConditionsOk(pending.sourcePackage)) return false
+        if (!overlayConditionsOk(pending.sourcePackage, requireForegroundMatch = true)) return false
         // 延迟期间条目可能已被确认/丢弃/被同笔富化改写（dedupKey 变化即视为已处理）
-        val fresh = pendingDao.getById(pending.id) ?: return false
-        if (fresh.dedupKey != dedupKey) return false
+        val fresh = pendingDao.getById(pending.id)
+        if (fresh == null || fresh.dedupKey != dedupKey) {
+            lastOverlayDecision = "等待期间条目已处理"
+            return false
+        }
         val categories = categoryDao.getAll()
         val accounts = accountDao.getAll()
         val learned = merchantRuleDao.getAll()
         val shown = showCardOnMain(fresh, categories, accounts, learned, isRefund, sourceLabel, counterparty, dedupKey)
+        lastOverlayDecision = if (shown) "已弹出" else "系统拦截了悬浮窗（支付保护等）"
         AppLog.i("Overlay", if (shown) "confirm card shown for #${pending.id}" else "confirm card unavailable, fallback to notification")
         return shown
+    }
+
+    /**
+     * 富化后补一次"卡片优先"提醒：同笔被后续通道捕获（页面合并/跨通道归并）时，
+     * 若卡片没在展示就重新判定一次——首次尝试可能因当时的系统弹层/时机被拒，
+     * 而此刻用户往往已回到结果页。卡片成功则撤销早先的横幅通知（同一笔不重复打扰）。
+     */
+    private suspend fun retryCardIfNoCard(pendingId: Long) {
+        if (ConfirmCardWindow.showingPendingId == pendingId) return
+        val pending = pendingDao.getById(pendingId) ?: return
+        if (pending.status == PendingStatus.AUTO) return
+        val shown = tryShowConfirmCard(
+            pending = pending,
+            type = pending.type,
+            isRefund = pending.refundMark == RefundMark.REFUND_INCOME,
+            sourceLabel = NotificationRules.sourceLabelOrRule(pending.sourcePackage, pending.ruleName),
+            counterparty = pending.counterparty,
+            dedupKey = pending.dedupKey,
+        )
+        if (shown) cancelCaptureNotification(pendingNotifId(pending.dedupKey))
     }
 
     /** WindowManager 必须在主线程操作；DAO 数据已在 IO 侧取好 */
@@ -830,11 +921,11 @@ object CaptureCenter {
     }
 
     /**
-     * 自动入账：识别到付款后按推测分类/账户直接记账，不再逐笔确认（默认关）。
+     * 自动入账（默认开：定稿默认取向）：识别到付款后按推测分类/账户直接记账，不再逐笔确认。
      * 与「悬浮窗入账」互斥（开启本项时自动关闭悬浮窗入账并收起已弹出的卡片）。
      */
     fun isAutoEntryEnabled(): Boolean =
-        prefs().getBoolean(KEY_AUTO_ENTRY_ENABLED, false)
+        prefs().getBoolean(KEY_AUTO_ENTRY_ENABLED, true)
 
     fun setAutoEntryEnabled(enabled: Boolean) {
         prefs().edit().putBoolean(KEY_AUTO_ENTRY_ENABLED, enabled).apply()
@@ -1276,8 +1367,9 @@ object CaptureCenter {
         val related = findCrossChannelPending(ledger, sourceAt)
         if (related != null) {
             mergeBankInfoIntoPending(related, ledger)
-            // 同笔的悬浮卡正在展示时同步刷新（银行侧只补账户线索，卡片可见）
+            // 同笔的悬浮卡正在展示时同步刷新（银行侧只补账户线索）；没在展示就补试一次弹卡
             refreshCardIfShowing(related.id)
+            retryCardIfNoCard(related.id)
             captureDao.updateMatch(rawId, ledger.ruleName + "·并入待确认", true)
             traceCapture(
                 channel = channel,
@@ -1607,9 +1699,12 @@ object CaptureCenter {
                         dedupKey = related.pending.dedupKey,
                         outcome = TraceOutcome.MERGED_PAGE,
                     )
-                    // 页面富化：若同笔的悬浮卡正在展示，同步刷新卡片内容
-                    refreshCardIfShowing(related.pending.id)
-                    // 页面富化无需再次提醒：同笔通知在入队时已发出，这里只更新待确认数据
+                    // 页面富化：卡片在展示就刷新内容，没在展示就按"卡片优先"再试一次
+                    // （首次尝试可能因支付保护等系统弹层被拒；此刻用户通常已回到结果页）
+                    if (!autoEntered) {
+                        refreshCardIfShowing(related.pending.id)
+                        retryCardIfNoCard(related.pending.id)
+                    }
                     return@launch
                 }
 

@@ -830,6 +830,9 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
     /** 悬浮窗权限（悬浮确认卡的前提；未授权自动回落通知） */
     fun isOverlayGranted(): Boolean = CaptureCenter.canDrawOverlays()
 
+    /** 最近一次弹卡判定（"已弹出"或未弹原因）：权限页展示，排查"为什么没弹卡" */
+    val overlayDecision: StateFlow<String?> = CaptureCenter.overlayDecision
+
     /** debug：弹一张样例确认卡（立即/延迟；不落库） */
     fun showOverlayTest(delayMs: Long = 0, onResult: (String) -> Unit) =
         CaptureCenter.showOverlayTest(delayMs, onResult)

@@ -74,6 +74,60 @@ object PageRules {
 
     private const val MAX_TEXTS = 200
 
+    // ---------- 页面形状闸门（结果页 vs 应用主界面/消息流） ----------
+
+    /**
+     * 消息中心用语：出现即说明这不是交易结果页。
+     * 实测样本（2026-10-14）：支付宝首页的"最近消息"卡片里挂着
+     * "淘宝闪购极速版 付款成功￥21.00 1小时前"的历史预览，整页曾被误判成支付成功页记一笔。
+     */
+    private val messageStreamMarkers = listOf("最近消息", "条新消息", "消息盒子", "消息中心", "点击查看全部消息")
+
+    /** 应用主界面入口词：同一页出现 ≥3 个即视为首页宫格，不是结果页 */
+    private val appHomeMarkers = listOf(
+        "扫一扫", "收付款", "卡包", "出行", "市民中心", "余额宝", "花呗", "蚂蚁森林", "我的快递", "转账",
+    )
+
+    /** 微信主界面底栏：两者同时出现说明是聊天列表/主界面壳，不是结果页 */
+    private val wechatShellMarkers = listOf("通讯录", "发现")
+
+    /** 消息预览的相对时间戳：锚点（或紧邻节点）带这类字样 → 是消息流里的历史预览 */
+    private val relativeTimeMarkers = listOf("刚刚", "秒前", "分钟前", "小时前", "昨天", "天前")
+
+    /** 富页面阈值：节点数达到该值且锚点仍埋得很深 → 判定为应用主界面（结果页信息少、锚点靠前） */
+    private const val RICH_PAGE_NODE_COUNT = 30
+    private const val ANCHOR_MAX_TOP_INDEX = 8
+
+    /** 锚点前后看几个节点判"消息预览" */
+    private const val PREVIEW_NEIGHBOR_WINDOW = 2
+
+    /**
+     * 页面形状闸门：拒掉"应用主界面 / 消息流"里出现的伪锚点（含历史账单预览）。
+     * 返回 null = 形状像真正的交易结果页；否则返回拒绝原因（进日志）。
+     * 判据（任一命中即拒）：
+     * 1. 消息中心用语（最近消息/条新消息/…）；
+     * 2. 首页宫格入口词 ≥3 个，或微信主界面底栏（通讯录+发现）；
+     * 3. 锚点（或前后 2 个节点）带相对时间（"1小时前"）——消息预览的签名；
+     * 4. 富页面 + 锚点埋深：节点 ≥30 且锚点下标 >8（支付完成页信息很少、锚点必然靠前）。
+     */
+    private fun nonResultPageReason(nodes: List<String>, anchorIdx: Int): String? {
+        val joined = nodes.joinToString(" ")
+        if (messageStreamMarkers.any { joined.contains(it) }) return "message center surface"
+        if (appHomeMarkers.count { joined.contains(it) } >= 3) return "app home surface"
+        if (wechatShellMarkers.all { joined.contains(it) }) return "wechat shell surface"
+        if (anchorIdx >= 0) {
+            val lo = maxOf(0, anchorIdx - PREVIEW_NEIGHBOR_WINDOW)
+            val hi = minOf(nodes.size, anchorIdx + PREVIEW_NEIGHBOR_WINDOW + 1)
+            if ((lo until hi).any { i -> relativeTimeMarkers.any { nodes[i].contains(it) } }) {
+                return "anchor looks like message preview"
+            }
+            if (nodes.size >= RICH_PAGE_NODE_COUNT && anchorIdx > ANCHOR_MAX_TOP_INDEX) {
+                return "rich page with buried anchor"
+            }
+        }
+        return null
+    }
+
     data class ParsedPage(
         val type: TxType,
         val amountCents: Long,
@@ -118,6 +172,14 @@ object PageRules {
         }
         val kind = if (isBillDetail) "账单详情" else "支付页"
 
+        // 页面形状闸门：主界面/消息流（含历史账单预览）不是交易结果页
+        val anchorIdx = nodes.indexOfFirst { node -> (successKeywords + billDetailKeywords).any { node.contains(it) } }
+        val shapeReject = nonResultPageReason(nodes, anchorIdx)
+        if (shapeReject != null) {
+            AppLog.i("Page", "skip ($shapeReject) pkg=$packageName kind=$kind nodes=${nodes.size} anchorIdx=$anchorIdx")
+            return null
+        }
+
         // 退款页跳过：退款到账由通知通道与账单导入覆盖，页面侧暂不识别（见维护指南，扩规则再加）
         if (joined.contains("退款") || joined.contains("退回")) {
             AppLog.d("Page", "skip (refund page, v1 not covered) pkg=$packageName kind=$kind")
@@ -138,7 +200,6 @@ object PageRules {
         // 金额优先级：锚点节点里的实付金额（"支付成功￥12.90"，真实样本标题节点即含实付）
         // → "金额"标签行 → 独立 ¥ 节点 → 任意 ¥ 金额。
         // 锚点优先是因为成功页会同时出现订单金额/优惠金额等干扰节点。
-        val anchorIdx = nodes.indexOfFirst { node -> (successKeywords + billDetailKeywords).any { node.contains(it) } }
         val amountText = (if (anchorIdx >= 0) paidAmountInAnchor(nodes[anchorIdx]) else null)
             ?: labeledAmount.find(joined)?.groupValues?.get(1)
             ?: nodes.firstNotNullOfOrNull { standaloneAmount.find(it)?.groupValues?.get(1) }
@@ -261,8 +322,15 @@ object PageRules {
             return null
         }
 
-        // 金额优先级与支出路径一致：锚点节点内的实付/实收金额 → "金额"标签行 → 独立 ¥ 节点 → 任意 ¥
+        // 页面形状闸门与支出路径共用：消息流/主界面里的"已收钱"预览同样不能记成收入
         val anchorIdx = nodes.indexOfFirst { node -> incomeAnchors.any { node.contains(it) } }
+        val shapeReject = nonResultPageReason(nodes, anchorIdx)
+        if (shapeReject != null) {
+            AppLog.i("Page", "skip income ($shapeReject) pkg=$packageName nodes=${nodes.size} anchorIdx=$anchorIdx")
+            return null
+        }
+
+        // 金额优先级与支出路径一致：锚点节点内的实付/实收金额 → "金额"标签行 → 独立 ¥ 节点 → 任意 ¥
         val amountText = (if (anchorIdx >= 0) paidAmountInAnchor(nodes[anchorIdx]) else null)
             ?: labeledAmount.find(joined)?.groupValues?.get(1)
             ?: nodes.firstNotNullOfOrNull { standaloneAmount.find(it)?.groupValues?.get(1) }

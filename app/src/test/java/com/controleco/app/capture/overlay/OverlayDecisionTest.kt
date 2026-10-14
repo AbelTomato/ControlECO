@@ -112,6 +112,57 @@ class OverlayDecisionTest {
             ),
         )
     }
+
+    // ---------- 系统弹层/桌面（支付保护、安全键盘、付完回桌面） ----------
+
+    @Test
+    fun `系统弹层占据前台时按判不出处理（支付保护或安全键盘）`() {
+        // 支付瞬间前台窗口常是系统组件：此时不能因"前台与来源不符"把卡片拒掉
+        assertTrue(
+            shouldShowOverlay(
+                conditions(foregroundPackage = "com.android.systemui", sourcePackage = NotificationRules.ALIPAY),
+            ),
+        )
+        assertTrue(
+            shouldShowOverlay(
+                conditions(foregroundPackage = "com.miui.securitycenter", sourcePackage = NotificationRules.ALIPAY),
+            ),
+        )
+    }
+
+    @Test
+    fun `付完款回到桌面时放行`() {
+        assertTrue(
+            shouldShowOverlay(
+                conditions(foregroundPackage = "com.miui.home", sourcePackage = NotificationRules.ALIPAY),
+            ),
+        )
+        assertTrue(
+            shouldShowOverlay(
+                conditions(foregroundPackage = "com.huawei.android.launcher", sourcePackage = NotificationRules.WECHAT),
+            ),
+        )
+    }
+
+    @Test
+    fun `别的普通应用在前台仍然不弹卡`() {
+        // 系统弹层之外的陌生应用（用户已切走）依旧不打扰
+        assertFalse(
+            shouldShowOverlay(
+                conditions(foregroundPackage = "com.xingin.xhs", sourcePackage = NotificationRules.ALIPAY),
+            ),
+        )
+    }
+
+    @Test
+    fun `系统界面识别按包含匹配`() {
+        assertTrue(isSystemSurface("com.android.systemui"))
+        assertTrue(isSystemSurface("com.miui.home"))
+        assertTrue(isSystemSurface("com.sec.android.app.launcher"))
+        assertTrue(isSystemSurface("com.miui.securitycenter"))
+        assertFalse(isSystemSurface("com.eg.android.AlipayGphone"))
+        assertFalse(isSystemSurface("com.tencent.mm"))
+    }
 }
 
 /**

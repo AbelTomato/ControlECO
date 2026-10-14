@@ -274,6 +274,24 @@ private fun AmountReplySetting(vm: LedgerViewModel) {
 }
 
 /**
+ * 最近一次弹卡判定（排查用）：卡片没弹时直接显示原因（开关未开/未授权/前台不符/系统拦截），
+ * 不用抓日志就能定位；"已弹出"则显示正常状态。
+ */
+@Composable
+private fun OverlayDecisionHint(vm: LedgerViewModel) {
+    val decision by vm.overlayDecision.collectAsStateWithLifecycle()
+    val text = decision ?: return
+    RowDivider()
+    Row(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+        Text(
+            if (text == "已弹出") "最近一次捕获：悬浮卡已正常弹出" else "最近一次捕获未弹卡：$text（排查用）",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/**
  * 悬浮窗入账：捕获到动账时在支付页上方弹出底部确认卡片（预填金额/商户/分类/账户），
  * 关闭卡片或长时间不操作视为入账，点「忽略」才不入账。未授权悬浮窗权限时自动回落横幅通知。
  */
@@ -299,6 +317,7 @@ private fun OverlaySection(vm: LedgerViewModel, resumeTick: Int, onOpenOverlayPe
             checked = overlayOn,
             onCheckedChange = { vm.setOverlayConfirmEnabled(it) },
         )
+        OverlayDecisionHint(vm)
         RowDivider()
         PermissionTutorial(
             "悬浮窗授权教程",

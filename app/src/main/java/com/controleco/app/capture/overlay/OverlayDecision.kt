@@ -63,12 +63,26 @@ internal data class OverlayConditions(
     val foregroundIsPaymentContext: Boolean = false,
 )
 
+/**
+ * 系统界面/桌面：支付瞬间的前台窗口常被这些包名占据——支付保护/安全键盘/系统弹层
+ * （com.android.systemui、com.miui.securitycenter 等）以及用户付完款后回到的桌面。
+ * 它们不代表"用户在别的应用里"，判不出用户身处何方时按"判不出"处理（放行）。
+ */
+private val systemSurfaceMarkers = listOf(
+    "systemui", "launcher", ".home", "securitycenter", "permissioncontroller", "systemuiplugin",
+)
+
+internal fun isSystemSurface(packageName: String): Boolean =
+    systemSurfaceMarkers.any { packageName.contains(it, ignoreCase = true) }
+
 internal fun shouldShowOverlay(c: OverlayConditions): Boolean = when {
     !c.enabled || !c.canDrawOverlays -> false
     c.appInForeground -> false
     !c.screenInteractive || c.keyguardLocked -> false
     // 判不出前台应用（无障碍未开）→ 放行
     c.foregroundPackage == null -> true
+    // 前台是系统弹层/桌面（支付保护、安全键盘、付完回桌面）→ 等于判不出，放行
+    isSystemSurface(c.foregroundPackage) -> true
     // 人还在来源应用（最常见的场景）
     c.foregroundPackage == c.sourcePackage -> true
     // 银行侧（短信/银行推送/云闪付）到达时用户常不在来源应用里（在收银台/别处），不做前台匹配
