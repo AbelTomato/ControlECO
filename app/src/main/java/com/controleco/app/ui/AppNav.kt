@@ -131,7 +131,7 @@ fun AccBookNav(
             route == null -> Unit
             route == CaptureCenter.ROUTE_PENDING -> navController.navigate("pending")
             route == CaptureCenter.ROUTE_REFUND_LINK -> navController.navigate("refundLink")
-            // 「已自动入账」横幅：直达该笔记录的编辑页（追加路由：edit/{txId}）
+            // 「已记入一笔账」通知：直达该笔记录的编辑页（追加路由：edit/{txId}）
             route.startsWith(CaptureCenter.ROUTE_EDIT_PREFIX) -> navController.navigate(route)
             // 快捷方式/磁贴：直接进快速记账
             route == "quickAdd" -> navController.navigate("quickAdd")

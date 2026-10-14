@@ -313,7 +313,6 @@ private fun OverlaySection(vm: LedgerViewModel, resumeTick: Int, onOpenOverlayPe
         RowDivider()
         SwitchRow(
             title = "悬浮窗入账",
-            subtitle = "关闭卡片或长时间不操作视为入账，点「忽略」不入账（与「自动入账」互斥；未授权时回落通知）",
             checked = overlayOn,
             onCheckedChange = { vm.setOverlayConfirmEnabled(it) },
         )
@@ -323,8 +322,10 @@ private fun OverlaySection(vm: LedgerViewModel, resumeTick: Int, onOpenOverlayPe
             "悬浮窗授权教程",
             listOf(
                 "推荐：点上方「去授权」，直达「显示在其他应用上层 / 悬浮窗」开关，打开即可。" +
-                    "未授权不影响记账：动账提醒会自动走横幅通知。",
+                    "未授权不影响记账：捕获到的账会先记好，只是少了确认卡。",
                 overlayPathFor(Brand.current()),
+                "卡片打开时这笔账已经记好：改金额/分类/账户后关掉卡片即同步修改；" +
+                    "点「忽略」删除这笔；关掉卡片（或长时间不操作）＝保留这笔。",
                 "若开关为灰色不可开：安卓 13+ 需先做「允许受限制的设置」（见通知监听教程第 1 步）。",
                 "小米/澎湃额外需要「后台弹出界面」类权限：设置 → 应用管理 → 我ECO → 权限 → 后台弹出界面，允许。",
                 "付款后若 Logcat 有 confirm card shown 但看不到卡片：是支付保护中心/支付保险箱拦截，" +

@@ -110,6 +110,19 @@ interface TransactionDao {
     )
     suspend fun updateCapturedByExternalId(externalId: String, amountCents: Long, timestamp: Long, counterparty: String, note: String)
 
+    /** 悬浮卡"先入账、后修改"：按捕获去重键找回该笔交易（externalId = "NTF:" + dedupKey） */
+    @Query("SELECT id FROM transactions WHERE externalId = :externalId LIMIT 1")
+    suspend fun findIdByExternalId(externalId: String): Long?
+
+    /** 悬浮卡编辑同步：金额/分类/账户/商户回写已入账的交易（「忽略」与「撤销」走删除） */
+    @Query(
+        """UPDATE transactions
+           SET amountCents = :amountCents, categoryId = :categoryId,
+               accountId = :accountId, counterparty = :counterparty
+           WHERE id = :id"""
+    )
+    suspend fun updateEnteredFields(id: Long, amountCents: Long, categoryId: Long, accountId: Long, counterparty: String)
+
     /** 退款关联候选：近 60 天未退款的支出（供"无金额退款通知→手动关联"使用） */
     @Query(
         """SELECT t.id AS id, t.type AS type, t.amountCents AS amountCents, t.timestamp AS timestamp,

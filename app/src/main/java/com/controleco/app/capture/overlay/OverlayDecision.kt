@@ -19,12 +19,14 @@ internal const val OVERLAY_AUTO_DISMISS_MS = 60_000L
 /** 确认后的「已记入 · 撤销」细条停留时长 */
 internal const val SAVED_STRIP_DISMISS_MS = 6_000L
 
-/** 关闭卡片时的卡内当前值（关闭 = 视为入账，用这份值落账） */
+/** 关闭卡片时的卡内当前值（关闭 = 保留这笔账，用户改过的字段同步回去） */
 internal data class DismissSnapshot(
     val amountCents: Long,
     val categoryId: Long?,
     val accountId: Long?,
     val counterparty: String,
+    /** 用户在卡片里改过任何字段（没有改动就不必回写数据库） */
+    val edited: Boolean = false,
 )
 
 /**
@@ -38,6 +40,13 @@ internal fun dismissOutcome(snapshot: DismissSnapshot): DismissOutcome = when {
     snapshot.categoryId == null || snapshot.accountId == null -> DismissOutcome.KEEP_PENDING
     else -> DismissOutcome.ENTER
 }
+
+/**
+ * "已入账"卡片的编辑能否同步回账目：金额/分类/账户齐备才写回；
+ * 卡内金额被清空或分类/账户缺失时**保持原记录不动**（已入账的账不许被改坏）。
+ */
+internal fun canSyncOverlayEdits(snapshot: DismissSnapshot): Boolean =
+    dismissOutcome(snapshot) == DismissOutcome.ENTER
 
 /** 卡片显示条件（四个入参都可能变，弹出前需再判一次） */
 internal data class OverlayConditions(

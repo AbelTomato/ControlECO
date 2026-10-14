@@ -74,6 +74,7 @@ internal object ConfirmCardWindow {
         categories: List<CategoryEntity>,
         accounts: List<AccountEntity>,
         learnedRules: List<com.controleco.app.data.db.MerchantRuleEntity> = emptyList(),
+        alreadyEntered: Boolean = false,
         onConfirm: (amountCents: Long, categoryId: Long, accountId: Long, counterparty: String) -> Unit,
         onIgnore: () -> Unit,
         onDismiss: (DismissSnapshot) -> Unit,
@@ -88,6 +89,7 @@ internal object ConfirmCardWindow {
         val view = buildOverlayComposeView(appContext, host) {
             ConfirmCardContent(
                 state = state,
+                alreadyEntered = alreadyEntered,
                 onConfirm = { amountCents, categoryId, accountId, counterparty ->
                     onConfirm(amountCents, categoryId, accountId, counterparty)
                 },
@@ -214,8 +216,9 @@ internal object ConfirmCardWindow {
     // ---------- 内部 ----------
 
     /**
-     * ✕ / 点卡片上方空白 / 长时间无操作：关闭卡片 = 视为入账。
-     * 卡内当前值打包成 [DismissSnapshot] 交给 onDismiss；窗口先移除再回调（回调可能要弹「已记入」细条）。
+     * ✕ / 点卡片上方空白 / 长时间无操作：关闭卡片。
+     * 卡内当前值（含"是否改过"标记）打包成 [DismissSnapshot] 交给 onDismiss；
+     * 窗口先移除再回调（回调可能要弹「已记入」细条）。
      */
     private fun handleDismiss() {
         val cb = dismissCallback ?: return
@@ -224,6 +227,7 @@ internal object ConfirmCardWindow {
             categoryId = state.categoryId,
             accountId = state.accountId,
             counterparty = state.counterparty,
+            edited = state.userEdited,
         )
         if (dismissConfirm()) cb(snapshot)
     }

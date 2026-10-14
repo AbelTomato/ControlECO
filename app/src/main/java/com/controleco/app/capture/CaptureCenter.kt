@@ -8,6 +8,7 @@ import android.os.SystemClock
 import android.provider.Settings
 import com.controleco.app.AccBookApp
 import com.controleco.app.BuildConfig
+import com.controleco.app.capture.overlay.canSyncOverlayEdits
 import com.controleco.app.capture.overlay.ConfirmCardWindow
 import com.controleco.app.capture.overlay.DismissOutcome
 import com.controleco.app.capture.overlay.dismissOutcome
@@ -208,13 +209,13 @@ object CaptureCenter {
         }.onFailure { AppLog.w("Ntf", "create channel failed", it) }
     }
 
-    /** 系统通知（横幅）：点击跳转 App 内对应页面（待确认队列 / 退款关联）；可带「忽略」动作 */
+    /** 系统通知（横幅）：点击跳转 App 内对应页面（该笔编辑页 / 待确认队列 / 退款关联）；可带动作按钮 */
     private fun postCaptureNotification(
         title: String,
         text: String,
         route: String,
         notifId: Int = title.hashCode(),
-        ignore: IgnoreTarget? = null,
+        action: androidx.core.app.NotificationCompat.Action? = null,
     ) {
         if (!isCaptureNotifyEnabled()) return
         if (!canPostNotifications()) {
@@ -238,7 +239,7 @@ object CaptureCenter {
             .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
             .setCategory(androidx.core.app.NotificationCompat.CATEGORY_REMINDER)
             .setAutoCancel(true)
-        ignore?.let { builder.addAction(ignoreAction(it)) }
+        action?.let { builder.addAction(it) }
         runCatching {
             androidx.core.app.NotificationManagerCompat.from(appContext).notify(NOTIF_TAG, notifId, builder.build())
             AppLog.i("Ntf", "capture notification posted: $title")
@@ -247,6 +248,9 @@ object CaptureCenter {
 
     /** 待确认入账通知的确定性 id（同一笔被处理时按 id 撤销通知） */
     private fun pendingNotifId(dedupKey: String): Int = "pending|$dedupKey".hashCode()
+
+    /** 已入账通知的确定性 id（与旧「已自动入账」共用同一 id 方案） */
+    private fun entryNotifId(dedupKey: String): Int = "auto|$dedupKey".hashCode()
 
     /** 撤销捕获提醒通知（卡片里确认/忽略后调用；通知没发过则静默失败） */
     private fun cancelCaptureNotification(notifId: Int) {
@@ -281,11 +285,36 @@ object CaptureCenter {
     ) {
         if (pendingId > 0) {
             val pending = pendingDao.getById(pendingId)
-            if (pending != null && tryShowConfirmCard(pending, type, isRefund, sourceLabel, counterparty, dedupKey)) {
+            if (pending != null &&
+                tryShowConfirmCard(pending, alreadyEntered = false, isRefund, sourceLabel, counterparty, dedupKey)
+            ) {
                 return
             }
         }
         postPendingNotification(type, isRefund, amountCents, sourceLabel, counterparty, dedupKey)
+    }
+
+    /**
+     * 已入账后的提醒（卡片/通知互斥）：
+     * - 悬浮窗入账：弹「已记入（可改/可删）」卡片；卡片弹不出来账也在——这正是"先入账后弹卡"的意义；
+     * - 入账提醒：卡片没弹（或没开悬浮窗）时发「已记入一笔 X」通知（点击进该笔编辑页，附「撤销」）。
+     */
+    private suspend fun announceEntry(
+        entered: Entered,
+        type: TxType,
+        isRefund: Boolean,
+        amountCents: Long,
+        sourceLabel: String,
+        counterparty: String,
+        dedupKey: String,
+    ) {
+        val pending = if (entered.pendingId > 0) pendingDao.getById(entered.pendingId) else null
+        if (pending != null &&
+            tryShowConfirmCard(pending, alreadyEntered = true, isRefund, sourceLabel, counterparty, dedupKey)
+        ) {
+            return
+        }
+        postEntryNotification(entered.txId, type, isRefund, amountCents, counterparty, sourceLabel, dedupKey)
     }
 
     /** 横幅通知（卡片不可用/收起后的兜底提醒；「已自动入账」等其它提醒另走 postCaptureNotification） */
@@ -313,7 +342,36 @@ object CaptureCenter {
             text,
             ROUTE_PENDING,
             pendingNotifId(dedupKey),
-            ignore = pendingId.takeIf { it > 0 }?.let { IgnoreTarget(it, dedupKey) },
+            action = pendingId.takeIf { it > 0 }?.let { ignoreAction(IgnoreTarget(it, dedupKey)) },
+        )
+    }
+
+    /**
+     * 「已记入一笔账」通知（入账提醒的常态）：告知账已记好，**不是**"去待确认列表处理"的入口——
+     * 点击进该笔的编辑页，另附「撤销」一键删除。
+     */
+    private fun postEntryNotification(
+        txId: Long,
+        type: TxType,
+        isRefund: Boolean,
+        amountCents: Long,
+        counterparty: String,
+        sourceLabel: String,
+        dedupKey: String,
+    ) {
+        if (txId <= 0) return
+        val kind = when {
+            isRefund -> "退款"
+            type == TxType.EXPENSE -> "支出"
+            else -> "收入"
+        }
+        val who = counterparty.ifBlank { sourceLabel }
+        postCaptureNotification(
+            "已记入一笔$kind",
+            Money.formatYuan(amountCents) + " · $who · 点击可修改",
+            "$ROUTE_EDIT_PREFIX$txId",
+            entryNotifId(dedupKey),
+            action = undoEntryAction(txId, dedupKey),
         )
     }
 
@@ -441,6 +499,45 @@ object CaptureCenter {
         )
         return androidx.core.app.NotificationCompat.Action.Builder(android.R.drawable.ic_menu_close_clear_cancel, "忽略", pi).build()
     }
+
+    /** 「撤销」action（已入账通知）：一键删除这笔已记的账（显式组件、非导出） */
+    private fun undoEntryAction(txId: Long, dedupKey: String): androidx.core.app.NotificationCompat.Action {
+        val intent = android.content.Intent(appContext, CaptureActionReceiver::class.java).apply {
+            action = CaptureActionReceiver.ACTION_UNDO
+            putExtra(CaptureActionReceiver.EXTRA_TX_ID, txId)
+            putExtra(CaptureActionReceiver.EXTRA_DEDUP_KEY, dedupKey)
+        }
+        val pi = android.app.PendingIntent.getBroadcast(
+            appContext,
+            ("undo|$dedupKey").hashCode(),
+            intent,
+            android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        return androidx.core.app.NotificationCompat.Action.Builder(android.R.drawable.ic_menu_close_clear_cancel, "撤销", pi).build()
+    }
+
+    /** 通知栏「撤销」入口（CaptureActionReceiver 调用）：删除已入账的那笔 + 对应 AUTO 条目 */
+    fun undoEntryFromNotification(txId: Long, dedupKey: String) {
+        if (!initialized) return
+        scope.launch {
+            runCatching { if (txId > 0) txDao.deleteById(txId) }
+                .onFailure { AppLog.w("Ntf", "undo entry delete failed", it) }
+            if (dedupKey.isNotBlank()) {
+                pendingDao.deleteByDedupKey(dedupKey)
+                cancelCaptureNotification(entryNotifId(dedupKey))
+                if (ConfirmCardWindow.showingPendingId > 0 &&
+                    ConfirmCardWindow.showingPendingId == pendingIdOfDedup(dedupKey)
+                ) {
+                    mainHandler.post { ConfirmCardWindow.dismissConfirm() }
+                }
+            }
+            toast("已撤销")
+            AppLog.i("Ntf", "undo entry from notification tx=#$txId key=$dedupKey")
+        }
+    }
+
+    private suspend fun pendingIdOfDedup(dedupKey: String): Long =
+        pendingDao.getMergeable().firstOrNull { it.dedupKey == dedupKey }?.id ?: -1L
 
     /** 通知栏「忽略」入口（CaptureActionReceiver 调用） */
     fun ignoreFromNotification(pendingId: Long, dedupKey: String) {
@@ -631,12 +728,14 @@ object CaptureCenter {
 
     /**
      * 尝试弹确认卡。返回 true = 卡片已展示（本次不再发通知）。
+     * [alreadyEntered] = true（悬浮窗入账的常态）：卡片是"已入账，可改/可删"；
+     * false：待确认条目（金额待补 / 无可推测分类 / 三个开关全关的完全手动模式）。
      * 延迟 [OVERLAY_DELAY_MS] 再弹：支付保护层在支付页停留期会拦截悬浮窗（阶段三旧结论），
-     * 延迟后重新判定条件与条目（可能已被确认/丢弃）；`addView` 失败同样回落通知。
+     * 延迟后重新判定条件与条目（可能已被处理）；`addView` 失败同样回落通知。
      */
     private suspend fun tryShowConfirmCard(
         pending: PendingTransactionEntity,
-        type: TxType,
+        alreadyEntered: Boolean,
         isRefund: Boolean,
         sourceLabel: String,
         counterparty: String,
@@ -656,7 +755,7 @@ object CaptureCenter {
         val categories = categoryDao.getAll()
         val accounts = accountDao.getAll()
         val learned = merchantRuleDao.getAll()
-        val shown = showCardOnMain(fresh, categories, accounts, learned, isRefund, sourceLabel, counterparty, dedupKey)
+        val shown = showCardOnMain(fresh, categories, accounts, learned, alreadyEntered, isRefund, sourceLabel, counterparty, dedupKey)
         lastOverlayDecision = if (shown) "已弹出" else "系统拦截了悬浮窗（支付保护等）"
         AppLog.i("Overlay", if (shown) "confirm card shown for #${pending.id}" else "confirm card unavailable, fallback to notification")
         return shown
@@ -670,16 +769,20 @@ object CaptureCenter {
     private suspend fun retryCardIfNoCard(pendingId: Long) {
         if (ConfirmCardWindow.showingPendingId == pendingId) return
         val pending = pendingDao.getById(pendingId) ?: return
-        if (pending.status == PendingStatus.AUTO) return
+        val alreadyEntered = pending.status == PendingStatus.AUTO
         val shown = tryShowConfirmCard(
             pending = pending,
-            type = pending.type,
+            alreadyEntered = alreadyEntered,
             isRefund = pending.refundMark == RefundMark.REFUND_INCOME,
             sourceLabel = NotificationRules.sourceLabelOrRule(pending.sourcePackage, pending.ruleName),
             counterparty = pending.counterparty,
             dedupKey = pending.dedupKey,
         )
-        if (shown) cancelCaptureNotification(pendingNotifId(pending.dedupKey))
+        if (shown) {
+            cancelCaptureNotification(
+                if (alreadyEntered) entryNotifId(pending.dedupKey) else pendingNotifId(pending.dedupKey),
+            )
+        }
     }
 
     /** WindowManager 必须在主线程操作；DAO 数据已在 IO 侧取好 */
@@ -688,6 +791,7 @@ object CaptureCenter {
         categories: List<com.controleco.app.data.db.CategoryEntity>,
         accounts: List<com.controleco.app.data.db.AccountEntity>,
         learned: List<com.controleco.app.data.db.MerchantRuleEntity>,
+        alreadyEntered: Boolean,
         isRefund: Boolean,
         sourceLabel: String,
         counterparty: String,
@@ -699,25 +803,40 @@ object CaptureCenter {
                 categories = categories,
                 accounts = accounts,
                 learnedRules = learned,
+                alreadyEntered = alreadyEntered,
                 onConfirm = { amountCents, categoryId, accountId, counterpartyText ->
+                    // 已入账模式：「保存」= 同步修改（细条可撤销整笔）；待确认模式：「记一笔」= 入账
                     mainHandler.post { ConfirmCardWindow.dismissConfirm() }
-                    scope.launch { confirmFromOverlay(pending, amountCents, categoryId, accountId, counterpartyText) }
+                    scope.launch {
+                        if (alreadyEntered) {
+                            saveEnteredEdits(pending, amountCents, categoryId, accountId, counterpartyText, withStrip = true)
+                        } else {
+                            confirmFromOverlay(pending, amountCents, categoryId, accountId, counterpartyText)
+                        }
+                    }
                 },
                 onIgnore = {
                     mainHandler.post { ConfirmCardWindow.dismissConfirm() }
-                    scope.launch { ignoreFromOverlay(pending.id, pending.dedupKey) }
+                    scope.launch {
+                        if (alreadyEntered) ignoreEntered(pending) else ignoreFromOverlay(pending.id, pending.dedupKey)
+                    }
                 },
                 onDismiss = { snapshot ->
-                    // 关闭卡片（✕/点空白/长时间无操作）= 视为入账：卡内值齐备直接落账，
-                    // 否则（金额缺失/分类账户不全）保留待确认并按「入账提醒」补发通知，不丢单
-                    mainHandler.post { ConfirmCardWindow.dismissConfirm() } // 窗口侧已移除，幂等兜底
+                    // 卡片已移除，这里再调一次是幂等兜底
+                    mainHandler.post { ConfirmCardWindow.dismissConfirm() }
                     val catId = snapshot.categoryId
                     val accId = snapshot.accountId
-                    if (dismissOutcome(snapshot) == DismissOutcome.ENTER && catId != null && accId != null) {
-                        AppLog.i(
-                            "Overlay",
-                            "card dismissed -> enter #${pending.id} ${Money.formatYuan(snapshot.amountCents)}",
-                        )
+                    if (alreadyEntered) {
+                        // 关闭 = 保留这笔已入账；用户改过的字段同步回去（没改过就不写库）
+                        if (snapshot.edited && canSyncOverlayEdits(snapshot) && catId != null && accId != null) {
+                            AppLog.i("Overlay", "card dismissed -> sync edits #${pending.id} ${Money.formatYuan(snapshot.amountCents)}")
+                            scope.launch { saveEnteredEdits(pending, snapshot.amountCents, catId, accId, snapshot.counterparty, withStrip = true) }
+                        } else {
+                            AppLog.i("Overlay", "card dismissed -> entry kept #${pending.id} (edited=${snapshot.edited})")
+                        }
+                    } else if (dismissOutcome(snapshot) == DismissOutcome.ENTER && catId != null && accId != null) {
+                        // 待确认条目：关闭 = 视为入账（旧语义）
+                        AppLog.i("Overlay", "card dismissed -> enter #${pending.id} ${Money.formatYuan(snapshot.amountCents)}")
                         scope.launch { confirmFromOverlay(pending, snapshot.amountCents, catId, accId, snapshot.counterparty) }
                     } else {
                         AppLog.i("Overlay", "card dismissed -> keep pending #${pending.id} (amount/category/account incomplete)")
@@ -729,6 +848,45 @@ object CaptureCenter {
             )
             if (cont.isActive) cont.resume(shown)
         }
+    }
+
+    /** 已入账卡片的「保存」/关闭同步：卡内当前值写回交易与 AUTO 条目（细条可撤销整笔） */
+    private suspend fun saveEnteredEdits(
+        pending: PendingTransactionEntity,
+        amountCents: Long,
+        categoryId: Long,
+        accountId: Long,
+        counterparty: String,
+        withStrip: Boolean,
+    ) {
+        val ok = runCatching {
+            PendingActions.updateEntered(txDao, pendingDao, merchantRuleDao, pending, categoryId, accountId, counterparty, amountCents)
+        }.onFailure { AppLog.e("Overlay", "sync entered edits failed", it) }.getOrDefault(false)
+        if (!ok) {
+            toast("这笔已被撤销，未更新")
+            return
+        }
+        cancelCaptureNotification(entryNotifId(pending.dedupKey))
+        toast("已更新")
+        if (withStrip) {
+            mainHandler.post {
+                ConfirmCardWindow.showSaved(pending.type, amountCents) {
+                    scope.launch {
+                        PendingActions.undoEntered(txDao, pendingDao, pending.dedupKey)
+                        toast("已撤销")
+                    }
+                }
+            }
+        }
+    }
+
+    /** 已入账卡片的「忽略」：删除这笔账（含 AUTO 条目），一条点击纠错 */
+    private suspend fun ignoreEntered(pending: PendingTransactionEntity) {
+        val removed = PendingActions.undoEntered(txDao, pendingDao, pending.dedupKey)
+        pendingDao.deleteById(pending.id)
+        cancelCaptureNotification(entryNotifId(pending.dedupKey))
+        toast(if (removed) "已忽略，这笔未记账" else "这笔已被撤销")
+        AppLog.i("Overlay", "ignored (entry deleted=$removed) #${pending.id} key=${pending.dedupKey}")
     }
 
     /** 卡片确认入账：写账 + 撤销细条 + 撤销即删除该笔 */
@@ -811,13 +969,14 @@ object CaptureCenter {
                     categories = categories,
                     accounts = accounts,
                     learnedRules = emptyList(),
+                    alreadyEntered = true, // 样例按真实形态展示（"已记入一笔支出"，改/删都只是 Toast）
                     onConfirm = { _, _, _, _ ->
                         mainHandler.post { ConfirmCardWindow.dismissConfirm() }
-                        toast("测试卡片：未入账")
+                        toast("测试卡片：保存（样例不入账）")
                     },
                     onIgnore = {
                         mainHandler.post { ConfirmCardWindow.dismissConfirm() }
-                        toast("测试卡片：已忽略（不入账）")
+                        toast("测试卡片：忽略（样例不入账）")
                     },
                     onDismiss = {
                         mainHandler.post { ConfirmCardWindow.dismissConfirm() }
@@ -1198,8 +1357,9 @@ object CaptureCenter {
                     )
                     return@launch
                 }
-                // 自动入账（设置开启）：按推测分类/账户直接落账，不进待确认、不发确认提醒
-                if (isAutoEntryEnabled() && autoEnter(
+                // 入账方式：任一"入账"开关开启即先直接入账（三种方式全关才退回待确认的完全手动模式）
+                if (directEntryEnabled()) {
+                    val entered = enterEntry(
                         type = parsed.type,
                         amountCents = parsed.amountCents,
                         timestamp = postTime,
@@ -1210,26 +1370,36 @@ object CaptureCenter {
                         ruleName = parsed.ruleName,
                         isRefund = parsed.isRefund,
                     )
-                ) {
-                    captureDao.updateMatch(rawId, parsed.ruleName, true)
-                    AppLog.i(
-                        "Ntf",
-                        "auto entry: ${parsed.ruleName} ${parsed.type} ${Money.formatYuan(parsed.amountCents)}" +
-                            (if (parsed.isRefund) " [退款]" else "") + " pkg=$packageName",
-                    )
-                    traceCapture(
-                        channel = CaptureChannel.NOTIFICATION,
-                        packageName = packageName,
-                        title = title, text = text, bigText = bigText,
-                        capturedAt = sourceAt,
-                        matchedRule = parsed.ruleName,
-                        type = parsed.type,
-                        amountCents = parsed.amountCents,
-                        note = parsed.note,
-                        dedupKey = parsed.dedupKey,
-                        outcome = TraceOutcome.AUTO_ENTRY,
-                    )
-                    return@launch
+                    if (entered != null) {
+                        captureDao.updateMatch(rawId, parsed.ruleName, true)
+                        AppLog.i(
+                            "Ntf",
+                            "entered: ${parsed.ruleName} ${parsed.type} ${Money.formatYuan(parsed.amountCents)}" +
+                                (if (parsed.isRefund) " [退款]" else "") + " pkg=$packageName",
+                        )
+                        traceCapture(
+                            channel = CaptureChannel.NOTIFICATION,
+                            packageName = packageName,
+                            title = title, text = text, bigText = bigText,
+                            capturedAt = sourceAt,
+                            matchedRule = parsed.ruleName,
+                            type = parsed.type,
+                            amountCents = parsed.amountCents,
+                            note = parsed.note,
+                            dedupKey = parsed.dedupKey,
+                            outcome = TraceOutcome.AUTO_ENTRY,
+                        )
+                        announceEntry(
+                            entered = entered,
+                            type = parsed.type,
+                            isRefund = parsed.isRefund,
+                            amountCents = parsed.amountCents,
+                            sourceLabel = NotificationRules.sourceLabel(packageName),
+                            counterparty = "",
+                            dedupKey = parsed.dedupKey,
+                        )
+                        return@launch
+                    }
                 }
                 val pendingId = pendingDao.insert(
                     PendingTransactionEntity(
@@ -1389,7 +1559,9 @@ object CaptureCenter {
             return
         }
 
-        if (isAutoEntryEnabled() && autoEnter(
+        // 入账方式：任一"入账"开关开启即先直接入账（与通知/页面通道同一套口径）
+        if (directEntryEnabled()) {
+            val entered = enterEntry(
                 type = ledger.type,
                 amountCents = ledger.amountCents,
                 timestamp = sourceAt,
@@ -1402,29 +1574,39 @@ object CaptureCenter {
                 source = TxSource.BANK,
                 bankName = ledger.bankName,
             )
-        ) {
-            captureDao.updateMatch(rawId, ledger.ruleName, true)
-            AppLog.i(
-                "Sms",
-                "auto entry: ${ledger.ruleName} ${ledger.type} ${Money.formatYuan(ledger.amountCents)}" +
-                    (if (ledger.isRefund) " [退款]" else "") + " ${ledger.displayLabel}",
-            )
-            traceCapture(
-                channel = channel,
-                packageName = ledger.sourceKey,
-                title = if (channel == CaptureChannel.SMS) "银行短信" else "银行推送",
-                text = ledger.note,
-                bigText = "",
-                capturedAt = sourceAt,
-                matchedRule = ledger.ruleName,
-                type = ledger.type,
-                amountCents = ledger.amountCents,
-                counterparty = ledger.merchant,
-                note = ledger.note,
-                dedupKey = ledger.dedupKey,
-                outcome = TraceOutcome.AUTO_ENTRY,
-            )
-            return
+            if (entered != null) {
+                captureDao.updateMatch(rawId, ledger.ruleName, true)
+                AppLog.i(
+                    "Sms",
+                    "entered: ${ledger.ruleName} ${ledger.type} ${Money.formatYuan(ledger.amountCents)}" +
+                        (if (ledger.isRefund) " [退款]" else "") + " ${ledger.displayLabel}",
+                )
+                traceCapture(
+                    channel = channel,
+                    packageName = ledger.sourceKey,
+                    title = if (channel == CaptureChannel.SMS) "银行短信" else "银行推送",
+                    text = ledger.note,
+                    bigText = "",
+                    capturedAt = sourceAt,
+                    matchedRule = ledger.ruleName,
+                    type = ledger.type,
+                    amountCents = ledger.amountCents,
+                    counterparty = ledger.merchant,
+                    note = ledger.note,
+                    dedupKey = ledger.dedupKey,
+                    outcome = TraceOutcome.AUTO_ENTRY,
+                )
+                announceEntry(
+                    entered = entered,
+                    type = ledger.type,
+                    isRefund = ledger.isRefund,
+                    amountCents = ledger.amountCents,
+                    sourceLabel = ledger.displayLabel,
+                    counterparty = ledger.merchant,
+                    dedupKey = ledger.dedupKey,
+                )
+                return
+            }
         }
 
         val bankPendingId = pendingDao.insert(
@@ -1701,15 +1883,14 @@ object CaptureCenter {
                     )
                     // 页面富化：卡片在展示就刷新内容，没在展示就按"卡片优先"再试一次
                     // （首次尝试可能因支付保护等系统弹层被拒；此刻用户通常已回到结果页）
-                    if (!autoEntered) {
-                        refreshCardIfShowing(related.pending.id)
-                        retryCardIfNoCard(related.pending.id)
-                    }
+                    refreshCardIfShowing(related.pending.id)
+                    retryCardIfNoCard(related.pending.id)
                     return@launch
                 }
 
-                // 自动入账（设置开启）：页面信息最全，直接落账
-                if (isAutoEntryEnabled() && autoEnter(
+                // 入账方式：任一"入账"开关开启即先直接入账；页面信息最全，直接落账
+                if (directEntryEnabled()) {
+                    val entered = enterEntry(
                         type = parsed.type,
                         amountCents = parsed.amountCents,
                         timestamp = parsed.txTime ?: capturedAt,
@@ -1719,28 +1900,38 @@ object CaptureCenter {
                         dedupKey = parsed.dedupKey,
                         ruleName = parsed.ruleName,
                     )
-                ) {
-                    captureDao.updateMatch(rawId, parsed.ruleName, true)
-                    AppLog.i(
-                        "Page",
-                        "auto entry: ${parsed.ruleName} ${Money.formatYuan(parsed.amountCents)} 收款方=${parsed.counterparty}",
-                    )
-                    traceCapture(
-                        channel = CaptureChannel.A11Y,
-                        packageName = packageName,
-                        title = "页面快照",
-                        text = snapshotText,
-                        bigText = "",
-                        capturedAt = capturedAt,
-                        matchedRule = parsed.ruleName,
-                        type = parsed.type,
-                        amountCents = parsed.amountCents,
-                        counterparty = parsed.counterparty,
-                        note = parsed.note,
-                        dedupKey = parsed.dedupKey,
-                        outcome = TraceOutcome.AUTO_ENTRY,
-                    )
-                    return@launch
+                    if (entered != null) {
+                        captureDao.updateMatch(rawId, parsed.ruleName, true)
+                        AppLog.i(
+                            "Page",
+                            "entered: ${parsed.ruleName} ${Money.formatYuan(parsed.amountCents)} 收款方=${parsed.counterparty}",
+                        )
+                        traceCapture(
+                            channel = CaptureChannel.A11Y,
+                            packageName = packageName,
+                            title = "页面快照",
+                            text = snapshotText,
+                            bigText = "",
+                            capturedAt = capturedAt,
+                            matchedRule = parsed.ruleName,
+                            type = parsed.type,
+                            amountCents = parsed.amountCents,
+                            counterparty = parsed.counterparty,
+                            note = parsed.note,
+                            dedupKey = parsed.dedupKey,
+                            outcome = TraceOutcome.AUTO_ENTRY,
+                        )
+                        announceEntry(
+                            entered = entered,
+                            type = parsed.type,
+                            isRefund = false,
+                            amountCents = parsed.amountCents,
+                            sourceLabel = parsed.sourceLabel,
+                            counterparty = parsed.counterparty,
+                            dedupKey = parsed.dedupKey,
+                        )
+                        return@launch
+                    }
                 }
 
                 val pendingId = pendingDao.insert(
@@ -1792,12 +1983,24 @@ object CaptureCenter {
         }
     }
 
+    /** 直接入账结果：新交易 id + 对应的 AUTO 条目 id（卡片与通知都按它们工作） */
+    private data class Entered(val txId: Long, val pendingId: Long)
+
+    /** 三种入账方式（入账提醒/悬浮窗入账/自动入账）任一开启即"先直接入账"；全关 = 完全手动模式 */
+    private fun directEntryEnabled(): Boolean =
+        com.controleco.app.capture.directEntryEnabled(
+            autoEntry = isAutoEntryEnabled(),
+            overlayConfirm = isOverlayConfirmEnabled(),
+            captureNotify = isCaptureNotifyEnabled(),
+        )
+
     /**
-     * 自动入账：按推测分类/账户直接落账（跳过待确认），并发「已自动入账」横幅
-     * （点击直达该笔编辑页）。条目以 AUTO 状态留在合并池里——页面通道随后捕获同笔时回填更全的信息。
-     * 返回 false = 没有可用的分类/账户或写入失败，调用方回落到待确认流程。
+     * 直接入账（三种入账方式共用）：按推测分类/账户先落账——这就是"先入账"的落点，
+     * 后续的卡片（改/删）与通知（提醒/撤销）都围绕这笔已有账目工作，卡片弹不出来账也不会丢。
+     * 条目以 AUTO 状态留在合并池里——页面通道随后捕获同笔时回填更全的信息。
+     * 返回 null = 没有可用的分类/账户、重复预检命中或写入失败，调用方回落待确认流程（不丢单）。
      */
-    private suspend fun autoEnter(
+    private suspend fun enterEntry(
         type: TxType,
         amountCents: Long,
         timestamp: Long,
@@ -1809,7 +2012,7 @@ object CaptureCenter {
         isRefund: Boolean = false,
         source: TxSource = TxSource.NOTIFICATION,
         bankName: String? = null,
-    ): Boolean {
+    ): Entered? {
         val learned = merchantRuleDao.getAll()
         val categories = categoryDao.getAll()
         val accounts = accountDao.getAll()
@@ -1822,14 +2025,14 @@ object CaptureCenter {
             learnedAccountId = MerchantRules.accountIdFrom(learned, accounts, type, counterparty, note),
         )
         if (categoryId == null || accountId == null) {
-            AppLog.w("Ntf", "auto entry skipped (no category/account to use)")
-            return false
+            AppLog.w("Ntf", "direct entry skipped (no category/account to use)")
+            return null
         }
-        // 重复预检（±60s 同笔数据库校验）：同来源+同方向+同金额在窗口内已有条目（待确认或自动入账）
-        // → 不静默入账，回落"入队 + 提醒"（重复通知/分钟边界重发不会造成双记账，用户仍看得到这笔）
+        // 重复预检（±60s 同笔数据库校验）：同来源+同方向+同金额在窗口内已有条目（待确认或已入账）
+        // → 不静默入账，回落"入队 + 提醒"（重复通知/分钟边界重发不会造成双记账，可疑的第二笔仍让用户看到）
         if (hasRecentSameEntry(pendingDao.getMergeable(), sourcePackage, type, amountCents, System.currentTimeMillis())) {
-            AppLog.i("Ntf", "auto entry skipped (recent same entry) $sourcePackage $type ${Money.formatYuan(amountCents)}")
-            return false
+            AppLog.i("Ntf", "direct entry skipped (recent same entry) $sourcePackage $type ${Money.formatYuan(amountCents)}")
+            return null
         }
         return try {
             val txId = txDao.insert(
@@ -1846,7 +2049,7 @@ object CaptureCenter {
                     refundMark = if (isRefund) RefundMark.REFUND_INCOME else RefundMark.NONE,
                 ),
             )
-            pendingDao.insert(
+            val pendingId = pendingDao.insert(
                 PendingTransactionEntity(
                     type = type,
                     amountCents = amountCents,
@@ -1860,24 +2063,17 @@ object CaptureCenter {
                     status = PendingStatus.AUTO,
                 ),
             )
-            postCaptureNotification(
-                "已自动入账",
-                Money.formatYuan(amountCents) +
-                    (if (counterparty.isNotBlank()) " · $counterparty" else " · $ruleName") +
-                    " · 点击可修改",
-                "$ROUTE_EDIT_PREFIX$txId",
-                notifId = "auto|$dedupKey".hashCode(),
-            )
-            AppLog.i("Ntf", "auto entered #$txId ${Money.formatYuan(amountCents)} dedup=$dedupKey")
-            true
+            AppLog.i("Ntf", "entered #$txId ${Money.formatYuan(amountCents)} dedup=$dedupKey")
+            Entered(txId, pendingId)
         } catch (e: Exception) {
-            // externalId 唯一索引冲突 = 这笔已经入过账（重复通知/双通道），按成功处理不再入队
+            // externalId 唯一索引冲突 = 这笔已经入过账（重复通知/双通道）：找回原交易，卡片/通知仍可用
             if (e.message?.contains("UNIQUE", ignoreCase = true) == true) {
-                AppLog.i("Ntf", "auto entry skipped (already recorded) dedup=$dedupKey")
-                true
+                val existing = txDao.findIdByExternalId("NTF:$dedupKey")
+                AppLog.i("Ntf", "direct entry skipped (already recorded) dedup=$dedupKey existing=$existing")
+                if (existing != null) Entered(existing, -1L) else null
             } else {
-                AppLog.w("Ntf", "auto entry failed, fallback to pending", e)
-                false
+                AppLog.w("Ntf", "direct entry failed, fallback to pending", e)
+                null
             }
         }
     }

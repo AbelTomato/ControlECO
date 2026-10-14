@@ -1,6 +1,8 @@
 package com.controleco.app.capture
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -54,5 +56,32 @@ class EntryModeReconcileTest {
             EntryModeFix.NONE,
             entryModeFix(autoSet = false, overlaySet = false, autoEntry = true, overlayConfirm = false),
         )
+    }
+}
+
+/**
+ * "先直接入账"的开关判定：三种入账方式（入账提醒/悬浮窗入账/自动入账）任一开启，
+ * 捕获即先入账，卡片与通知都围绕这笔已有账目工作；全关才退回待确认队列（完全手动模式）。
+ */
+class DirectEntryEnabledTest {
+
+    @Test
+    fun `自动入账开启即先入账`() {
+        assertTrue(directEntryEnabled(autoEntry = true, overlayConfirm = false, captureNotify = false))
+    }
+
+    @Test
+    fun `只开悬浮窗入账也先入账（卡片弹不出账也不丢）`() {
+        assertTrue(directEntryEnabled(autoEntry = false, overlayConfirm = true, captureNotify = false))
+    }
+
+    @Test
+    fun `只开入账提醒也先入账（提醒=告知已记了一笔）`() {
+        assertTrue(directEntryEnabled(autoEntry = false, overlayConfirm = false, captureNotify = true))
+    }
+
+    @Test
+    fun `三个全关 = 完全手动模式（退回待确认）`() {
+        assertFalse(directEntryEnabled(autoEntry = false, overlayConfirm = false, captureNotify = false))
     }
 }

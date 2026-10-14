@@ -44,22 +44,18 @@ fun SettingsScreen(
         PaneCard {
             SwitchRow(
                 title = "入账提醒",
-                subtitle = "捕获到动账时发通知提醒，点通知进待确认列表处理",
                 checked = captureNotify,
                 onCheckedChange = { vm.setCaptureNotifyEnabled(it) },
             )
             RowDivider()
             SwitchRow(
                 title = "悬浮窗入账",
-                subtitle = "捕获时弹出确认卡：关闭卡片或长时间不操作视为入账，点「忽略」不入账" +
-                    "（未授权悬浮窗时自动回落通知）",
                 checked = overlayConfirm,
                 onCheckedChange = { vm.setOverlayConfirmEnabled(it) },
             )
             RowDivider()
             SwitchRow(
                 title = "自动入账",
-                subtitle = "识别到付款直接记账，不再逐笔确认（分类/账户自动推测，可再改；与悬浮窗入账互斥）",
                 checked = autoEntry,
                 onCheckedChange = { vm.setAutoEntryEnabled(it) },
             )

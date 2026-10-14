@@ -48,3 +48,18 @@ internal fun entryModeFix(
     autoEntry && overlayConfirm -> EntryModeFix.DISABLE_OVERLAY
     else -> EntryModeFix.NONE
 }
+
+/**
+ * 捕获到账单后是否"先直接入账"（纯函数，便于单测）。
+ *
+ * 定稿语义：三种入账方式（入账提醒 / 悬浮窗入账 / 自动入账）任一开启，捕获即先入账——
+ * - 悬浮窗入账：入账后弹卡，「忽略」删除这笔、改完关掉卡片即同步（卡片弹不出时账也不丢）；
+ * - 入账提醒：入账后发通知告诉用户"记了一笔账"（通知不是"去待确认列表处理"的入口）；
+ * - 自动入账：入账后不打扰。
+ * 三个都关 = 完全手动模式：退回待确认队列（保留"只攒着让我自己确认"的用法）。
+ */
+internal fun directEntryEnabled(
+    autoEntry: Boolean,
+    overlayConfirm: Boolean,
+    captureNotify: Boolean,
+): Boolean = autoEntry || overlayConfirm || captureNotify

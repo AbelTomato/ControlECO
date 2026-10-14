@@ -76,9 +76,15 @@ internal class ConfirmCardState {
 
     private var amountUserEdited = false
     private var counterpartyUserEdited = false
+    private var categoryUserEdited = false
+    private var accountUserEdited = false
 
     val amountCents: Long? get() = Money.parseCents(amountText)?.takeIf { it > 0 }
     val canSubmit: Boolean get() = amountCents != null && categoryId != null && accountId != null
+
+    /** 用户是否改过任何字段：关闭卡片时没有改动就不必回写数据库 */
+    val userEdited: Boolean
+        get() = amountUserEdited || counterpartyUserEdited || categoryUserEdited || accountUserEdited
 
     /** 首次绑定（新的待确认条目） */
     fun bind(
@@ -89,6 +95,8 @@ internal class ConfirmCardState {
     ) {
         amountUserEdited = false
         counterpartyUserEdited = false
+        categoryUserEdited = false
+        accountUserEdited = false
         pendingId = pending.id
         type = pending.type
         isRefund = pending.refundMark == com.controleco.app.data.db.RefundMark.REFUND_INCOME
@@ -163,18 +171,32 @@ internal class ConfirmCardState {
         counterparty = text
         counterpartyUserEdited = true
     }
+
+    fun selectCategory(id: Long) {
+        categoryId = id
+        categoryUserEdited = true
+    }
+
+    fun selectAccount(id: Long) {
+        accountId = id
+        accountUserEdited = true
+    }
 }
 
 /**
  * 底部确认卡内容（全部用应用自己的设计语言：白卡 + hairline 边框 + 大圆角，
  * 分类/账户均为下拉选择（并排一行），金额用 tabular 数字排版；整体字号紧凑，避免遮挡支付页）。
  *
- * 交互：点 ✕ 或卡片上方空白 = 关闭（关闭视为入账，由调用方按卡内当前值落账）；
- * 「忽略」= 不入账（丢弃该笔）；「记一笔」= 以当前编辑值入账。
+ * 两种模式：
+ * - [alreadyEntered] = true（悬浮窗入账的常态）：**这笔已经入账了**——卡片是"改/删"入口，
+ *   标题写明"已记入"，改完关掉卡片即同步，点「忽略」删除这笔；
+ * - [alreadyEntered] = false（待确认条目）：旧语义——点 ✕/空白 = 关闭时按卡内值入账，
+ *   「忽略」= 不入账，「记一笔」= 以当前值入账。
  */
 @Composable
 internal fun ConfirmCardContent(
     state: ConfirmCardState,
+    alreadyEntered: Boolean = false,
     onConfirm: (amountCents: Long, categoryId: Long, accountId: Long, counterparty: String) -> Unit,
     onIgnore: () -> Unit,
     onDismiss: () -> Unit,
@@ -208,13 +230,14 @@ internal fun ConfirmCardContent(
                 tonalElevation = 0.dp,
             ) {
                 Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                    // 标题行：方向 + 来源 + 关闭（关闭视为入账）
+                    // 标题行：方向 + 来源 + 关闭（已入账模式下关闭 = 保留这笔）
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        val title = when {
-                            state.isRefund -> "捕获到一笔退款"
-                            state.type == TxType.EXPENSE -> "捕获到一笔支出"
-                            else -> "捕获到一笔收入"
+                        val kind = when {
+                            state.isRefund -> "退款"
+                            state.type == TxType.EXPENSE -> "支出"
+                            else -> "收入"
                         }
+                        val title = if (alreadyEntered) "已记入一笔$kind" else "捕获到一笔$kind"
                         val titleColor = when {
                             state.isRefund -> colors.warning
                             state.type == TxType.INCOME -> colors.income
@@ -234,7 +257,7 @@ internal fun ConfirmCardContent(
                         IconButton(onClick = onDismiss) {
                             Icon(
                                 Icons.Filled.Close,
-                                contentDescription = "关闭并入账",
+                                contentDescription = if (alreadyEntered) "关闭（保留这笔）" else "关闭并入账",
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(20.dp),
                             )
@@ -288,19 +311,19 @@ internal fun ConfirmCardContent(
                             label = "分类",
                             options = catsOfType.map { it.id to it.name },
                             selectedId = state.categoryId,
-                            onSelect = { state.categoryId = it },
+                            onSelect = { state.selectCategory(it) },
                             modifier = Modifier.weight(1f),
                         )
                         DropdownSelector(
                             label = "账户",
                             options = state.accounts.map { it.id to it.name },
                             selectedId = state.accountId,
-                            onSelect = { state.accountId = it },
+                            onSelect = { state.selectAccount(it) },
                             modifier = Modifier.weight(1.25f),
                         )
                     }
 
-                    // 底部动作
+                    // 底部动作：已入账模式 → 「忽略」删除这笔、「保存」同步修改；待确认模式 → 旧语义
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         TextButton(onClick = onIgnore) { Text("忽略", color = MaterialTheme.colorScheme.onSurfaceVariant) }
                         Spacer(Modifier.width(8.dp))
@@ -326,7 +349,12 @@ internal fun ConfirmCardContent(
                                 }
                             },
                         ) {
-                            Text(if (showTimeoutHint && !state.canSubmit) "先填金额/分类/账户" else "记一笔")
+                            val label = when {
+                                showTimeoutHint && !state.canSubmit -> "先填金额/分类/账户"
+                                alreadyEntered -> "保存"
+                                else -> "记一笔"
+                            }
+                            Text(label)
                         }
                     }
                 }

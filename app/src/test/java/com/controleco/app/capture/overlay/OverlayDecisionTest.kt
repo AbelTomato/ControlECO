@@ -198,4 +198,28 @@ class OverlayDismissOutcomeTest {
     fun `金额非法（负数）不入账`() {
         assertSame(DismissOutcome.KEEP_PENDING, dismissOutcome(snapshot(amountCents = -1L)))
     }
+
+    // ---------- 已入账卡片（先入账、后修改）的编辑同步判定 ----------
+
+    @Test
+    fun `已入账条目：卡内值齐备可同步回账目`() {
+        assertTrue(canSyncOverlayEdits(snapshot()))
+    }
+
+    @Test
+    fun `已入账条目：金额被清空则保持原记录不动`() {
+        assertFalse(canSyncOverlayEdits(snapshot(amountCents = 0L)))
+    }
+
+    @Test
+    fun `已入账条目：分类或账户缺失则保持原记录不动`() {
+        assertFalse(canSyncOverlayEdits(snapshot(categoryId = null)))
+        assertFalse(canSyncOverlayEdits(snapshot(accountId = null)))
+    }
+
+    @Test
+    fun `关闭快照携带是否改过标记`() {
+        assertTrue(snapshot().copy(edited = true).edited)
+        assertFalse(snapshot().edited)
+    }
 }

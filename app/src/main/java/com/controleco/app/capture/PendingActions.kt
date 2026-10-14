@@ -70,4 +70,42 @@ internal object PendingActions {
         pendingDao.deleteById(id)
         AppLog.i("pending", "discarded #$id")
     }
+
+    /**
+     * 已入账条目的编辑同步（悬浮卡"先入账、后修改"）：卡内当前值写回交易与 AUTO 条目，
+     * 并学习商户归类（与 [confirm] 同一口径）。返回 false = 找不到该笔交易（可能已被撤销），
+     * 调用方只需静默收场。
+     */
+    suspend fun updateEntered(
+        txDao: TransactionDao,
+        pendingDao: PendingDao,
+        merchantRuleDao: MerchantRuleDao? = null,
+        item: PendingTransactionEntity,
+        categoryId: Long,
+        accountId: Long,
+        counterparty: String,
+        amountCents: Long,
+    ): Boolean {
+        val externalId = "NTF:${item.dedupKey}"
+        val txId = txDao.findIdByExternalId(externalId) ?: return false
+        val counterpartyValue = counterparty.trim().ifBlank { item.counterparty }
+        txDao.updateEnteredFields(txId, amountCents, categoryId, accountId, counterpartyValue)
+        // AUTO 条目同步：页面/银行通道后续富化以它为准，不能留旧值
+        pendingDao.updateFromPage(item.id, amountCents, item.timestamp, counterpartyValue, item.note, item.ruleName)
+        merchantRuleDao?.let {
+            MerchantRules.learn(it, item.type, categoryId, accountId, counterpartyValue, item.note)
+        }
+        AppLog.i("pending", "updated entered tx=#$txId amount=$amountCents externalId=$externalId")
+        return true
+    }
+
+    /** 撤销已入账条目（悬浮卡「忽略」/ 通知「撤销」）：删除交易与对应 AUTO 条目，不留残影 */
+    suspend fun undoEntered(txDao: TransactionDao, pendingDao: PendingDao, dedupKey: String): Boolean {
+        val externalId = "NTF:$dedupKey"
+        val txId = txDao.findIdByExternalId(externalId)
+        if (txId != null) txDao.deleteById(txId)
+        pendingDao.deleteByDedupKey(dedupKey)
+        AppLog.i("pending", "undo entered tx=#$txId externalId=$externalId")
+        return txId != null
+    }
 }
