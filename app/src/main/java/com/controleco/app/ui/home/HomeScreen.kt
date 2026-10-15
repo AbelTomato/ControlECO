@@ -720,7 +720,7 @@ private fun ModeNeedsBudget(mode: Int, dailyMode: Boolean, onSetBudget: () -> Un
         Text(
             if (mode == 1) {
                 if (dailyMode) {
-                    "设置日预算后，这里显示本月还可以花与本日剩余（月预算 = 日预算 × 本月天数）"
+                    "设置日预算后，这里显示本月还可以花与本日剩余"
                 } else {
                     "设置月预算后，这里显示本月还可以花与本日剩余"
                 }

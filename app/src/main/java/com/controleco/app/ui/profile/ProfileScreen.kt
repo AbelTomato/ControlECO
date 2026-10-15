@@ -4,11 +4,8 @@ import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -26,7 +23,6 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -49,10 +45,11 @@ import com.controleco.app.data.budget.Budget
 import com.controleco.app.data.budget.MonthPeriod
 import com.controleco.app.ui.common.BudgetEditDialog
 import com.controleco.app.ui.common.InfoRow
+import com.controleco.app.ui.common.InlineWheelPicker
 import com.controleco.app.ui.common.PaneCard
 import com.controleco.app.ui.common.RowDivider
 import com.controleco.app.ui.common.SectionTitle
-import com.controleco.app.ui.common.SwitchRow
+import com.controleco.app.ui.common.SlidingSwitch
 import com.controleco.app.ui.theme.accBook
 import com.controleco.app.ui.theme.toneColor
 import com.controleco.app.util.Money
@@ -92,7 +89,6 @@ fun ProfileScreen(
     val snapshot = remember(budget, spentReady, period) { Budget.compute(budget, spentReady, today, period = period) }
     var showBudgetDialog by remember { mutableStateOf(false) }
     var showCurrencyDialog by remember { mutableStateOf(false) }
-    var showMonthStartDialog by remember { mutableStateOf(false) }
 
     // 开源仓库链接：用系统浏览器打开（没有浏览器时静默失败，不影响其它功能）
     val openRepo: () -> Unit = {
@@ -136,26 +132,40 @@ fun ProfileScreen(
                 onSetBudget = { showBudgetDialog = true },
             )
             RowDivider()
-            // 日/月预算切换：按日设置时输入的是日预算，月预算 = 日预算 × 本月天数（自动重算）
-            SwitchRow(
-                title = "按日设置预算",
-                subtitle = "开启后输入每日预算，月预算 = 日预算 × 本月天数（当前 ${period.days} 天）",
-                checked = dailyBudgetMode,
-                onCheckedChange = { vm.setDailyBudgetMode(it) },
-            )
+            // 日/月预算切换（滑动开关，选中胶囊滑到另一侧即切换）
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Spacer(Modifier.weight(1f))
+                SlidingSwitch(
+                    options = listOf("月预算", "日预算"),
+                    selectedIndex = if (dailyBudgetMode) 1 else 0,
+                    onSelect = { vm.setDailyBudgetMode(it == 1) },
+                )
+            }
             RowDivider()
             InfoRow(
                 title = if (dailyBudgetMode) "每日预算" else "每月总预算",
                 onClick = { showBudgetDialog = true },
             )
             RowDivider()
-            // 会计月首日：预算周期与全 App 的"月"都按它划分（1~28，规避短月边界）
-            InfoRow(
-                title = "每月第一天",
-                subtitle = "本期区间 ${period.label()}",
-                trailing = "$monthStartDay 日",
-                onClick = { showMonthStartDialog = true },
-            )
+            // 会计月首日：预算周期与全 App 的"月"都按它划分（1~30 或「最后一日」；滚轮就地展开）
+            Row(
+                Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 2.dp, bottom = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "每月第一天",
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.weight(1f),
+                )
+                InlineWheelPicker(
+                    items = remember { MonthPeriod.startDayOptions() },
+                    selectedIndex = MonthPeriod.startDayIndex(monthStartDay),
+                    onSelected = { vm.setMonthStartDay(MonthPeriod.startDayAtIndex(it)) },
+                )
+            }
             RowDivider()
             InfoRow(title = "分类预算", onClick = onOpenCategories)
             RowDivider()
@@ -246,14 +256,6 @@ fun ProfileScreen(
         )
     }
 
-    if (showMonthStartDialog) {
-        MonthStartDayDialog(
-            current = monthStartDay,
-            onPick = { vm.setMonthStartDay(it) },
-            onDismiss = { showMonthStartDialog = false },
-        )
-    }
-
     if (showCurrencyDialog) {
         CurrencyDialog(
             current = currency,
@@ -261,45 +263,6 @@ fun ProfileScreen(
             onDismiss = { showCurrencyDialog = false },
         )
     }
-}
-
-/**
- * 会计月首日选择（1~28）：每月从这一天开始记为一个"月"。
- * 上限 28 是刻意的——每个月都存在 28 号，"相同日期之间为一月"的约定不会被短月破坏。
- */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun MonthStartDayDialog(current: Int, onPick: (Int) -> Unit, onDismiss: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("每月第一天") },
-        text = {
-            Column(
-                Modifier.verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Text(
-                    "每月从几号开始记为一个「月」（例：选 2 号 = 10月2日~11月2日）。" +
-                        "预算周期与账单、统计的月份都按它划分。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                    (MonthPeriod.MIN_START_DAY..MonthPeriod.MAX_START_DAY).forEach { d ->
-                        FilterChip(
-                            selected = d == current,
-                            onClick = { onPick(d) },
-                            label = { Text("$d") },
-                        )
-                    }
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("完成") } },
-    )
 }
 
 /** 货币名称（找不到时只显示符号本身） */

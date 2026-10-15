@@ -208,9 +208,8 @@ fun formatTimestamp(millis: Long): String = tsFormatter.format(Instant.ofEpochMi
 
 /**
  * 预算设置对话框（首页/个人页共用）：按月（金额）或按日（日预算）两种口径。
- * - 月模式：输入每月预算金额，保存 0 = 清除预算；
- * - 日模式（[dailyMode] = true）：输入每日预算，保存 0 = 清除；实时显示
- *   "月预算 = 日预算 × 本期天数（[daysInPeriod]）"的换算值，避免用户自己心算。
+ * 月模式：输入每月预算金额，保存 0 = 清除预算；
+ * 日模式（[dailyMode]）：输入每日预算，保存 0 = 清除；下方跟一行"≈ 月预算"读数（不写说明文字）。
  */
 @Composable
 fun BudgetEditDialog(
@@ -227,19 +226,10 @@ fun BudgetEditDialog(
         title = { Text(if (dailyMode) "每日预算" else "每月预算") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    if (dailyMode) {
-                        "设置后首页显示剩余可用与今天建议花销；月预算 = 日预算 × 本期天数（当前 $daysInPeriod 天）。"
-                    } else {
-                        "设置后首页显示剩余可用与今天建议花销。"
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
                 OutlinedTextField(
                     value = text,
                     onValueChange = { text = it },
-                    label = { Text(if (dailyMode) "每日预算金额" else "预算金额") },
+                    label = { Text("预算金额") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true,
                 )
@@ -247,7 +237,7 @@ fun BudgetEditDialog(
                     val typed = Money.parseCents(text.trim())
                     if (typed != null && typed > 0) {
                         Text(
-                            "≈ 月预算 ${Money.formatYuanGrouped(typed * daysInPeriod)}（$daysInPeriod 天）",
+                            "≈ ${Money.formatYuanGrouped(typed * daysInPeriod)}/月",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

@@ -1,10 +1,14 @@
 package com.controleco.app.ui.common
 
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
@@ -12,6 +16,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -31,6 +36,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -124,12 +130,74 @@ fun <T> SegmentedSwitch(
 }
 
 /**
+ * 滑动分段开关（[月预算|日预算]、[金额|比例] 同款）：等宽分段，选中胶囊在选项之间**平滑滑动**
+ * （点击时从一侧滑到另一侧）。只放标签长度接近的两段互斥选项。
+ */
+@Composable
+fun SlidingSwitch(
+    options: List<String>,
+    selectedIndex: Int,
+    onSelect: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (options.isEmpty()) return
+    val shape = RoundedCornerShape(50)
+    val pad = 3.dp
+    val segHeight = 30.dp
+    val safeIndex = selectedIndex.coerceIn(0, options.lastIndex)
+    BoxWithConstraints(
+        modifier
+            .clip(shape)
+            .background(MaterialTheme.accBook.primaryStrong.copy(alpha = 0.16f))
+            .padding(pad),
+    ) {
+        val segWidth = maxWidth / options.size
+        val offset by animateDpAsState(
+            targetValue = segWidth * safeIndex,
+            animationSpec = tween(260, easing = FastOutSlowInEasing),
+            label = "segSlide",
+        )
+        // 滑动胶囊（画在文字下层）
+        Box(
+            Modifier
+                .offset(x = offset)
+                .width(segWidth)
+                .height(segHeight)
+                .clip(shape)
+                .background(MaterialTheme.accBook.primaryStrong),
+        )
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            options.forEachIndexed { index, label ->
+                val isSelected = index == safeIndex
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .height(segHeight)
+                        .clickable { onSelect(index) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        label,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = if (isSelected) {
+                            MaterialTheme.colorScheme.onPrimary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
  * 月 / 年 两段式切换：选中段主色实底，未选中透明。
  * 账单页结余卡与统计页顶部共用，两处永远同步（同一份 ViewModel 状态）。
  */
 @Composable
-fun PeriodSwitch(
-    mode: PeriodMode,
+fun PeriodSwitch(    mode: PeriodMode,
     onChange: (PeriodMode) -> Unit,
     modifier: Modifier = Modifier,
     containerColor: Color = MaterialTheme.accBook.primaryStrong.copy(alpha = 0.16f),

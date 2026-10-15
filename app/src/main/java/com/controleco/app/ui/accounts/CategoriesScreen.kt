@@ -65,6 +65,7 @@ import com.controleco.app.data.db.TxType
 import com.controleco.app.ui.common.CategoryLogo
 import com.controleco.app.ui.common.ColorWheelDialog
 import com.controleco.app.ui.common.PercentInput
+import com.controleco.app.ui.common.SlidingSwitch
 import com.controleco.app.ui.common.hueWheelBrush
 import com.controleco.app.ui.common.rgbOf
 import com.controleco.app.ui.common.solidBrush
@@ -139,84 +140,45 @@ fun CategoriesScreen(vm: LedgerViewModel, onBack: () -> Unit) {
         },
     ) { padding ->
         LazyColumn(Modifier.padding(padding).fillMaxSize()) {
-            // ---- 全局方案开关：金额（月金额）或比例（占月预算百分比）----
-            item(key = "budget-mode") {
-                Column(Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
+            val expenseList = categories.filter { it.type == TxType.EXPENSE }
+            val incomeList = categories.filter { it.type == TxType.INCOME }
+            // 支出分类表头行：右上角是全局预算方式（金额 / 比例）滑动开关
+            item(key = "header-expense") {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     Text(
-                        "分类预算方式",
+                        "支出分类",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(bottom = 6.dp),
+                        modifier = Modifier.weight(1f),
                     )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        androidx.compose.material3.FilterChip(
-                            selected = budgetMode == CategoryBudgetMode.AMOUNT,
-                            onClick = { vm.setCategoryBudgetMode(CategoryBudgetMode.AMOUNT) },
-                            label = { Text("金额") },
-                        )
-                        androidx.compose.material3.FilterChip(
-                            selected = budgetMode == CategoryBudgetMode.PERCENT,
-                            onClick = { vm.setCategoryBudgetMode(CategoryBudgetMode.PERCENT) },
-                            label = { Text("比例") },
-                        )
-                    }
-                    Text(
-                        if (budgetMode == CategoryBudgetMode.PERCENT) {
-                            if (monthlyBudget > 0L) {
-                                "比例 = 占月预算的百分比；改月预算时分类预算跟着变"
-                            } else {
-                                "比例 = 占月预算的百分比（尚未设置月预算，暂时按 0 折算）"
-                            }
-                        } else {
-                            "金额 = 每个分类的月预算（元）"
+                    SlidingSwitch(
+                        options = listOf("金额", "比例"),
+                        selectedIndex = if (budgetMode == CategoryBudgetMode.PERCENT) 1 else 0,
+                        onSelect = {
+                            vm.setCategoryBudgetMode(
+                                if (it == 1) CategoryBudgetMode.PERCENT else CategoryBudgetMode.AMOUNT,
+                            )
                         },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 6.dp),
                     )
                 }
             }
-            listOf(TxType.EXPENSE to "支出分类", TxType.INCOME to "收入分类").forEach { (type, label) ->
-                val list = categories.filter { it.type == type }
-                if (list.isNotEmpty()) {
-                    item(key = "header-$type") {
-                        Text(
-                            label,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                        )
-                    }
-                    items(list, key = { it.id }) { c ->
-                        val budget = budgets[c.id] ?: 0L
-                        val percentBp = budgetPercents[c.id] ?: 0
-                        Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .clickable { openEditor(c) }
-                                .padding(horizontal = 16.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            CategoryLogo(categoryName = c.name, icon = c.icon, size = 30.dp)
-                            Spacer(Modifier.width(12.dp))
-                            Text(c.name, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-                            if (c.type == TxType.EXPENSE) {
-                                val trailing = if (budgetMode == CategoryBudgetMode.PERCENT) {
-                                    percentBp.takeIf { it > 0 }?.let { CategoryBudgetMath.formatPercent(it) }
-                                } else {
-                                    budget.takeIf { it > 0L }?.let { Money.formatYuanGrouped(it) }
-                                }
-                                trailing?.let {
-                                    Text(
-                                        it,
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = MaterialTheme.colorScheme.primary,
-                                    )
-                                }
-                            }
-                        }
-                        HorizontalDivider()
-                    }
+            items(expenseList, key = { it.id }) { c ->
+                CategoryRow(c, budgets[c.id] ?: 0L, budgetPercents[c.id] ?: 0, budgetMode) { openEditor(c) }
+            }
+            if (incomeList.isNotEmpty()) {
+                item(key = "header-income") {
+                    Text(
+                        "收入分类",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    )
+                }
+                items(incomeList, key = { it.id }) { c ->
+                    CategoryRow(c, budgets[c.id] ?: 0L, budgetPercents[c.id] ?: 0, budgetMode) { openEditor(c) }
                 }
             }
         }
@@ -278,10 +240,46 @@ fun CategoriesScreen(vm: LedgerViewModel, onBack: () -> Unit) {
     }
 }
 
+/** 分类列表行：名称 + 预算取值（金额或比例），点按进编辑 */
+@Composable
+private fun CategoryRow(
+    category: CategoryEntity,
+    budgetCents: Long,
+    percentBp: Int,
+    budgetMode: CategoryBudgetMode,
+    onClick: () -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        CategoryLogo(categoryName = category.name, icon = category.icon, size = 30.dp)
+        Spacer(Modifier.width(12.dp))
+        Text(category.name, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+        if (category.type == TxType.EXPENSE) {
+            val trailing = if (budgetMode == CategoryBudgetMode.PERCENT) {
+                percentBp.takeIf { it > 0 }?.let { CategoryBudgetMath.formatPercent(it) }
+            } else {
+                budgetCents.takeIf { it > 0L }?.let { Money.formatYuanGrouped(it) }
+            }
+            trailing?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+        }
+    }
+    HorizontalDivider()
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun CategoryEditorDialog(
-    initial: CategoryEntity?,
+private fun CategoryEditorDialog(    initial: CategoryEntity?,
     budgetMode: CategoryBudgetMode,
     initialBudgetCents: Long,
     initialBudgetPercentBp: Int,

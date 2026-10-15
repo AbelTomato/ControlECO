@@ -58,11 +58,79 @@ class MonthPeriodTest {
 
     @Test
     fun `坏首日参数被夹到合法范围`() {
-        assertEquals(1, MonthPeriod.clampStartDay(0))
-        assertEquals(1, MonthPeriod.clampStartDay(-5))
-        assertEquals(28, MonthPeriod.clampStartDay(29))
-        assertEquals(28, MonthPeriod.clampStartDay(31))
+        // 合法域：1..30 或「最后一日」（滚轮里没有 31——月末用最后一日表达）
+        assertEquals(MonthPeriod.LAST_DAY, MonthPeriod.clampStartDay(0))
+        assertEquals(MonthPeriod.LAST_DAY, MonthPeriod.clampStartDay(-5))
+        assertEquals(1, MonthPeriod.clampStartDay(1))
+        assertEquals(29, MonthPeriod.clampStartDay(29))
+        assertEquals(30, MonthPeriod.clampStartDay(30))
+        assertEquals(30, MonthPeriod.clampStartDay(31))
         assertEquals(15, MonthPeriod.clampStartDay(15))
+    }
+
+    @Test
+    fun `短月静默取月末_2月30等于2月末`() {
+        // 平年 2 月
+        assertEquals(28, MonthPeriod.startDayOf(YearMonth.of(2026, 2), 30))
+        assertEquals(28, MonthPeriod.startDayOf(YearMonth.of(2026, 2), 29))
+        // 闰年 2 月
+        assertEquals(29, MonthPeriod.startDayOf(YearMonth.of(2028, 2), 30))
+        assertEquals(29, MonthPeriod.startDayOf(YearMonth.of(2028, 2), 29))
+        // 小月 4 月没有 30 号？有（4 月 30 天）——30 号可正常落地；2 月才是唯一短于 29 的月
+        assertEquals(30, MonthPeriod.startDayOf(YearMonth.of(2026, 4), 30))
+        // 最后一日：每月都跟月末走
+        assertEquals(31, MonthPeriod.startDayOf(YearMonth.of(2026, 1), MonthPeriod.LAST_DAY))
+        assertEquals(28, MonthPeriod.startDayOf(YearMonth.of(2026, 2), MonthPeriod.LAST_DAY))
+        assertEquals(29, MonthPeriod.startDayOf(YearMonth.of(2028, 2), MonthPeriod.LAST_DAY))
+    }
+
+    @Test
+    fun `首日30号时的2月区间是2月末到下月30号`() {
+        // 2-27 仍在上一个会计月（1-30 ~ 2-28）
+        val beforeFebEnd = MonthPeriod.of(LocalDate.of(2026, 2, 27), 30)
+        assertEquals(LocalDate.of(2026, 1, 30), beforeFebEnd.start)
+        assertEquals(LocalDate.of(2026, 2, 28), beforeFebEnd.endExclusive)
+        // 2-28（被截断的"2月30号"）起进入下一个会计月，直到 3-30
+        val onFebEnd = MonthPeriod.of(LocalDate.of(2026, 2, 28), 30)
+        assertEquals(LocalDate.of(2026, 2, 28), onFebEnd.start)
+        assertEquals(LocalDate.of(2026, 3, 30), onFebEnd.endExclusive)
+        // 两期首尾相接，无缝无重叠
+        assertEquals(beforeFebEnd.endExclusive, onFebEnd.start)
+        // 3-30 起进入再下一个会计月
+        val onMar30 = MonthPeriod.of(LocalDate.of(2026, 3, 30), 30)
+        assertEquals(LocalDate.of(2026, 3, 30), onMar30.start)
+        assertEquals(LocalDate.of(2026, 4, 30), onMar30.endExclusive)
+        assertEquals(onFebEnd.endExclusive, onMar30.start)
+    }
+
+    @Test
+    fun `最后一日口径的区间跟每月月末走`() {
+        val jan = MonthPeriod.of(LocalDate.of(2026, 1, 31), MonthPeriod.LAST_DAY)
+        assertEquals(LocalDate.of(2026, 1, 31), jan.start)
+        assertEquals(LocalDate.of(2026, 2, 28), jan.endExclusive)
+        val feb = MonthPeriod.of(LocalDate.of(2026, 2, 28), MonthPeriod.LAST_DAY)
+        assertEquals(LocalDate.of(2026, 2, 28), feb.start)
+        assertEquals(LocalDate.of(2026, 3, 31), feb.endExclusive)
+        // 2-27 属于 1-31 ~ 2-28 这一期
+        val beforeFeb = MonthPeriod.of(LocalDate.of(2026, 2, 27), MonthPeriod.LAST_DAY)
+        assertEquals(LocalDate.of(2026, 1, 31), beforeFeb.start)
+    }
+
+    @Test
+    fun `滚轮选项与首日值互逆`() {
+        val options = MonthPeriod.startDayOptions()
+        assertEquals(31, options.size) // 1..30 + 最后一日
+        assertEquals("1日", options.first())
+        assertEquals("30日", options[29])
+        assertEquals("最后一日", options.last())
+        assertEquals(0, MonthPeriod.startDayIndex(1))
+        assertEquals(29, MonthPeriod.startDayIndex(30))
+        assertEquals(30, MonthPeriod.startDayIndex(MonthPeriod.LAST_DAY))
+        (0 until options.size).forEach { index ->
+            assertEquals(index, MonthPeriod.startDayIndex(MonthPeriod.startDayAtIndex(index)))
+        }
+        assertEquals("30日", MonthPeriod.formatStartDay(30))
+        assertEquals("最后一日", MonthPeriod.formatStartDay(MonthPeriod.LAST_DAY))
     }
 
     @Test
