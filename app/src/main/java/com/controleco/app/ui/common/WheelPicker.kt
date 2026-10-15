@@ -3,7 +3,6 @@ package com.controleco.app.ui.common
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.exponentialDecay
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
@@ -14,14 +13,10 @@ import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.wrapContentSize
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -36,18 +31,12 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Outline
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.drawscope.withTransform
@@ -55,8 +44,6 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
-import androidx.compose.ui.layout.boundsInWindow
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -69,7 +56,6 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
-import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
@@ -105,16 +91,11 @@ internal const val WHEEL_FADE_ROWS = 2.6f
 /** 惯性滑动的时间常数（秒）：指数衰减的总位移 = 初速度 × τ */
 internal const val WHEEL_FLING_TAU = 0.25f
 
-/** 常态（收起）只画"当前 ±1 天"：更远的行不露头，避免溢出成三天 */
-private const val COLLAPSED_MAX_ABS_D = 1.5f
+/** 只绘制"当前 ±1.5 行"：更远的行不露头，避免溢出成三行 */
+internal const val WHEEL_MAX_ABS_D = 1.5f
 
-/** 鼓面弧高：上下底圆弧向外鼓出的幅度 */
-private val WHEEL_DRUM_BULGE = 7.dp
-
-/** 右侧投影：把卡身形状向右平移若干步、透明度递减地叠在卡身下层（阴影只露右侧） */
-private const val WHEEL_SHADOW_STEPS = 5
-private val WHEEL_SHADOW_STEP = 1.2.dp
-private const val WHEEL_SHADOW_ALPHA = 0.075f
+/** 边缘渐隐长度（行高的倍数）：内容在贴到上/下边缘前先淡出 */
+internal const val WHEEL_EDGE_FADE_ROWS = 0.6f
 
 /** 项差值 d（可含小数）→ 圆柱角位移（弧度）。一行 = 行高 / 半径 */
 internal fun wheelPhi(d: Float, itemHeightPx: Float, radiusPx: Float = itemHeightPx * WHEEL_RADIUS_ROWS): Float =
@@ -129,12 +110,12 @@ internal fun wheelScale(phi: Float, radiusPx: Float): Float {
     return (WHEEL_CAMERA_FACTOR * radiusPx) / (WHEEL_CAMERA_FACTOR * radiusPx + depth)
 }
 
-/** 项差值 → 透明度（中心 1，向两端渐隐；与边缘渐变遮罩叠加） */
+/** 项差值 → 透明度（中心 1，向两端渐隐） */
 internal fun wheelAlpha(d: Float): Float =
     (1f - 0.55f * (abs(d) / WHEEL_FADE_ROWS)).coerceIn(0.15f, 1f)
 
 /**
- * 惯性初速度夹取（项/秒）：exponentialDecay 的总位移 ≈ v × τ，
+ * 惯性初速度夹取（项/秒）：指数衰减的总位移 = v × τ，
  * 把速度夹到"刚好滑到边界"以内，避免冲过 1 日 / 月末再弹回来。
  */
 internal fun clampFlingVelocity(
@@ -150,16 +131,6 @@ internal fun clampFlingVelocity(
     if (vItemsPerSec < 0f) return maxOf(vItemsPerSec, -posItems / tauSeconds)
     return 0f
 }
-
-/**
- * 鼓面弧线的参数式（与 [drumPath] 的上下底是同一条三次贝塞尔）：
- * x(t) = w·t²(3−2t)，y(t) = b − 4b·t(1−t)——弧顶 y(0.5) = 0 正好贴住边界；
- * 端点 x′(0) = 0（切线竖直）→ 与左右直边切线连续，**没有尖角**。
- * 曲线渐隐按同一参数取样，保证渐隐边界与轮廓严丝合缝。
- */
-internal fun drumArcX(t: Float, width: Float): Float = width * t * t * (3f - 2f * t)
-
-internal fun drumArcY(t: Float, bulge: Float): Float = bulge - 4f * bulge * t * (1f - t)
 
 /** 点击位置 → 项下标（投影反解：y = R·sin φ 反推 φ，再换算项差） */
 internal fun wheelIndexAt(
@@ -177,22 +148,22 @@ internal fun wheelIndexAt(
  * 立体滚轮选择器（机械密码锁观感）。
  *
  * 视觉：**单 Canvas 解析绘制**——每项按圆柱投影求角位移 φ，纵向位置 = R·sin φ
- * （中心 1:1、两端自然压缩），透视缩放由 cos 决定，透明度向两端渐隐，上下边缘再叠渐变遮罩。
+ * （中心 1:1、两端自然压缩），透视缩放由 cos 决定，透明度向两端渐隐、并在贴到边缘前淡出。
  * 不逐项建 composable、不逐帧分配对象：文本排版一次缓存，draw 阶段只做算术与 drawText。
  *
  * 交互：
- * - 默认收起：只显示 [collapsedRows] 行，**不可滑动**（在它上面拖 = 正常滚动页面）；
- * - [WheelTrigger.TAP] / [TAP_AND_LONG_PRESS]：点击 → 在数值处浮出 [expandedRows] 行的滚轮卡
- *   （点外部 / 返回键提交并收起；点某一行直接选中）；
- * - [WheelTrigger.LONG_PRESS] / [TAP_AND_LONG_PRESS]：长按 → 不松手直接滑动，抬手后按速度惯性
- *   滚动并吸附到最近一项，随后提交并收起；
+ * - 默认收起：只 [rows] 行、**不可滑动**（在它上面拖 = 正常滚动页面）；
+ * - [WheelTrigger.TAP] / [TAP_AND_LONG_PRESS]：**点击** → 原地浮出滚轮卡（点其他区域 / 返回键提交并收起；
+ *   点某一行直接选中）；
+ * - [WheelTrigger.LONG_PRESS] / [TAP_AND_LONG_PRESS]：**长按** → 不松手直接滑动，抬手后按速度惯性滚动、
+ *   吸附到最近一项并收起；
  * - 拖动与手指 1:1 跟手（中心项按弧长线性对应）；动画期新手势直接接管（Animatable 互斥）；
- * - **悬浮位置固定**：点击与长按的滚轮卡落在同一处——横向中心对齐常态数值的中心列、
- *   纵向中心对齐常态那一行（选中行与常态值重合），常态整格在浮窗期间隐去、收起后原位复现。
+ * - **两种触发的浮窗完全同一个**：同一张卡、同一尺寸、同一落点——卡的中心就是常态那一格的中心
+ *   （尺寸也与常态那一格一致，所以行高与相邻行都不动）；卡面只留左右两条边、从中间向上下两端渐隐消失，
+ *   投影只落在右侧；常态内容在浮窗期间隐去、收起后原位复现。
  *
  * @param itemHeight 单行高度（行高即弧长步长）
- * @param collapsedRows 收起态可见行数（奇数，居中项为当前值）
- * @param expandedRows 展开态可见行数
+ * @param rows 常态可见行数（奇数，居中项为当前值；浮窗同尺寸）
  * @param updateWhileScrolling true = 滚动过程中就回调选中值；false = 仅在提交（吸附/收起）时回调
  * @param label 无障碍描述前缀（如"每月第一天"）
  */
@@ -204,8 +175,7 @@ fun WheelPicker(
     modifier: Modifier = Modifier,
     label: String? = null,
     itemHeight: Dp = 28.dp,
-    collapsedRows: Int = 3,
-    expandedRows: Int = 5,
+    rows: Int = 3,
     trigger: WheelTrigger = WheelTrigger.TAP_AND_LONG_PRESS,
     updateWhileScrolling: Boolean = false,
 ) {
@@ -213,9 +183,13 @@ fun WheelPicker(
     val lastIndex = items.lastIndex
     val safeIndex = selectedIndex.coerceIn(0, lastIndex)
     val scope = rememberCoroutineScope()
-    val itemHeightPx = with(LocalDensity.current) { itemHeight.toPx() }
+    val density = LocalDensity.current
+    val itemHeightPx = with(density) { itemHeight.toPx() }
     val metrics = rememberWheelMetrics(items)
     val layouts = metrics.layouts
+    val slotHeight = itemHeight * rows
+    // 卡宽 = 最宽条目文本 + 一个汉字宽（两边各留半个字）
+    val cardWidth = with(density) { (metrics.maxTextWidthPx + metrics.charWidthPx).toDp() }
 
     // 唯一事实源：连续位置（项，可含小数）。渲染在 draw 阶段读取 → 拖动/动画不触发重组。
     val pos = remember { Animatable(safeIndex.toFloat()) }
@@ -229,7 +203,6 @@ fun WheelPicker(
     var inlineToken by remember { mutableIntStateOf(0) }
     val popupProgress = remember { Animatable(0f) }
     val inlineProgress = remember { Animatable(0f) }
-    var anchor by remember { mutableStateOf(Rect.Zero) }
 
     val expandedNow = popupMounted || inlineMounted
     // 收起（两个展开态都不在）时把位置对齐到外部值
@@ -293,12 +266,11 @@ fun WheelPicker(
         }
     }
 
-    // ---- 收起态：微缩滚轮 + 触发手势 ----
+    // ---- 常态：微缩滚轮（浮窗期间整格隐去，收起后原位复现） ----
     Box(
         modifier = modifier
-            .height(itemHeight * collapsedRows)
+            .height(slotHeight)
             .width(96.dp)
-            .onGloballyPositioned { anchor = it.boundsInWindow() }
             .then(
                 if (label != null) {
                     Modifier.semantics { contentDescription = "$label，当前 ${items[safeIndex]}" }
@@ -342,58 +314,29 @@ fun WheelPicker(
             pos = { pos.value },
             itemHeightPx = itemHeightPx,
             highlightProvider = { highlight },
-            maxAbsD = COLLAPSED_MAX_ABS_D,
-            straightEdgeFade = true,
-            // 浮窗在场时收起态整格隐去：卡下不重影、动画半透明期也不穿帮（收起后原样复现，位置不动）
+            // 浮窗在场时整格隐去（卡下不重影、入场半透明期不穿帮）
             modifier = Modifier
                 .fillMaxSize()
-                .graphicsLayer { alpha = if (expandedNow) 0f else 1f },
+                .graphicsLayer {
+                    alpha = if (popupMounted || inlineMounted) 0f else 1f
+                },
         )
-    }
 
-    // ---- 展开态一：点击 → 浮层（自带"点外部收起"） ----
-    // 卡宽 = 最宽文本 + 一个字（两边各留半个字）；卡高 = 展开行数 × 行高
-    val cardWidth = with(LocalDensity.current) {
-        (metrics.maxTextWidthPx + metrics.charWidthPx).toDp()
-    }
-    val halfChar = with(LocalDensity.current) { (metrics.charWidthPx / 2f).toDp() }
-    if (popupMounted) {
-        val density = LocalDensity.current
-        val cardH = itemHeight * expandedRows
-        val cardPx = with(density) { cardWidth.toPx() to cardH.toPx() }
-        Popup(
-            popupPositionProvider = WheelWindowOrigin,
-            onDismissRequest = { closePopup() },
-            properties = PopupProperties(focusable = true),
-        ) {
-            BoxWithConstraints(Modifier.fillMaxSize()) {
-                val windowWidthPx = with(density) { maxWidth.toPx() }
-                val windowHeightPx = with(density) { maxHeight.toPx() }
-                // 透明遮罩：点其他区域 = 提交并收起
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        .pointerInput(Unit) { detectTapGestures(onTap = { closePopup() }) },
-                )
-                // 卡片以**常态数值的中心**为基准浮出（与行内悬浮同一位置，点击/长按不跳位）：
-                // 中心列对齐常态那一列、纵向中心对齐常态那一行（弹层与锚点都在窗口坐标系）
-                val x = (anchor.center.x - cardPx.first / 2f)
-                    .coerceIn(4f, (windowWidthPx - cardPx.first - 4f).coerceAtLeast(4f))
-                val y = (anchor.center.y - cardPx.second / 2f)
-                    .coerceIn(4f, (windowHeightPx - cardPx.second - 4f).coerceAtLeast(4f))
+        // ---- 展开态一：点击 → 浮层（自带"点其他区域收起"） ----
+        if (popupMounted) {
+            Popup(
+                popupPositionProvider = WheelCardPosition,
+                onDismissRequest = { closePopup() },
+                properties = PopupProperties(focusable = true),
+            ) {
                 WheelCard(
                     items = items,
                     layouts = layouts,
                     pos = { pos.value },
-                    expandedRows = expandedRows,
                     itemHeightPx = itemHeightPx,
-                    halfChar = halfChar,
                     highlightProvider = { highlight },
                     progress = { popupProgress.value },
-                    modifier = Modifier
-                        .offset { IntOffset(x.roundToInt(), y.roundToInt()) }
-                        .width(cardWidth)
-                        .height(cardH),
+                    modifier = Modifier.width(cardWidth).height(slotHeight),
                     onDragStart = controller::onStart,
                     onDrag = { change, deltaY ->
                         controller.onMove(change)
@@ -409,24 +352,19 @@ fun WheelPicker(
                 )
             }
         }
-    }
 
-    // ---- 展开态二：长按 → 行内悬浮（不新开窗口，手势不被打断） ----
-    if (inlineMounted) {
-        WheelCard(
-            items = items,
-            layouts = layouts,
-            pos = { pos.value },
-            expandedRows = expandedRows,
-            itemHeightPx = itemHeightPx,
-            halfChar = halfChar,
-            highlightProvider = { highlight },
-            progress = { inlineProgress.value },
-            modifier = Modifier
-                .wrapContentSize(Alignment.Center, unbounded = true)
-                .width(cardWidth)
-                .height(itemHeight * expandedRows),
-        )
+        // ---- 展开态二：长按 → 行内悬浮（不新开窗口，手势不被打断；与浮层同一张卡、同一落点） ----
+        if (inlineMounted) {
+            WheelCard(
+                items = items,
+                layouts = layouts,
+                pos = { pos.value },
+                itemHeightPx = itemHeightPx,
+                highlightProvider = { highlight },
+                progress = { inlineProgress.value },
+                modifier = Modifier.width(cardWidth).height(slotHeight),
+            )
+        }
     }
 }
 
@@ -436,7 +374,7 @@ fun WheelPicker(
 private class WheelTextMetrics(
     val layouts: List<Pair<TextLayoutResult, TextLayoutResult>>,
     val maxTextWidthPx: Float,
-    /** 一个汉字的宽度（取"月"）：卡宽留白与曲线渐隐的"半字"都以它为准 */
+    /** 一个汉字的宽度（取"月"）：卡宽留白以它为准 */
     val charWidthPx: Float,
 )
 
@@ -466,23 +404,14 @@ private fun WheelCanvas(
     pos: () -> Float,
     itemHeightPx: Float,
     highlightProvider: () -> Int,
-    maxAbsD: Float,
-    straightEdgeFade: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val selectedColor = MaterialTheme.colorScheme.primary
     val normalColor = MaterialTheme.colorScheme.onSurfaceVariant
     val bandColor = MaterialTheme.colorScheme.surfaceContainer
-    val scrimColor = MaterialTheme.colorScheme.surface
     val radiusPx = itemHeightPx * WHEEL_RADIUS_ROWS
     val bandRadius = with(LocalDensity.current) { 9.dp.toPx() }
     val corner = remember(bandRadius) { CornerRadius(bandRadius, bandRadius) }
-    val topFade = remember(scrimColor) {
-        Brush.verticalGradient(listOf(scrimColor, scrimColor.copy(alpha = 0f)))
-    }
-    val bottomFade = remember(scrimColor) {
-        Brush.verticalGradient(listOf(scrimColor.copy(alpha = 0f), scrimColor))
-    }
 
     Canvas(modifier) {
         val p = pos()
@@ -491,7 +420,9 @@ private fun WheelCanvas(
         val centerY = size.height / 2f
         val rowH = itemHeightPx
         val base = floor(p).toInt()
-        val maxD = ceil(maxAbsD).toInt()
+        val maxD = ceil(WHEEL_MAX_ABS_D).toInt()
+        val halfH = size.height / 2f
+        val edgeFadeLen = rowH * WHEEL_EDGE_FADE_ROWS
         // 中心选中带（轻量背景高亮）
         drawRoundRect(
             color = bandColor,
@@ -499,18 +430,19 @@ private fun WheelCanvas(
             size = Size(size.width, rowH),
             cornerRadius = corner,
         )
-        // 只画落在窗口内（含一点余量）的项；行距走圆柱投影，越靠边越压缩
+        // 只画当前 ±1.5 行；行距走圆柱投影，越靠边越压缩、越淡
         for (d in -maxD..maxD) {
             val index = base + d
             if (index < 0 || index > items.lastIndex) continue
             val dd = index - p
-            // 只画可视半径内的项：常态 = 当前 ±1 天（更远的行不露头、不溢出）
-            if (abs(dd) > maxAbsD) continue
+            if (abs(dd) > WHEEL_MAX_ABS_D) continue
             val phi = wheelPhi(dd, rowH, radiusPx)
             val y = centerY + wheelOffsetY(phi, radiusPx)
-            if (y < -rowH * 1.4f || y > size.height + rowH * 1.4f) continue
+            // 贴到上/下边缘前先淡出：内容不会在边缘被硬切
+            val edge = ((halfH - abs(y - centerY)) / edgeFadeLen).coerceIn(0f, 1f)
+            if (edge <= 0f) continue
             val scale = wheelScale(phi, radiusPx)
-            val alpha = wheelAlpha(dd)
+            val alpha = wheelAlpha(dd) * edge
             val layout = if (index == highlight) layouts[index].second else layouts[index].first
             val w = layout.size.width
             val h = layout.size.height
@@ -529,50 +461,22 @@ private fun WheelCanvas(
                 )
             }
         }
-        // 收起态的上下边缘渐变（贴圆角卡面的直线渐变）；鼓面卡走 DrumFadeOverlay 的曲线渐隐
-        if (straightEdgeFade) {
-            val fadeH = size.height * 0.30f
-            drawRect(brush = topFade, topLeft = Offset.Zero, size = Size(size.width, fadeH))
-            drawRect(brush = bottomFade, topLeft = Offset(0f, size.height - fadeH), size = Size(size.width, fadeH))
-        }
     }
 }
 
 /**
- * 鼓面形（滚轮轮廓）：上下底是向外的圆弧（弧顶正好落在卡片上下边），左右是直边——
- * "上下底为圆弧的长方形"，比圆角矩形更像一节滚轮。
+ * 浮窗滚轮卡（点击与长按共用同一张）：卡面 + 滚轮 + 入场/退场动画（scale/alpha 由 [progress] 驱动）。
+ *
+ * 卡面按需求做成"只留左右两侧的边"：背景与描边都用**纵向渐变**——中间实、上下两端透明，
+ * 于是既没有上/下边缘、也没有上下两端的横线，左右两条边从中心向两端渐隐消失；
+ * 投影只落在右侧（把卡面矩形右移几份、透明度递减地叠在卡身下层，同样带纵向渐隐）。
  */
-private class DrumShape(private val bulge: Float) : Shape {
-    override fun createOutline(size: Size, layoutDirection: LayoutDirection, density: Density): Outline =
-        Outline.Generic(drumPath(size.width, size.height, bulge))
-}
-
-/**
- * 鼓面形状的路径：上下底各一条向外的圆弧。用**三次贝塞尔**而不是二次：
- * 控制点取在端点的正上/正下方（偏移 k = 4b/3），两端切线因此是竖直的——
- * 与左右两条直边**切线连续**（完美对接，没有尖角）；同时弧顶 = b − 0.75k = 0，正好贴住边界。
- */
-private fun drumPath(width: Float, height: Float, bulge: Float): Path {
-    val b = bulge.coerceAtMost(height / 3f)
-    val k = b * 4f / 3f
-    return Path().apply {
-        moveTo(0f, b)
-        cubicTo(0f, b - k, width, b - k, width, b)
-        lineTo(width, height - b)
-        cubicTo(width, height - b + k, 0f, height - b + k, 0f, height - b)
-        close()
-    }
-}
-
-/** 悬浮滚轮卡：鼓面卡身 + 滚轮 + 入场/退场动画（scale/alpha 由 [progress] 驱动，draw 阶段读取） */
 @Composable
 private fun WheelCard(
     items: List<String>,
     layouts: List<Pair<TextLayoutResult, TextLayoutResult>>,
     pos: () -> Float,
-    expandedRows: Int,
     itemHeightPx: Float,
-    halfChar: Dp,
     highlightProvider: () -> Int,
     progress: () -> Float,
     modifier: Modifier = Modifier,
@@ -581,31 +485,40 @@ private fun WheelCard(
     onDragEnd: (() -> Unit)? = null,
     onTapRow: ((Int) -> Unit)? = null,
 ) {
-    val bulgePx = with(LocalDensity.current) { WHEEL_DRUM_BULGE.toPx() }
-    val shape = remember(bulgePx) { DrumShape(bulgePx) }
-    val shadowColor = Color.Black
+    val surface = MaterialTheme.colorScheme.surface
+    val hairline = MaterialTheme.accBook.hairline
+    val clear = Color.Transparent
+    val surfaceFade = remember(surface) {
+        Brush.verticalGradient(listOf(clear, surface, surface, clear))
+    }
+    val hairlineFade = remember(hairline) {
+        Brush.verticalGradient(listOf(clear, hairline, hairline, clear))
+    }
+    val shadowFade = remember {
+        Brush.verticalGradient(
+            listOf(clear, Color.Black.copy(alpha = 0.075f), Color.Black.copy(alpha = 0.075f), clear),
+        )
+    }
     var card = modifier
         .graphicsLayer {
             val pr = progress()
             transformOrigin = TransformOrigin.Center
-            scaleX = 0.88f + 0.12f * pr
-            scaleY = 0.88f + 0.12f * pr
+            scaleX = 0.90f + 0.10f * pr
+            scaleY = 0.90f + 0.10f * pr
             alpha = pr
         }
-        // 投影只落在右侧边：把卡身形状向右平移数份、透明度递减地画在卡身下层
+        // 投影只落在右侧：卡面形状向右平移几份、透明度递减地叠在卡身下层
         .drawBehind {
-            val p = drumPath(size.width, size.height, bulgePx)
             for (i in 0 until WHEEL_SHADOW_STEPS) {
                 val dx = (i + 1) * WHEEL_SHADOW_STEP.toPx()
-                val alpha = WHEEL_SHADOW_ALPHA * (1f - i / WHEEL_SHADOW_STEPS.toFloat())
+                val alpha = 1f - i / WHEEL_SHADOW_STEPS.toFloat()
                 translate(left = dx) {
-                    drawPath(path = p, color = shadowColor, alpha = alpha)
+                    drawRect(brush = shadowFade, alpha = alpha, size = size)
                 }
             }
         }
-        .clip(shape)
-        .background(MaterialTheme.colorScheme.surface)
-        .border(1.dp, MaterialTheme.accBook.hairline, shape)
+        .background(surfaceFade)
+        .border(1.dp, hairlineFade, RectangleShape)
     if (onDrag != null) {
         card = card.pointerInput(Unit) {
             detectVerticalDragGestures(
@@ -636,86 +549,47 @@ private fun WheelCard(
             pos = pos,
             itemHeightPx = itemHeightPx,
             highlightProvider = highlightProvider,
-            maxAbsD = expandedRows / 2f + 0.6f,
-            straightEdgeFade = false,
-            modifier = Modifier.fillMaxSize(),
-        )
-        DrumFadeOverlay(
-            bulge = WHEEL_DRUM_BULGE,
-            halfChar = halfChar,
-            color = MaterialTheme.colorScheme.surface,
             modifier = Modifier.fillMaxSize(),
         )
     }
 }
 
-/**
- * 鼓面状的上下渐隐（画在滚轮之上）：
- * 沿弧线按参数 t 取条带（宽度自适应——弧线端部陡、条带窄），每条一条三停渐变：
- * 从弧线往内**半个字宽完全消失**（不透明），再半个字宽渐变到透明。
- * 用 [drawWithCache] 按尺寸缓存，滚动/动画期间零重建。
- */
-@Composable
-private fun DrumFadeOverlay(
-    bulge: Dp,
-    halfChar: Dp,
-    color: Color,
-    modifier: Modifier = Modifier,
-) {
-    val bulgePx = with(LocalDensity.current) { bulge.toPx() }
-    val halfCharPx = with(LocalDensity.current) { halfChar.toPx() }
-    val clear = color.copy(alpha = 0f)
-    Spacer(
-        modifier.drawWithCache {
-            val w = size.width
-            val h = size.height
-            val b = bulgePx.coerceAtMost(h / 3f)
-            val strips = 18
-            val bands = ArrayList<Pair<Rect, Brush>>(strips * 2)
-            for (i in 0 until strips) {
-                val t = (i + 0.5f) / strips
-                val x0 = drumArcX(i / strips.toFloat(), w)
-                val x1 = drumArcX((i + 1) / strips.toFloat(), w)
-                val stripW = (x1 - x0).coerceAtLeast(0.5f)
-                val left = drumArcX(t, w) - stripW / 2f
-                val yArc = drumArcY(t, b)
-                bands += Rect(left, yArc, left + stripW, yArc + 2f * halfCharPx) to
-                    Brush.verticalGradient(
-                        colors = listOf(color, color, clear),
-                        startY = yArc,
-                        endY = yArc + 2f * halfCharPx,
-                    )
-                val yBottom = h - yArc
-                bands += Rect(left, yBottom - 2f * halfCharPx, left + stripW, yBottom) to
-                    Brush.verticalGradient(
-                        colors = listOf(clear, color, color),
-                        startY = yBottom - 2f * halfCharPx,
-                        endY = yBottom,
-                    )
-            }
-            onDrawBehind {
-                bands.forEach { (r, brush) ->
-                    drawRect(brush = brush, topLeft = Offset(r.left, r.top), size = Size(r.width, r.height))
-                }
-            }
-        },
-    )
-}
+/** 右侧投影的份数与步长（每份右移一点、透明度递减） */
+private const val WHEEL_SHADOW_STEPS = 5
+private val WHEEL_SHADOW_STEP = 1.2.dp
 
-/** 浮层铺满整个窗口（卡片自己按窗口坐标定位） */
-private object WheelWindowOrigin : PopupPositionProvider {
+/**
+ * 浮层卡片的位置：**中心对齐锚点（常态那一格）的中心**，并夹在窗口内。
+ * 用 [PopupPositionProvider] 直接给出落点（与锚点同一坐标系），不再自己算窗口内偏移——
+ * 点击与长按因此落在同一处，且不会受弹层窗口坐标系差异影响。
+ */
+private object WheelCardPosition : PopupPositionProvider {
     override fun calculatePosition(
         anchorBounds: IntRect,
         windowSize: IntSize,
         layoutDirection: LayoutDirection,
         popupContentSize: IntSize,
-    ): IntOffset = IntOffset.Zero
+    ): IntOffset {
+        val margin = 4
+        val x = anchorBounds.center.x - popupContentSize.width / 2f
+        val y = anchorBounds.center.y - popupContentSize.height / 2f
+        return IntOffset(
+            x.roundToInt().coerceIn(
+                margin,
+                (windowSize.width - popupContentSize.width - margin).coerceAtLeast(margin),
+            ),
+            y.roundToInt().coerceIn(
+                margin,
+                (windowSize.height - popupContentSize.height - margin).coerceAtLeast(margin),
+            ),
+        )
+    }
 }
 
 // ---------- 手势与惯性 ----------
 
 /**
- * 拖动 + 惯性 + 吸附的统一驱动（收起态长按拖动与浮层内拖动共用）。
+ * 拖动 + 惯性 + 吸附的统一驱动（常态长按拖动与浮窗内拖动共用）。
  *
  * 惯性用**手写指数衰减**（每帧 v *= e^{-dt/τ}）而不是现成的 exponentialDecay：
  * 总位移严格等于 v·τ，恰好和 [clampFlingVelocity] 用同一个公式，边界可证不越界；
