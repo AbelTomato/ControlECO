@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
@@ -24,6 +25,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -91,7 +93,7 @@ internal const val WHEEL_FADE_ROWS = 2.6f
 /** 惯性滑动的时间常数（秒）：指数衰减的总位移 = 初速度 × τ */
 internal const val WHEEL_FLING_TAU = 0.25f
 
-/** 只绘制"当前 ±1.5 行"：更远的行不露头，避免溢出成三行 */
+/** 常态只绘制"当前 ±1.5 行"：更远的行不露头（常态不超过行高） */
 internal const val WHEEL_MAX_ABS_D = 1.5f
 
 /** 边缘渐隐长度（行高的倍数）：内容在贴到上/下边缘前先淡出 */
@@ -163,7 +165,8 @@ internal fun wheelIndexAt(
  *   投影只落在右侧；常态内容在浮窗期间隐去、收起后原位复现。
  *
  * @param itemHeight 单行高度（行高即弧长步长）
- * @param rows 常态可见行数（奇数，居中项为当前值；浮窗同尺寸）
+ * @param rows 常态可见行数（奇数，居中项为当前值）——**常态不超过行高**：这一格就是 [rows] 行高
+ * @param expandedRows 浮出卡可见行数（奇数）——浮出允许超过行高（常态那几行之外再多露两行）
  * @param updateWhileScrolling true = 滚动过程中就回调选中值；false = 仅在提交（吸附/收起）时回调
  * @param label 无障碍描述前缀（如"每月第一天"）
  */
@@ -176,6 +179,7 @@ fun WheelPicker(
     label: String? = null,
     itemHeight: Dp = 28.dp,
     rows: Int = 3,
+    expandedRows: Int = 5,
     trigger: WheelTrigger = WheelTrigger.TAP_AND_LONG_PRESS,
     updateWhileScrolling: Boolean = false,
 ) {
@@ -188,6 +192,7 @@ fun WheelPicker(
     val metrics = rememberWheelMetrics(items)
     val layouts = metrics.layouts
     val slotHeight = itemHeight * rows
+    val cardHeight = itemHeight * expandedRows
     // 卡宽 = 最宽条目文本 + 一个汉字宽（两边各留半个字）
     val cardWidth = with(density) { (metrics.maxTextWidthPx + metrics.charWidthPx).toDp() }
 
@@ -227,9 +232,14 @@ fun WheelPicker(
             }
     }
 
+    // 手势回调会跨越多次重组：必须用 rememberUpdatedState 读**最新**的外部值。
+    // 直接闭包捕获 safeIndex 会拿到回调创建时的旧值——"把日子改回原来那个"会被误判为"没变"而丢设置
+    val latestIndex by rememberUpdatedState(safeIndex)
+    val latestOnSelected by rememberUpdatedState(onSelected)
+
     fun commitNow() {
         val snapped = pos.value.roundToInt().coerceIn(0, lastIndex)
-        if (snapped != safeIndex) onSelected(snapped)
+        if (snapped != latestIndex) latestOnSelected(snapped)
     }
 
     fun openPopup() {
@@ -314,6 +324,7 @@ fun WheelPicker(
             pos = { pos.value },
             itemHeightPx = itemHeightPx,
             highlightProvider = { highlight },
+            maxAbsD = WHEEL_MAX_ABS_D,
             // 浮窗在场时整格隐去（卡下不重影、入场半透明期不穿帮）
             modifier = Modifier
                 .fillMaxSize()
@@ -335,8 +346,9 @@ fun WheelPicker(
                     pos = { pos.value },
                     itemHeightPx = itemHeightPx,
                     highlightProvider = { highlight },
+                    maxAbsD = expandedRows / 2f + 0.6f,
                     progress = { popupProgress.value },
-                    modifier = Modifier.width(cardWidth).height(slotHeight),
+                    modifier = Modifier.width(cardWidth).height(cardHeight),
                     onDragStart = controller::onStart,
                     onDrag = { change, deltaY ->
                         controller.onMove(change)
@@ -361,8 +373,12 @@ fun WheelPicker(
                 pos = { pos.value },
                 itemHeightPx = itemHeightPx,
                 highlightProvider = { highlight },
+                maxAbsD = expandedRows / 2f + 0.6f,
                 progress = { inlineProgress.value },
-                modifier = Modifier.width(cardWidth).height(slotHeight),
+                modifier = Modifier
+                    .wrapContentSize(Alignment.Center, unbounded = true)
+                    .width(cardWidth)
+                    .height(cardHeight),
             )
         }
     }
@@ -404,6 +420,7 @@ private fun WheelCanvas(
     pos: () -> Float,
     itemHeightPx: Float,
     highlightProvider: () -> Int,
+    maxAbsD: Float,
     modifier: Modifier = Modifier,
 ) {
     val selectedColor = MaterialTheme.colorScheme.primary
@@ -420,7 +437,7 @@ private fun WheelCanvas(
         val centerY = size.height / 2f
         val rowH = itemHeightPx
         val base = floor(p).toInt()
-        val maxD = ceil(WHEEL_MAX_ABS_D).toInt()
+        val maxD = ceil(maxAbsD).toInt()
         val halfH = size.height / 2f
         val edgeFadeLen = rowH * WHEEL_EDGE_FADE_ROWS
         // 中心选中带（轻量背景高亮）
@@ -435,7 +452,7 @@ private fun WheelCanvas(
             val index = base + d
             if (index < 0 || index > items.lastIndex) continue
             val dd = index - p
-            if (abs(dd) > WHEEL_MAX_ABS_D) continue
+            if (abs(dd) > maxAbsD) continue
             val phi = wheelPhi(dd, rowH, radiusPx)
             val y = centerY + wheelOffsetY(phi, radiusPx)
             // 贴到上/下边缘前先淡出：内容不会在边缘被硬切
@@ -478,6 +495,7 @@ private fun WheelCard(
     pos: () -> Float,
     itemHeightPx: Float,
     highlightProvider: () -> Int,
+    maxAbsD: Float,
     progress: () -> Float,
     modifier: Modifier = Modifier,
     onDragStart: (() -> Unit)? = null,
@@ -549,6 +567,7 @@ private fun WheelCard(
             pos = pos,
             itemHeightPx = itemHeightPx,
             highlightProvider = highlightProvider,
+            maxAbsD = maxAbsD,
             modifier = Modifier.fillMaxSize(),
         )
     }
