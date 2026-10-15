@@ -91,7 +91,10 @@ fun PercentInput(
     }
 }
 
-/** 单个数字格：底衬半透明灰 "0"，已输入时显示数字；下方一条下划线（激活时加粗换主色） */
+/**
+ * 单个数字格：空格子底衬半透明灰 "0"（提示可输入），**输入后占位消失只留数字**；
+ * 下方一条下划线（激活时加粗换主色）。
+ */
 @Composable
 private fun DigitCell(char: Char?, active: Boolean) {
     Column(
@@ -99,16 +102,17 @@ private fun DigitCell(char: Char?, active: Boolean) {
         modifier = Modifier.width(24.dp),
     ) {
         Box(Modifier.height(34.dp).width(24.dp), contentAlignment = Alignment.Center) {
-            Text(
-                "0",
-                style = MaterialTheme.typography.headlineSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.28f),
-            )
-            char?.let {
+            if (char != null) {
                 Text(
-                    it.toString(),
+                    char.toString(),
                     style = MaterialTheme.typography.headlineSmall,
                     color = MaterialTheme.colorScheme.onSurface,
+                )
+            } else {
+                Text(
+                    "0",
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.28f),
                 )
             }
         }
