@@ -46,7 +46,7 @@ import com.controleco.app.data.budget.Budget
 import com.controleco.app.data.budget.MonthPeriod
 import com.controleco.app.ui.common.BudgetEditDialog
 import com.controleco.app.ui.common.InfoRow
-import com.controleco.app.ui.common.InlineWheelPicker
+import com.controleco.app.ui.common.WheelPicker
 import com.controleco.app.ui.common.PaneCard
 import com.controleco.app.ui.common.RowDivider
 import com.controleco.app.ui.common.SectionTitle
@@ -165,10 +165,11 @@ fun ProfileScreen(
                     style = MaterialTheme.typography.bodyLarge,
                     modifier = Modifier.weight(1f),
                 )
-                InlineWheelPicker(
+                WheelPicker(
                     items = remember { MonthPeriod.startDayOptions() },
                     selectedIndex = MonthPeriod.startDayIndex(monthStartDay),
                     onSelected = { vm.setMonthStartDay(MonthPeriod.startDayAtIndex(it)) },
+                    label = "每月第一天",
                 )
             }
             RowDivider()
