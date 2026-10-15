@@ -36,13 +36,18 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Outline
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerInputChange
@@ -62,6 +67,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
@@ -69,6 +75,7 @@ import androidx.compose.ui.window.PopupProperties
 import com.controleco.app.ui.theme.accBook
 import kotlin.math.abs
 import kotlin.math.asin
+import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.exp
 import kotlin.math.floor
@@ -93,8 +100,19 @@ internal const val WHEEL_CAMERA_FACTOR = 3f
 /** 渐隐行数：距离中心超过该行数后透明度触底 */
 internal const val WHEEL_FADE_ROWS = 2.6f
 
-/** 惯性滑动的时间常数（秒）：exponentialDecay 的总位移 ≈ 初速度 × τ */
+/** 惯性滑动的时间常数（秒）：指数衰减的总位移 = 初速度 × τ */
 internal const val WHEEL_FLING_TAU = 0.25f
+
+/** 常态（收起）只画"当前 ±1 天"：更远的行不露头，避免溢出成三天 */
+private const val COLLAPSED_MAX_ABS_D = 1.5f
+
+/** 鼓面弧高：上下底圆弧向外鼓出的幅度 */
+private val WHEEL_DRUM_BULGE = 7.dp
+
+/** 右侧投影：把卡身形状向右平移若干步、透明度递减地叠在卡身下层（阴影只露右侧） */
+private const val WHEEL_SHADOW_STEPS = 5
+private val WHEEL_SHADOW_STEP = 1.2.dp
+private const val WHEEL_SHADOW_ALPHA = 0.075f
 
 /** 项差值 d（可含小数）→ 圆柱角位移（弧度）。一行 = 行高 / 半径 */
 internal fun wheelPhi(d: Float, itemHeightPx: Float, radiusPx: Float = itemHeightPx * WHEEL_RADIUS_ROWS): Float =
@@ -307,9 +325,9 @@ fun WheelPicker(
             items = items,
             layouts = layouts,
             pos = { pos.value },
-            rows = collapsedRows,
             itemHeightPx = itemHeightPx,
             highlightProvider = { highlight },
+            maxAbsD = COLLAPSED_MAX_ABS_D,
             modifier = Modifier.fillMaxSize(),
         )
     }
@@ -341,7 +359,7 @@ fun WheelPicker(
                     items = items,
                     layouts = layouts,
                     pos = { pos.value },
-                    rows = expandedRows,
+                    expandedRows = expandedRows,
                     itemHeightPx = itemHeightPx,
                     highlightProvider = { highlight },
                     progress = { popupProgress.value },
@@ -372,7 +390,7 @@ fun WheelPicker(
             items = items,
             layouts = layouts,
             pos = { pos.value },
-            rows = expandedRows,
+            expandedRows = expandedRows,
             itemHeightPx = itemHeightPx,
             highlightProvider = { highlight },
             progress = { inlineProgress.value },
@@ -406,9 +424,9 @@ private fun WheelCanvas(
     items: List<String>,
     layouts: List<Pair<TextLayoutResult, TextLayoutResult>>,
     pos: () -> Float,
-    rows: Int,
     itemHeightPx: Float,
     highlightProvider: () -> Int,
+    maxAbsD: Float,
     modifier: Modifier = Modifier,
 ) {
     val selectedColor = MaterialTheme.colorScheme.primary
@@ -432,7 +450,7 @@ private fun WheelCanvas(
         val centerY = size.height / 2f
         val rowH = itemHeightPx
         val base = floor(p).toInt()
-        val maxD = rows / 2 + 2
+        val maxD = ceil(maxAbsD).toInt()
         // 中心选中带（轻量背景高亮）
         drawRoundRect(
             color = bandColor,
@@ -445,6 +463,8 @@ private fun WheelCanvas(
             val index = base + d
             if (index < 0 || index > items.lastIndex) continue
             val dd = index - p
+            // 只画可视半径内的项：常态 = 当前 ±1 天（更远的行不露头、不溢出）
+            if (abs(dd) > maxAbsD) continue
             val phi = wheelPhi(dd, rowH, radiusPx)
             val y = centerY + wheelOffsetY(phi, radiusPx)
             if (y < -rowH * 1.4f || y > size.height + rowH * 1.4f) continue
@@ -475,13 +495,34 @@ private fun WheelCanvas(
     }
 }
 
-/** 悬浮滚轮卡：卡面 + 滚轮 + 入场/退场动画（scale/alpha 由 [progress] 驱动，draw 阶段读取） */
+/**
+ * 鼓面形（滚轮轮廓）：上下底是向外的圆弧（弧顶正好落在卡片上下边），左右是直边——
+ * "上下底为圆弧的长方形"，比圆角矩形更像一节滚轮。
+ */
+private class DrumShape(private val bulge: Float) : Shape {
+    override fun createOutline(size: Size, layoutDirection: LayoutDirection, density: Density): Outline =
+        Outline.Generic(drumPath(size.width, size.height, bulge))
+}
+
+/** 鼓面形状的路径：上下底各一条向外的圆弧（二次贝塞尔控制点取 ∓b → 弧顶正好贴住边界） */
+private fun drumPath(width: Float, height: Float, bulge: Float): Path {
+    val b = bulge.coerceAtMost(height / 3f)
+    return Path().apply {
+        moveTo(0f, b)
+        quadraticBezierTo(width / 2f, -b, width, b)
+        lineTo(width, height - b)
+        quadraticBezierTo(width / 2f, height + b, 0f, height - b)
+        close()
+    }
+}
+
+/** 悬浮滚轮卡：鼓面卡身 + 滚轮 + 入场/退场动画（scale/alpha 由 [progress] 驱动，draw 阶段读取） */
 @Composable
 private fun WheelCard(
     items: List<String>,
     layouts: List<Pair<TextLayoutResult, TextLayoutResult>>,
     pos: () -> Float,
-    rows: Int,
+    expandedRows: Int,
     itemHeightPx: Float,
     highlightProvider: () -> Int,
     progress: () -> Float,
@@ -491,7 +532,9 @@ private fun WheelCard(
     onDragEnd: (() -> Unit)? = null,
     onTapRow: ((Int) -> Unit)? = null,
 ) {
-    val shape = RoundedCornerShape(16.dp)
+    val bulgePx = with(LocalDensity.current) { WHEEL_DRUM_BULGE.toPx() }
+    val shape = remember(bulgePx) { DrumShape(bulgePx) }
+    val shadowColor = Color.Black
     var card = modifier
         .graphicsLayer {
             val pr = progress()
@@ -500,7 +543,17 @@ private fun WheelCard(
             scaleY = 0.88f + 0.12f * pr
             alpha = pr
         }
-        .shadow(12.dp, shape)
+        // 投影只落在右侧边：把卡身形状向右平移数份、透明度递减地画在卡身下层
+        .drawBehind {
+            val p = drumPath(size.width, size.height, bulgePx)
+            for (i in 0 until WHEEL_SHADOW_STEPS) {
+                val dx = (i + 1) * WHEEL_SHADOW_STEP.toPx()
+                val alpha = WHEEL_SHADOW_ALPHA * (1f - i / WHEEL_SHADOW_STEPS.toFloat())
+                translate(left = dx) {
+                    drawPath(path = p, color = shadowColor, alpha = alpha)
+                }
+            }
+        }
         .clip(shape)
         .background(MaterialTheme.colorScheme.surface)
         .border(1.dp, MaterialTheme.accBook.hairline, shape)
@@ -532,9 +585,9 @@ private fun WheelCard(
             items = items,
             layouts = layouts,
             pos = pos,
-            rows = rows,
             itemHeightPx = itemHeightPx,
             highlightProvider = highlightProvider,
+            maxAbsD = expandedRows / 2f + 0.6f,
             modifier = Modifier.fillMaxSize(),
         )
     }
