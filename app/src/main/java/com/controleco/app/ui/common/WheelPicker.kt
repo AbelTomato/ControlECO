@@ -186,7 +186,9 @@ internal fun wheelIndexAt(
  *   （点外部 / 返回键提交并收起；点某一行直接选中）；
  * - [WheelTrigger.LONG_PRESS] / [TAP_AND_LONG_PRESS]：长按 → 不松手直接滑动，抬手后按速度惯性
  *   滚动并吸附到最近一项，随后提交并收起；
- * - 拖动与手指 1:1 跟手（中心项按弧长线性对应）；动画期新手势直接接管（Animatable 互斥）。
+ * - 拖动与手指 1:1 跟手（中心项按弧长线性对应）；动画期新手势直接接管（Animatable 互斥）；
+ * - **悬浮位置固定**：点击与长按的滚轮卡落在同一处——横向中心对齐常态数值的中心列、
+ *   纵向中心对齐常态那一行（选中行与常态值重合），常态整格在浮窗期间隐去、收起后原位复现。
  *
  * @param itemHeight 单行高度（行高即弧长步长）
  * @param collapsedRows 收起态可见行数（奇数，居中项为当前值）
@@ -342,7 +344,10 @@ fun WheelPicker(
             highlightProvider = { highlight },
             maxAbsD = COLLAPSED_MAX_ABS_D,
             straightEdgeFade = true,
-            modifier = Modifier.fillMaxSize(),
+            // 浮窗在场时收起态整格隐去：卡下不重影、动画半透明期也不穿帮（收起后原样复现，位置不动）
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer { alpha = if (expandedNow) 0f else 1f },
         )
     }
 
@@ -362,6 +367,7 @@ fun WheelPicker(
             properties = PopupProperties(focusable = true),
         ) {
             BoxWithConstraints(Modifier.fillMaxSize()) {
+                val windowWidthPx = with(density) { maxWidth.toPx() }
                 val windowHeightPx = with(density) { maxHeight.toPx() }
                 // 透明遮罩：点其他区域 = 提交并收起
                 Box(
@@ -369,8 +375,10 @@ fun WheelPicker(
                         .fillMaxSize()
                         .pointerInput(Unit) { detectTapGestures(onTap = { closePopup() }) },
                 )
-                // 卡片贴着数值所在行浮出（锚点与弹层都在窗口坐标系）
-                val x = (anchor.right - cardPx.first).coerceAtLeast(4f)
+                // 卡片以**常态数值的中心**为基准浮出（与行内悬浮同一位置，点击/长按不跳位）：
+                // 中心列对齐常态那一列、纵向中心对齐常态那一行（弹层与锚点都在窗口坐标系）
+                val x = (anchor.center.x - cardPx.first / 2f)
+                    .coerceIn(4f, (windowWidthPx - cardPx.first - 4f).coerceAtLeast(4f))
                 val y = (anchor.center.y - cardPx.second / 2f)
                     .coerceIn(4f, (windowHeightPx - cardPx.second - 4f).coerceAtLeast(4f))
                 WheelCard(
