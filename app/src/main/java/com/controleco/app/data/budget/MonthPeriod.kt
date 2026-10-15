@@ -6,11 +6,11 @@ import java.time.ZoneId
 import java.time.temporal.ChronoUnit
 
 /**
- * 会计月：把"月"统一定义为**同一日期到同一日期**的区间（首日可选 1..30 或「最后一日」）。
+ * 会计月：把"月"统一定义为**同一日期到同一日期**的区间（首日可选 1..30 或「月末」）。
  * 首日 = 1 时即自然月；首日 = 2 时 10 月区间是 10-02 ~ 11-02（左闭右开）。
  *
  * 短月规则（静默，不向用户解释）：设为 29/30 号时，遇到没有这一天的小月（2 月、4 月…）
- * 自动用**该月最后一天**作为首日（2 月 30 号 = 2 月末）；「最后一日」则每月都跟月末走。
+ * 自动用**该月最后一天**作为首日（2 月 30 号 = 2 月末）；「月末」则每月都跟该月最后一天走。
  * 期间因此可能长短不一（如 2-28 ~ 3-30 是 30 天），这是预期行为。
  *
  * 区间口径与账单/统计的毫秒区间一致：[start, endExclusive)。
@@ -47,12 +47,12 @@ data class MonthPeriod(val start: LocalDate, val endExclusive: LocalDate) {
         "${start.monthValue}月${start.dayOfMonth}日–${endExclusive.minusDays(1).monthValue}月${endExclusive.minusDays(1).dayOfMonth}日"
 
     companion object {
-        /** 「最后一日」：跟每个月月末走（2 月自动落到 28/29） */
+        /** 「月末」：跟每个月最后一天走（2 月自动落到 28/29） */
         const val LAST_DAY = 0
         const val MIN_START_DAY = 1
         const val MAX_START_DAY = 30
 
-        /** 合法化用户输入：1..30，或 [LAST_DAY]（滚轮选项里没有 31 号——月末用「最后一日」表达） */
+        /** 合法化用户输入：1..30，或 [LAST_DAY]（滚轮选项里没有 31 号——月末用「月末」表达） */
         fun clampStartDay(day: Int): Int =
             if (day == LAST_DAY || day < MIN_START_DAY) LAST_DAY else day.coerceAtMost(MAX_START_DAY)
 
@@ -62,12 +62,12 @@ data class MonthPeriod(val start: LocalDate, val endExclusive: LocalDate) {
             else -> startDay.coerceIn(MIN_START_DAY, month.lengthOfMonth())
         }
 
-        /** 滚轮选项：["1日".."30日", "最后一日"] */
+        /** 滚轮选项：["1日".."30日", "月末"] */
         fun startDayOptions(): List<String> =
             (MIN_START_DAY..MAX_START_DAY).map { formatStartDay(it) } + formatStartDay(LAST_DAY)
 
         fun formatStartDay(startDay: Int): String =
-            if (clampStartDay(startDay) == LAST_DAY) "最后一日" else "${startDay.coerceIn(MIN_START_DAY, MAX_START_DAY)}日"
+            if (clampStartDay(startDay) == LAST_DAY) "月末" else "${startDay.coerceIn(MIN_START_DAY, MAX_START_DAY)}日"
 
         /** 首日值 → 滚轮下标（与 [startDayAtIndex] 互逆） */
         fun startDayIndex(startDay: Int): Int =

@@ -151,7 +151,7 @@ fun ProfileScreen(
                 onClick = { showBudgetDialog = true },
             )
             RowDivider()
-            // 会计月首日：预算周期与全 App 的"月"都按它划分（1~30 或「最后一日」；滚轮就地展开）。
+            // 会计月首日：预算周期与全 App 的"月"都按它划分（1~30 或「月末」；滚轮就地展开）。
             // zIndex：滚轮长按拖动时的行内悬浮卡要盖住下面的行（同层兄弟按 zIndex 排绘制顺序）
             Row(
                 Modifier

@@ -111,6 +111,36 @@ class WheelPickerMathTest {
         assertEquals(30, (30.6f).roundToInt().coerceIn(0, 30))
     }
 
+    // ---------- 鼓面轮廓（上下底圆弧） ----------
+
+    @Test
+    fun `鼓面弧线两端切线竖直_与左右直边完美对接`() {
+        val w = 64f
+        val bulge = 7f
+        // 端点：左端 x=0、右端 x=w，纵向偏移都等于弧高 b
+        assertEquals(0f, drumArcX(0f, w), 0.0001f)
+        assertEquals(w, drumArcX(1f, w), 0.0001f)
+        assertEquals(bulge, drumArcY(0f, bulge), 0.0001f)
+        assertEquals(bulge, drumArcY(1f, bulge), 0.0001f)
+        // 弧顶贴住边界（离边界半个字内完全消失的前提）
+        assertEquals(0f, drumArcY(0.5f, bulge), 0.0001f)
+        // 两端切线竖直：x′(0)=0（也就是"没有尖角"的数学条件）
+        val dx = drumArcX(0.001f, w) - drumArcX(0f, w)
+        assertEquals(0f, dx, w * 0.001f)
+        // 屏幕坐标 y 向下：从端点出发弧线是"往上走"（y 减小），切线竖直向里
+        val dy = drumArcY(0.001f, bulge) - drumArcY(0f, bulge)
+        assertTrue("端点处弧线应向上抬升（切线竖直）：$dy", dy < 0f)
+        // 单调：x 递增、y 先降后升
+        var prevX = -1f
+        for (i in 0..100) {
+            val x = drumArcX(i / 100f, w)
+            assertTrue("x 应单调不减", x >= prevX)
+            prevX = x
+        }
+        val mid = drumArcY(0.25f, bulge)
+        assertTrue("四分点应在弧顶与端点之间", mid in 0.01f..bulge)
+    }
+
     @Test
     fun `拖动映射与手指一比一`() {
         // 拖动 delta（像素）→ 项位移 = delta / 行高；中心项视觉上正好跟手

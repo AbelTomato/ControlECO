@@ -58,7 +58,7 @@ class MonthPeriodTest {
 
     @Test
     fun `坏首日参数被夹到合法范围`() {
-        // 合法域：1..30 或「最后一日」（滚轮里没有 31——月末用最后一日表达）
+        // 合法域：1..30 或「月末」（滚轮里没有 31——月末用「月末」表达）
         assertEquals(MonthPeriod.LAST_DAY, MonthPeriod.clampStartDay(0))
         assertEquals(MonthPeriod.LAST_DAY, MonthPeriod.clampStartDay(-5))
         assertEquals(1, MonthPeriod.clampStartDay(1))
@@ -78,7 +78,7 @@ class MonthPeriodTest {
         assertEquals(29, MonthPeriod.startDayOf(YearMonth.of(2028, 2), 29))
         // 小月 4 月没有 30 号？有（4 月 30 天）——30 号可正常落地；2 月才是唯一短于 29 的月
         assertEquals(30, MonthPeriod.startDayOf(YearMonth.of(2026, 4), 30))
-        // 最后一日：每月都跟月末走
+        // 月末：每月都跟该月最后一天走
         assertEquals(31, MonthPeriod.startDayOf(YearMonth.of(2026, 1), MonthPeriod.LAST_DAY))
         assertEquals(28, MonthPeriod.startDayOf(YearMonth.of(2026, 2), MonthPeriod.LAST_DAY))
         assertEquals(29, MonthPeriod.startDayOf(YearMonth.of(2028, 2), MonthPeriod.LAST_DAY))
@@ -104,7 +104,7 @@ class MonthPeriodTest {
     }
 
     @Test
-    fun `最后一日口径的区间跟每月月末走`() {
+    fun `月末口径的区间跟每月最后一天走`() {
         val jan = MonthPeriod.of(LocalDate.of(2026, 1, 31), MonthPeriod.LAST_DAY)
         assertEquals(LocalDate.of(2026, 1, 31), jan.start)
         assertEquals(LocalDate.of(2026, 2, 28), jan.endExclusive)
@@ -119,10 +119,10 @@ class MonthPeriodTest {
     @Test
     fun `滚轮选项与首日值互逆`() {
         val options = MonthPeriod.startDayOptions()
-        assertEquals(31, options.size) // 1..30 + 最后一日
+        assertEquals(31, options.size) // 1..30 + 月末
         assertEquals("1日", options.first())
         assertEquals("30日", options[29])
-        assertEquals("最后一日", options.last())
+        assertEquals("月末", options.last())
         assertEquals(0, MonthPeriod.startDayIndex(1))
         assertEquals(29, MonthPeriod.startDayIndex(30))
         assertEquals(30, MonthPeriod.startDayIndex(MonthPeriod.LAST_DAY))
@@ -130,7 +130,7 @@ class MonthPeriodTest {
             assertEquals(index, MonthPeriod.startDayIndex(MonthPeriod.startDayAtIndex(index)))
         }
         assertEquals("30日", MonthPeriod.formatStartDay(30))
-        assertEquals("最后一日", MonthPeriod.formatStartDay(MonthPeriod.LAST_DAY))
+        assertEquals("月末", MonthPeriod.formatStartDay(MonthPeriod.LAST_DAY))
     }
 
     @Test
