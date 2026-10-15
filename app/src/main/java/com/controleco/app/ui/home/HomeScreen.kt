@@ -67,6 +67,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.controleco.app.data.LedgerViewModel
 import com.controleco.app.data.budget.Budget
+import com.controleco.app.data.budget.MonthPeriod
 import com.controleco.app.data.db.CategoryEntity
 import com.controleco.app.data.db.CategorySumRow
 import com.controleco.app.data.db.TxType
@@ -114,6 +115,8 @@ internal data class CategoryRingData(
     val remainingCents: Long,
     val ratio: Float,
     val tone: Budget.Tone,
+    /** 超支警示强度（红线位置随剩余天数动态变化，见 Budget.warningSeverity） */
+    val severity: Float,
     val isOther: Boolean = false,
 )
 
@@ -126,6 +129,9 @@ fun HomeScreen(vm: LedgerViewModel) {
     val categorySums by vm.homeCategorySums.collectAsStateWithLifecycle()
     val categories by vm.categories.collectAsStateWithLifecycle()
     val totalDepositCents by vm.totalDepositCents.collectAsStateWithLifecycle()
+    val monthStartDay by vm.monthStartDay.collectAsStateWithLifecycle()
+    val dailyBudgetMode by vm.dailyBudgetMode.collectAsStateWithLifecycle()
+    val dailyBudgetCents by vm.dailyBudgetCents.collectAsStateWithLifecycle()
 
     // 数据未到位前整页不画任何东西（避免"先空/先默认，再跳成真实数据"的闪动）
     val spentReady = spentCents
@@ -148,8 +154,16 @@ fun HomeScreen(vm: LedgerViewModel) {
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
     val today = todayState
-    val snapshot = remember(budgetCents, spentReady, today, todaySpentReady) {
-        Budget.compute(budgetCents, spentReady, today, todaySpentReady)
+    val period = remember(today, monthStartDay) { MonthPeriod.of(today, monthStartDay) }
+    val snapshot = remember(budgetCents, spentReady, today, todaySpentReady, period, dailyBudgetMode, dailyBudgetCents) {
+        Budget.compute(
+            budgetCents,
+            spentReady,
+            today,
+            todaySpentReady,
+            period = period,
+            dailyBudgetCents = if (dailyBudgetMode) dailyBudgetCents else 0L,
+        )
     }
 
     // budget > 0 时 compute 必返回非空
@@ -215,14 +229,18 @@ fun HomeScreen(vm: LedgerViewModel) {
 
     val latestOnDragEnd by rememberUpdatedState(onDragEnd)
 
-    val rings = remember(categoryBudgets, sumsReady, categories, budgetCents, spentReady) {
-        buildCategoryRings(categoryBudgets, sumsReady, categories, budgetCents, spentReady)
+    val rings = remember(categoryBudgets, sumsReady, categories, budgetCents, spentReady, period) {
+        buildCategoryRings(
+            categoryBudgets, sumsReady, categories, budgetCents, spentReady,
+            thresholds = s?.thresholds ?: Budget.thresholds(1, 1),
+        )
     }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
         Spacer(Modifier.height(10.dp))
         Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
-            MonthChip("${today.year}年${today.monthValue}月")
+            // 月份胶囊按**会计月**显示（首日 ≠ 1 时，月初那几天仍属于上一个月）
+            MonthChip("${period.start.year}年${period.start.monthValue}月")
         }
 
         Box(
@@ -276,14 +294,14 @@ fun HomeScreen(vm: LedgerViewModel) {
         ) {
             when (mode) {
                 0 -> if (s != null) {
-                    ModeRemaining(s, today)
+                    ModeRemaining(s, today, period)
                 } else {
-                    ModeNeedsBudget(mode = 1, onSetBudget = { showBudgetDialog = true })
+                    ModeNeedsBudget(mode = 1, dailyMode = dailyBudgetMode, onSetBudget = { showBudgetDialog = true })
                 }
                 1 -> if (s != null) {
                     ModeCategories(rings)
                 } else {
-                    ModeNeedsBudget(mode = 2, onSetBudget = { showBudgetDialog = true })
+                    ModeNeedsBudget(mode = 2, dailyMode = dailyBudgetMode, onSetBudget = { showBudgetDialog = true })
                 }
                 else -> ModeSpentAndDeposit(snapshot = s, spentCents = spentReady, totalDepositCents = depositReady)
             }
@@ -297,8 +315,13 @@ fun HomeScreen(vm: LedgerViewModel) {
 
     if (showBudgetDialog) {
         BudgetEditDialog(
-            currentCents = budgetCents,
-            onSave = { vm.setMonthlyBudget(it); showBudgetDialog = false },
+            dailyMode = dailyBudgetMode,
+            daysInPeriod = period.days,
+            currentCents = if (dailyBudgetMode) dailyBudgetCents else budgetCents,
+            onSave = {
+                if (dailyBudgetMode) vm.setDailyBudget(it) else vm.setMonthlyBudget(it)
+                showBudgetDialog = false
+            },
             onDismiss = { showBudgetDialog = false },
         )
     }
@@ -307,19 +330,19 @@ fun HomeScreen(vm: LedgerViewModel) {
 // ---------------- 模式 1：总剩余预算（大环 + 时间细环 + 本日剩余） ----------------
 
 @Composable
-private fun ModeRemaining(s: Budget.Snapshot, today: LocalDate) {
+private fun ModeRemaining(s: Budget.Snapshot, today: LocalDate, period: MonthPeriod) {
     val ab = MaterialTheme.accBook
     val tone = s.tone
-    val severity = warningSeverity(s.remainingRatio)
+    val severity = Budget.warningSeverity(s.remainingRatio, s.thresholds.redBelow)
     val alarming = tone == Budget.Tone.LOW
     val mainColor by animateColorAsState(toneColor(tone, severity), tween(420), label = "mode1Ring")
     val ratio = s.remainingRatio.coerceIn(0f, 1f)
     val percent = (s.remainingRatio * 100).roundToInt().coerceIn(0, 100)
-    val timeRatio = (today.dayOfMonth.toFloat() / today.lengthOfMonth()).coerceIn(0f, 1f)
-    // 月份细环与主环同口径：饱和度高的弧 = 还剩多少，所以画"本月剩余"而非"已过"。
-    // 此前画"已过"（8 号 = 1/4）会被读成"只剩 1/4"，且与主环方向相反、无法直接对比。
+    // 时间细环与主环同口径：饱和度高的弧 = 还剩多少，所以画"本期剩余"而非"已过"。
+    // 已过天数含今天（与旧自然月口径一致）；月首日 ≠1 时区间两端都按会计月算
+    val timeRatio = (period.daysElapsed(today).toFloat() / period.days).coerceIn(0f, 1f)
     val monthLeftRatio = (1f - timeRatio).coerceIn(0f, 1f)
-    val daysLeftInMonth = (today.lengthOfMonth() - today.dayOfMonth).coerceAtLeast(0)
+    val daysLeftInMonth = period.daysAfter(today)
     // 底轨用比发丝线略深的 ringTrack：页面底色是浅蓝，hairline 会糊在背景里
     val trackColor = ab.ringTrack
     // 月份环（本月剩余时间）：饱和蓝，与预算主环明显区分（此前灰调不起眼）
@@ -464,7 +487,7 @@ private fun ModeCategories(items: List<CategoryRingData>) {
                 }
                 if (showHint) {
                     Text(
-                        "在「设置 → 分类管理」可为分类设定预算",
+                        "在「个人 → 分类预算」可为分类设定预算",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -476,7 +499,7 @@ private fun ModeCategories(items: List<CategoryRingData>) {
 
 @Composable
 private fun CategoryRing(data: CategoryRingData, ringSize: Dp, stroke: Dp, trackColor: Color) {
-    val severity = warningSeverity(data.ratio)
+    val severity = data.severity
     val alarming = data.tone == Budget.Tone.LOW
     val color by animateColorAsState(toneColor(data.tone, severity), tween(420), label = "categoryRing")
     val textMaxWidth = ringSize - stroke * 2 - 14.dp
@@ -528,7 +551,7 @@ private fun CategoryRing(data: CategoryRingData, ringSize: Dp, stroke: Dp, track
 @Composable
 private fun ModeSpentAndDeposit(snapshot: Budget.Snapshot?, spentCents: Long, totalDepositCents: Long) {
     val ab = MaterialTheme.accBook
-    val severity = snapshot?.let { warningSeverity(it.remainingRatio) } ?: 0f
+    val severity = snapshot?.let { Budget.warningSeverity(it.remainingRatio, it.thresholds.redBelow) } ?: 0f
     val spentAlarm = snapshot?.tone == Budget.Tone.LOW
     val spentTarget = if (snapshot != null) {
         toneColor(snapshot.tone, severity)
@@ -595,16 +618,11 @@ private fun toneColor(tone: Budget.Tone, severity: Float = 0f): Color {
 }
 
 /**
- * 超支警示强度 0..1：剩余比例 20%（红档起点）为 0，超支 30%（比例 -0.3）封顶 1。
- * 用于心跳/摇晃幅度与红色饱和度（上限即"防止过度动画"的封顶）。
- */
-internal fun warningSeverity(remainingRatio: Float): Float =
-    ((Budget.TONE_LOW_RATIO - remainingRatio) / 0.5f).coerceIn(0f, 1f)
-
-/**
  * 红色数字警示动效：心跳缩放（幅度/频率随 severity 增强，封顶 1.10 倍、周期不短于 650ms）
  * + 间隔性的快速轻微摇晃（幅度封顶 2.2°，每 2.6s 只摇晃一小段）。
  * 只在 draw 阶段读取动画状态，不触发重组；系统"减少动画"或非告警状态时原样返回。
+ *
+ * severity 由 [com.controleco.app.data.budget.Budget.warningSeverity] 按动态红线（剩余天数比例）算。
  */
 @Composable
 private fun Modifier.warningHeartbeat(active: Boolean, severity: Float): Modifier {
@@ -683,7 +701,7 @@ private fun ModeIndicator(current: Int, onSelect: (Int) -> Unit) {
 
 /** 未设预算时的模式内提示（模式①/②保留可切换，只是引导先设置预算） */
 @Composable
-private fun ModeNeedsBudget(mode: Int, onSetBudget: () -> Unit) {
+private fun ModeNeedsBudget(mode: Int, dailyMode: Boolean, onSetBudget: () -> Unit) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier.padding(horizontal = 28.dp),
@@ -691,22 +709,30 @@ private fun ModeNeedsBudget(mode: Int, onSetBudget: () -> Unit) {
         BudgetRingPlaceholder()
         Spacer(Modifier.height(20.dp))
         Text(
-            if (mode == 1) "还没有设置月预算" else "还没有分类预算",
+            if (mode == 1) {
+                if (dailyMode) "还没有设置日预算" else "还没有设置月预算"
+            } else {
+                "还没有分类预算"
+            },
             style = MaterialTheme.typography.titleMedium,
         )
         Spacer(Modifier.height(6.dp))
         Text(
             if (mode == 1) {
-                "设置月预算后，这里显示本月还可以花与本日剩余"
+                if (dailyMode) {
+                    "设置日预算后，这里显示本月还可以花与本日剩余（月预算 = 日预算 × 本月天数）"
+                } else {
+                    "设置月预算后，这里显示本月还可以花与本日剩余"
+                }
             } else {
-                "设置月预算后到「设置 → 分类管理」为分类设定预算，这里显示各分类剩余"
+                "设置月预算后到「个人 → 分类预算」为分类设定预算，这里显示各分类剩余"
             },
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
         )
         Spacer(Modifier.height(12.dp))
-        TextButton(onClick = onSetBudget) { Text("设置本月预算") }
+        TextButton(onClick = onSetBudget) { Text(if (dailyMode) "设置日预算" else "设置本月预算") }
     }
 }
 
@@ -732,6 +758,8 @@ private fun BudgetRingPlaceholder(modifier: Modifier = Modifier) {
  * 支出 = 当月总支出 − 已计入分类环的支出——使 Σ分类剩余 + 其他剩余 = 月总剩余（模式①口径）。
  * 仅当"其他"预算 > 0 时出现（全部分类预算超过总预算时无处归属，跳过）。
  * 仅支出分类与仍存在的分类参与；分类预算未设置的分类不计入已分配。
+ *
+ * [thresholds] = 当前动态阈值（剩余天数比例），分类环与主环共用同一套档位与警示强度。
  */
 internal fun buildCategoryRings(
     budgets: Map<Long, Long>,
@@ -739,6 +767,7 @@ internal fun buildCategoryRings(
     categories: List<CategoryEntity>,
     monthlyBudgetCents: Long,
     totalSpentCents: Long,
+    thresholds: Budget.Thresholds = Budget.thresholds(1, 1),
 ): List<CategoryRingData> {
     val byId = categories.associateBy { it.id }
     val spentById = sums.associate { it.categoryId to it.totalCents }
@@ -750,26 +779,33 @@ internal fun buildCategoryRings(
     }
 
     val rings = budgeted.map { (category, budget) ->
-        ringOf(category.name, budget, spentById[category.id] ?: 0L, isOther = false)
+        ringOf(category.name, budget, spentById[category.id] ?: 0L, thresholds, isOther = false)
     }.toMutableList()
 
     val allocatedBudget = budgeted.sumOf { it.second }
     val allocatedSpent = budgeted.sumOf { (category, _) -> spentById[category.id] ?: 0L }
     val otherBudget = monthlyBudgetCents - allocatedBudget
     if (monthlyBudgetCents > 0L && otherBudget > 0L) {
-        rings += ringOf("其他", otherBudget, totalSpentCents - allocatedSpent, isOther = true)
+        rings += ringOf("其他", otherBudget, totalSpentCents - allocatedSpent, thresholds, isOther = true)
     }
     return rings.sortedBy { it.ratio }
 }
 
-private fun ringOf(name: String, budgetCents: Long, spentCents: Long, isOther: Boolean): CategoryRingData {
+private fun ringOf(
+    name: String,
+    budgetCents: Long,
+    spentCents: Long,
+    thresholds: Budget.Thresholds,
+    isOther: Boolean,
+): CategoryRingData {
     val remaining = budgetCents - spentCents
     val ratio = remaining.toDouble() / budgetCents.toDouble()
     return CategoryRingData(
         name = name,
         remainingCents = remaining,
         ratio = ratio.toFloat(),
-        tone = Budget.remainingTone(ratio.toFloat()),
+        tone = Budget.tone(ratio.toFloat(), thresholds),
+        severity = Budget.warningSeverity(ratio.toFloat(), thresholds.redBelow),
         isOther = isOther,
     )
 }

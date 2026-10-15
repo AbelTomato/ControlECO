@@ -100,6 +100,10 @@ internal fun samePendingFamily(a: DedupKey, b: DedupKey): Boolean =
 /**
  * 页面信息优先的字段合并：页面有值则覆盖（商户/金额/时间），页面没有的（金额之外的空白）
  * 保留通知侧原值；支付方式并入备注（页面独有信息，不入独立列）。
+ *
+ * 商户的覆盖有一道防护：**纯金额不能覆盖已有商户**——页面解析偶发把金额节点当商户
+ * （真实事故：碰一碰支付页"￥"与"20.06"分节点渲染，合并回填把"鸿润福连锁超市"改成了"20.06"）。
+ * 解析侧已修根因，这里再兜一层：坏值进不了账。
  */
 internal fun mergePageInfo(
     existing: PendingTransactionEntity,
@@ -118,10 +122,11 @@ internal fun mergePageInfo(
             append("支付方式 $pagePaymentMethod")
         }
     }.take(300)
+    val usableCounterparty = pageCounterparty.takeIf { it.isNotBlank() && !PageRules.isAmountLikeNode(it) }
     return PageMerge(
         amountCents = pageAmountCents,
         timestamp = pageTxTime ?: existing.timestamp,
-        counterparty = pageCounterparty.ifBlank { existing.counterparty },
+        counterparty = usableCounterparty ?: existing.counterparty,
         note = note,
         ruleName = pageRuleName.ifBlank { existing.ruleName },
     )

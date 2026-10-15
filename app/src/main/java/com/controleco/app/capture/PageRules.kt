@@ -56,10 +56,22 @@ object PageRules {
     private val fallbackExcluded = counterpartyLabels + paymentMethodLabels + timeLabels +
         listOf("完成", "确认", "取消", "查看", "收起", "展开", "复制", "返回", "同意", "关闭", "继续", "知道了",
             "账单详情", "交易详情", "优惠", "红包",
+            // 金额类节点的整行（"付款金额：¥20.06"/"实付 ¥20.06"）不是商户名
+            "金额", "实付",
             // 页面尚未渲染完时商户节点可能还没出来，导航类节点不能当收款方（真实样本"回首页"曾被当商户）
             "首页", "客服", "更多")
 
     private val stepperNode = Regex("""^x\d+$""")
+
+    /**
+     * 纯金额节点（可带 ¥ 前缀/负号/千分位/小数/尾随"元"）：绝不能当商户名或标签值。
+     * 真实样本（2026-10-13 支付宝碰一碰支付成功页）：页面把"￥"与"20.06"渲染成两个独立节点，
+     * "20.06" 通过了原先的"全数字"检查（小数点不是数字字符），被兜底扫描当成商户记进了账。
+     */
+    private val amountLikeNode = Regex("""^[-−－]?\s*[￥¥]?\s*[0-9][0-9,]*(?:\.[0-9]{1,2})?\s*元?$""")
+
+    /** 文本是否只是一个金额/纯数字（商户与"标签→值"提取的通用排除项，见 [amountLikeNode]） */
+    internal fun isAmountLikeNode(text: String): Boolean = amountLikeNode.matches(text.trim())
 
     /** 金额：优先"金额标签"同行，其次独立金额节点（成功页大字），最后任意 ¥ 金额 */
     private val labeledAmount = Regex("""(?:付款金额|支付金额|交易金额|金额)\s*[：:]?\s*[￥¥]?\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)""")
@@ -386,7 +398,7 @@ object PageRules {
             for (pattern in payerPatterns) {
                 val v = pattern.find(node)?.groupValues?.getOrNull(1)?.trim().orEmpty()
                 if (v.isEmpty()) continue
-                if (v.all { it.isDigit() }) continue
+                if (isAmountLikeNode(v)) continue // "转账 20.06 向你转账"式的误抓（金额不是人名）
                 if (incomeGenericWords.any { v == it }) continue
                 return v.take(20)
             }
@@ -440,6 +452,7 @@ object PageRules {
         if (statusPhrases.any { t.contains(it) }) return false
         if (labels.any { t == it }) return false
         if (t.all { it.isDigit() }) return false // 订单号/单号之类
+        if (isAmountLikeNode(t)) return false // 金额不是任何标签的值（收款方/支付方式/时间都不是）
         return true
     }
 
@@ -459,6 +472,7 @@ object PageRules {
             val t = nodes[i]
             if (t.isEmpty()) continue
             if (t.startsWith("￥") || t.startsWith("¥")) continue
+            if (isAmountLikeNode(t)) continue // 金额拆成独立节点（碰一碰样本的"20.06"）也不是商户
             if (t.all { it.isDigit() }) continue
             if (stepperNode.matches(t)) continue
             if (statusPhrases.any { t.contains(it) }) continue

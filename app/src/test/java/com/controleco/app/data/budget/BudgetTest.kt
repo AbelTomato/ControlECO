@@ -61,29 +61,57 @@ class BudgetTest {
         assertEquals(0.5f, s.spentRatio, 0.0001f)
     }
 
-    // ---------- 剩余额度三档（饼图 绿-蓝-红 用色） ----------
+    // ---------- 动态阈值（按剩余天数占本期比例，自测新口径） ----------
 
     @Test
-    fun `剩余充足为绿_中等为蓝_紧张为红`() {
-        assertEquals(Budget.Tone.OK, Budget.remainingTone(1.0f))
-        assertEquals(Budget.Tone.OK, Budget.remainingTone(0.5f))
-        assertEquals(Budget.Tone.MID, Budget.remainingTone(0.49f))
-        assertEquals(Budget.Tone.MID, Budget.remainingTone(0.2f))
-        assertEquals(Budget.Tone.LOW, Budget.remainingTone(0.19f))
-        assertEquals(Budget.Tone.LOW, Budget.remainingTone(0.0f))
-        assertEquals(Budget.Tone.LOW, Budget.remainingTone(-0.3f))
+    fun `阈值按剩余天数占本期比例计算`() {
+        // 30 天月、第 10 天（含今天剩 21 天）：绿线 = 20/30，红线 = 10.5/30
+        val t = Budget.thresholds(daysLeft = 21, daysInMonth = 30)
+        assertEquals(20f / 30f, t.greenAbove, 0.0001f)
+        assertEquals(10.5f / 30f, t.redBelow, 0.0001f)
+        // 最后一天：绿线 0（只要没超支就是绿），红线 = 半天占本期比例
+        val last = Budget.thresholds(daysLeft = 1, daysInMonth = 30)
+        assertEquals(0f, last.greenAbove, 0.0001f)
+        assertEquals(0.5f / 30f, last.redBelow, 0.0001f)
+    }
+
+    @Test
+    fun `用色三档按动态阈值分档`() {
+        val t = Budget.thresholds(daysLeft = 21, daysInMonth = 30) // 绿线 66.7%，红线 35%
+        // 已花 30% → 剩 70% ≥ 绿线 → 绿
+        assertEquals(Budget.Tone.OK, Budget.tone(0.70f, t))
+        // 已花 50% → 剩 50% 在红线与绿线之间 → 黄
+        assertEquals(Budget.Tone.MID, Budget.tone(0.50f, t))
+        // 已花 70% → 剩 30% < 红线 → 红
+        assertEquals(Budget.Tone.LOW, Budget.tone(0.30f, t))
+        // 超支必红
+        assertEquals(Budget.Tone.LOW, Budget.tone(-0.1f, t))
+    }
+
+    @Test
+    fun `最后一天用完预算不是绿色`() {
+        // 绿线 = 0："超过 0%" 不成立（严格大于），用完预算落黄档之下 → 红
+        val last = Budget.thresholds(daysLeft = 1, daysInMonth = 30)
+        assertEquals(Budget.Tone.LOW, Budget.tone(0f, last))
+        // 还剩一点点：超过绿线 0 → 绿（最后一天剩得下就是好事）
+        assertEquals(Budget.Tone.OK, Budget.tone(0.01f, last))
     }
 
     @Test
     fun `快照携带剩余比例与档位`() {
-        val ok = Budget.compute(1_000_00, 400_00, day)!!
-        assertEquals(0.6f, ok.remainingRatio, 0.0001f)
+        // 10-06（31 天月，剩 26 天）：绿线 25/31 = 80.6%，红线 13/31 = 41.9%
+        val ok = Budget.compute(1_000_00, 100_00, day)!!
+        assertEquals(0.9f, ok.remainingRatio, 0.0001f)
         assertEquals(Budget.Tone.OK, ok.tone)
 
-        val mid = Budget.compute(1_000_00, 900_00, day)!!
-        assertEquals(0.1f, mid.remainingRatio, 0.0001f)
-        assertEquals(Budget.Tone.LOW, mid.tone)
-        assertEquals(Budget.State.WARNING, mid.state) // 消耗 90% 同时 State 为警示
+        val mid = Budget.compute(1_000_00, 400_00, day)!!
+        assertEquals(0.6f, mid.remainingRatio, 0.0001f)
+        assertEquals(Budget.Tone.MID, mid.tone)
+
+        val low = Budget.compute(1_000_00, 900_00, day)!!
+        assertEquals(0.1f, low.remainingRatio, 0.0001f)
+        assertEquals(Budget.Tone.LOW, low.tone)
+        assertEquals(Budget.State.WARNING, low.state) // 消耗 90% 同时 State 为警示
 
         val over = Budget.compute(1_000_00, 1_200_00, day)!!
         assertEquals(-0.2f, over.remainingRatio, 0.0001f)
@@ -94,15 +122,54 @@ class BudgetTest {
 
     @Test
     fun `档位标签与用色边界一致`() {
-        assertEquals("充裕", Budget.toneLabel(1.0f))
-        assertEquals("充裕", Budget.toneLabel(0.5f))
-        assertEquals("留意", Budget.toneLabel(0.49f))
-        assertEquals("留意", Budget.toneLabel(0.2f))
-        assertEquals("偏紧", Budget.toneLabel(0.19f))
-        assertEquals("偏紧", Budget.toneLabel(0f))
+        val t = Budget.thresholds(daysLeft = 21, daysInMonth = 30) // 绿线 66.7%，红线 35%
+        assertEquals("充裕", Budget.toneLabel(0.70f, t))
+        assertEquals("留意", Budget.toneLabel(0.50f, t))
+        assertEquals("留意", Budget.toneLabel(0.35f, t))
+        assertEquals("偏紧", Budget.toneLabel(0.34f, t))
+        assertEquals("偏紧", Budget.toneLabel(0f, t))
         // 超支单独成词，但颜色仍落到 LOW（红）
-        assertEquals("已超支", Budget.toneLabel(-0.01f))
-        assertEquals(Budget.Tone.LOW, Budget.remainingTone(-0.01f))
+        assertEquals("已超支", Budget.toneLabel(-0.01f, t))
+        assertEquals(Budget.Tone.LOW, Budget.tone(-0.01f, t))
+    }
+
+    // ---------- 会计月区间（首日 ≠ 1） ----------
+
+    @Test
+    fun `自定义会计月的天数与剩余天数按区间算`() {
+        // 首日 = 2：10-02 ~ 11-02，本期 31 天；10-06 距期末还有 27 天（含今天）
+        val period = MonthPeriod.of(day, 2)
+        assertEquals(LocalDate.of(2026, 10, 2), period.start)
+        assertEquals(LocalDate.of(2026, 11, 2), period.endExclusive)
+        assertEquals(31, period.days)
+        val s = Budget.compute(1_000_00, 400_00, day, period = period)!!
+        assertEquals(27, s.daysLeft)
+        assertEquals(31, s.daysInMonth)
+    }
+
+    // ---------- 日预算模式 ----------
+
+    @Test
+    fun `日预算模式本日剩余按日预算算`() {
+        // 月预算 3000（30 天 × 100），日预算 100；今日已花 30 → 本日剩余 70
+        val s = Budget.compute(
+            3_000_00, 1_000_00, day, todaySpentCents = 30_00,
+            period = MonthPeriod.of(day, 1), dailyBudgetCents = 100_00,
+        )!!
+        assertEquals(100_00, s.suggestedDailyCents)
+        assertEquals(70_00, s.todayLeftCents)
+    }
+
+    @Test
+    fun `日预算模式超支月预算仍按日额给本日剩余`() {
+        // 月预算已超支，但日预算模式下"今天还能花多少"看的是日额
+        val s = Budget.compute(
+            3_000_00, 3_500_00, day, todaySpentCents = 30_00,
+            period = MonthPeriod.of(day, 1), dailyBudgetCents = 100_00,
+        )!!
+        assertEquals(100_00, s.suggestedDailyCents)
+        assertEquals(70_00, s.todayLeftCents)
+        assertEquals(Budget.Tone.LOW, s.tone)
     }
 
     // ---------- 本日剩余（建议日额 − 今日净支出） ----------
@@ -143,5 +210,16 @@ class BudgetTest {
         val s = Budget.compute(1_000_00, 1_200_00, day, todaySpentCents = 50_00)!!
         assertEquals(0L, s.suggestedDailyCents)
         assertEquals(-50_00, s.todayLeftCents)
+    }
+
+    // ---------- 警示强度（心跳/摇晃幅度与红色饱和度） ----------
+
+    @Test
+    fun `警示强度随剩余减少而加深并封顶`() {
+        assertEquals(0f, Budget.warningSeverity(0.2f, 0.2f), 0.0001f)   // 红线处：无警示
+        assertEquals(0f, Budget.warningSeverity(0.8f, 0.2f), 0.0001f)
+        assertEquals(0.4f, Budget.warningSeverity(0f, 0.2f), 0.0001f)   // 用完预算
+        assertEquals(1f, Budget.warningSeverity(-0.3f, 0.2f), 0.0001f)  // 超支 30% 封顶
+        assertEquals(1f, Budget.warningSeverity(-2f, 0.2f), 0.0001f)    // 更深超支不超上限
     }
 }

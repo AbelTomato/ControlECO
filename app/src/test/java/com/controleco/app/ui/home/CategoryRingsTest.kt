@@ -160,10 +160,36 @@ class CategoryRingsTest {
 
     @Test
     fun `警示强度随剩余减少而加深并封顶`() {
-        assertEquals(0f, warningSeverity(0.2f), 0.0001f)   // 红档起点：无警示
-        assertEquals(0f, warningSeverity(0.8f), 0.0001f)
-        assertEquals(0.4f, warningSeverity(0f), 0.0001f)   // 用完预算
-        assertEquals(1f, warningSeverity(-0.3f), 0.0001f)  // 超支 30% 封顶
-        assertEquals(1f, warningSeverity(-2f), 0.0001f)    // 更深超支不超上限
+        assertEquals(0f, Budget.warningSeverity(0.2f, 0.2f), 0.0001f)   // 红线处：无警示
+        assertEquals(0f, Budget.warningSeverity(0.8f, 0.2f), 0.0001f)
+        assertEquals(0.4f, Budget.warningSeverity(0f, 0.2f), 0.0001f)   // 用完预算
+        assertEquals(1f, Budget.warningSeverity(-0.3f, 0.2f), 0.0001f)  // 超支 30% 封顶
+        assertEquals(1f, Budget.warningSeverity(-2f, 0.2f), 0.0001f)    // 更深超支不超上限
+    }
+
+    @Test
+    fun `分类环携带同一套动态阈值下的警示强度`() {
+        // 动态阈值（剩 21 天 / 30 天）：绿线 66.7%，红线 35%
+        val thresholds = Budget.thresholds(daysLeft = 21, daysInMonth = 30)
+        val rings = buildCategoryRings(
+            budgets = mapOf(1L to 1_000_00),
+            sums = listOf(sum(1, "餐饮", 700_00)), // 剩 30% < 红线 → 红
+            categories = listOf(category(1, "餐饮")),
+            monthlyBudgetCents = 1_000_00,
+            totalSpentCents = 700_00,
+            thresholds = thresholds,
+        )
+        assertEquals(Budget.Tone.LOW, rings[0].tone)
+        assertEquals(Budget.warningSeverity(0.3f, thresholds.redBelow), rings[0].severity, 0.0001f)
+        // 剩 70% > 绿线 → 绿
+        val okRings = buildCategoryRings(
+            budgets = mapOf(1L to 1_000_00),
+            sums = listOf(sum(1, "餐饮", 300_00)),
+            categories = listOf(category(1, "餐饮")),
+            monthlyBudgetCents = 1_000_00,
+            totalSpentCents = 300_00,
+            thresholds = thresholds,
+        )
+        assertEquals(Budget.Tone.OK, okRings[0].tone)
     }
 }

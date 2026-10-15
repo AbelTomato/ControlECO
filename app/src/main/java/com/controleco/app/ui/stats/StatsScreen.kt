@@ -41,6 +41,7 @@ import com.controleco.app.ui.common.periodBalanceLabel
 import com.controleco.app.ui.common.periodScopeLabel
 import com.controleco.app.ui.theme.accBook
 import com.controleco.app.util.Money
+import com.controleco.app.data.budget.MonthPeriod
 import java.time.LocalDate
 import java.time.YearMonth
 
@@ -54,6 +55,8 @@ import java.time.YearMonth
 fun StatsScreen(vm: LedgerViewModel, scrollToTopTick: Int = 0) {
     val month by vm.month.collectAsStateWithLifecycle()
     val mode by vm.periodMode.collectAsStateWithLifecycle()
+    val currentAccountingMonth by vm.currentAccountingMonth.collectAsStateWithLifecycle()
+    val monthStartDayState by vm.monthStartDay.collectAsStateWithLifecycle()
     var showPicker by remember { mutableStateOf(false) }
     val totals by vm.periodTotals.collectAsStateWithLifecycle()
     val byCategory by vm.periodCategorySums.collectAsStateWithLifecycle()
@@ -73,21 +76,29 @@ fun StatsScreen(vm: LedgerViewModel, scrollToTopTick: Int = 0) {
     val income = totalsReady.firstOrNull { it.type == TxType.INCOME }?.totalCents ?: 0L
 
     // 日均结余：净结余 ÷ 天数（当前周期用"截至今天"，历史周期用满周期天数）；
-    // 结余为负时带上负号（说明这个周期平均每天在净流出）
-    val now = YearMonth.now()
-    val isCurrentPeriod = if (mode == PeriodMode.MONTH) month == now else month.year == now.year
+    // 结余为负时带上负号（说明这个周期平均每天在净流出）。
+    // "当前周期""天数"全部按会计月口径（月首日 ≠ 1 时与自然月不同）
+    val today = LocalDate.now()
+    val monthStartDay = monthStartDayState
+    val isCurrentPeriod = if (mode == PeriodMode.MONTH) {
+        month == currentAccountingMonth
+    } else {
+        month.year == currentAccountingMonth.year
+    }
     val daysElapsed = when {
-        mode == PeriodMode.MONTH && isCurrentPeriod -> LocalDate.now().dayOfMonth
-        mode == PeriodMode.MONTH -> month.lengthOfMonth()
-        isCurrentPeriod -> LocalDate.now().dayOfYear
-        else -> if (YearMonth.of(month.year, 2).lengthOfMonth() == 29) 366 else 365
+        mode == PeriodMode.MONTH -> {
+            val period = MonthPeriod.of(month, monthStartDay)
+            if (isCurrentPeriod) period.daysElapsed(today) else period.days
+        }
+        isCurrentPeriod -> MonthPeriod.year(month.year, monthStartDay).daysElapsed(today)
+        else -> MonthPeriod.year(month.year, monthStartDay).days
     }
     val dailyBalance = (income - expense) / daysElapsed.coerceAtLeast(1)
 
-    // 柱状图数据：月视角每日一根、年视角每月一根
-    val bars = remember(rowsReady, month, mode) {
+    // 柱状图数据：月视角每日一根、年视角每月一根（月视角按会计月分桶）
+    val bars = remember(rowsReady, month, mode, monthStartDay) {
         if (mode == PeriodMode.MONTH) {
-            ChartMath.monthBars(rowsReady, month)
+            ChartMath.monthBars(rowsReady, month, monthStartDay)
         } else {
             ChartMath.yearBars(rowsReady, month)
         }
@@ -268,6 +279,7 @@ fun StatsScreen(vm: LedgerViewModel, scrollToTopTick: Int = 0) {
             onSelectMonth = { vm.setMonth(it) },
             onSelectYear = { vm.setMonth(YearMonth.of(it, month.monthValue)) },
             onDismiss = { showPicker = false },
+            currentMonth = currentAccountingMonth,
         )
     }
 }

@@ -1,5 +1,6 @@
 package com.controleco.app.ui.stats
 
+import com.controleco.app.data.budget.MonthPeriod
 import com.controleco.app.data.db.TransactionRow
 import com.controleco.app.data.db.TxType
 import com.controleco.app.util.Money
@@ -37,35 +38,42 @@ data class CategorySlice(
  */
 object ChartMath {
 
-    /** 月视角：每日一根柱（含零支出日，保持横轴时间连续） */
+    /**
+     * 月视角：每日一根柱（含零支出日，保持横轴时间连续）。
+     * [startDay] = 会计月首日（1 = 自然月；首日 ≠ 1 时区间与刻度都按会计月走）。
+     */
     fun monthBars(
         rows: List<TransactionRow>,
         month: YearMonth,
+        startDay: Int = 1,
         zone: ZoneId = ZoneId.systemDefault(),
     ): List<BarPoint> {
-        val days = month.lengthOfMonth()
+        val period = MonthPeriod.of(month, startDay)
+        val days = period.days
         val cents = LongArray(days)
         val counts = IntArray(days)
         rows.filter { it.type == TxType.EXPENSE }.forEach { r ->
             val d = Instant.ofEpochMilli(r.timestamp).atZone(zone).toLocalDate()
-            if (d.year == month.year && d.month == month.month) {
-                val i = d.dayOfMonth - 1
+            if (period.contains(d)) {
+                val i = period.dayIndexOf(d) - 1
                 cents[i] += r.amountCents
                 counts[i]++
             }
         }
-        return (1..days).map { day ->
-            val c = cents[day - 1]
-            val n = counts[day - 1]
+        return (1..days).map { pos ->
+            // 刻度文字用**真实日期**（首日 = 1 时即 1..N 号，与旧行为一致）
+            val date = period.start.plusDays((pos - 1).toLong())
+            val c = cents[pos - 1]
+            val n = counts[pos - 1]
             BarPoint(
                 cents = c,
                 count = n,
-                // 每 5 天标一个数字；月末补一格，但离上一个刻度太近（如 31 距 30）就跳过，避免数字挤在一起
-                axisLabel = if (day % 5 == 0 || (day == days && day % 5 >= 3)) "$day" else null,
+                // 每 5 格标一个数字；期末补一格，但离上一个刻度太近（如 31 距 30）就跳过，避免数字挤在一起
+                axisLabel = if (pos % 5 == 0 || (pos == days && pos % 5 >= 3)) "${date.dayOfMonth}" else null,
                 tip = if (c > 0) {
-                    "${month.monthValue}月${day}日  ${Money.formatYuanGrouped(c)}  $n 笔"
+                    "${date.monthValue}月${date.dayOfMonth}日  ${Money.formatYuanGrouped(c)}  $n 笔"
                 } else {
-                    "${month.monthValue}月${day}日  无支出"
+                    "${date.monthValue}月${date.dayOfMonth}日  无支出"
                 },
             )
         }

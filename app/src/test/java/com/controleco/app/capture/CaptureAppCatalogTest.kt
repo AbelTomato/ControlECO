@@ -50,4 +50,24 @@ class CaptureAppCatalogTest {
         assertTrue(CaptureAppCatalog.watchedOrUnknown(emptySet(), "SMS:工商银行"))
         assertTrue(CaptureAppCatalog.watchedOrUnknown(emptySet(), "com.some.unknown.bank"))
     }
+
+    @Test
+    fun `美团外卖包名是 takeoutnew 而不是 takeaway`() {
+        // 自测修正：此前误写成 takeaway（不存在的包名），美团外卖的通知与页面两条路被静默排除
+        assertTrue("com.sankuai.meituan.takeoutnew" in CaptureAppCatalog.defaults())
+        assertFalse("com.sankuai.meituan.takeaway" in CaptureAppCatalog.defaults())
+        assertTrue(NotificationRules.isCheckoutPackage("com.sankuai.meituan.takeoutnew"))
+        assertFalse(NotificationRules.isCheckoutPackage("com.sankuai.meituan.takeaway"))
+    }
+
+    @Test
+    fun `目录新增应用按增量补入且不改动既有开关`() {
+        val stored = setOf(NotificationRules.WECHAT) // 用户只留了微信（支付宝被主动关掉）
+        val baseline = setOf(NotificationRules.WECHAT, NotificationRules.ALIPAY) // 上次见过的目录
+        val catalog = baseline + "com.sankuai.meituan.takeoutnew"
+        val merged = CaptureAppCatalog.watchedWithNew(stored, baseline, catalog)
+        assertTrue("新增项要补进来", "com.sankuai.meituan.takeoutnew" in merged)
+        assertFalse("用户关掉、且上次已见过的应用不被重新打开", NotificationRules.ALIPAY in merged)
+        assertTrue(NotificationRules.WECHAT in merged)
+    }
 }

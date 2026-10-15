@@ -31,6 +31,9 @@ import com.controleco.app.data.db.TypeTotalRow
 import com.controleco.app.data.db.TxSource
 import com.controleco.app.data.db.TxType
 import com.controleco.app.data.budget.Budget
+import com.controleco.app.data.budget.CategoryBudgetMath
+import com.controleco.app.data.budget.CategoryBudgetMode
+import com.controleco.app.data.budget.MonthPeriod
 import com.controleco.app.data.model.BillSource
 import com.controleco.app.data.model.ImportCommitResult
 import com.controleco.app.data.model.ParsedBill
@@ -87,7 +90,105 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
         AppLog.i("settings", "showRefunds=$enabled")
     }
 
-    // ---------- 设置：月度预算（首页 HUD 的数据源） ----------
+    // ---------- 预算：会计月首日 / 日·月预算 / 生效月预算 ----------
+
+    /** 会计月首日（1..28）：决定"本月"的区间与全 App 按月统计的口径（见 MonthPeriod） */
+    private val _monthStartDay = MutableStateFlow(
+        MonthPeriod.clampStartDay(prefs.getInt(KEY_MONTH_START_DAY, 1)),
+    )
+    val monthStartDay: StateFlow<Int> = _monthStartDay
+
+    fun setMonthStartDay(day: Int) {
+        val v = MonthPeriod.clampStartDay(day)
+        prefs.edit().putInt(KEY_MONTH_START_DAY, v).apply()
+        _monthStartDay.value = v
+        AppLog.i("settings", "monthStartDay=$v")
+    }
+
+    /**
+     * "今天"（跨零点或从后台回来时由 [refreshToday] 刷新）。
+     * 预算周期、今日净支出等一切"以今天为准"的口径都读它，避免零点后还停在昨天。
+     */
+    private val todayRef = MutableStateFlow(LocalDate.now(zone))
+
+    /** 首页 ON_RESUME 时调用：跨天后把"今天"的统计范围换过来 */
+    fun refreshToday() {
+        val now = LocalDate.now(zone)
+        if (now != todayRef.value) {
+            todayRef.value = now
+            AppLog.i("home", "today=$now")
+        }
+    }
+
+    /** 当前会计月区间（随"今天 / 月首日"滚动） */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val currentPeriod: StateFlow<MonthPeriod> = combine(todayRef, _monthStartDay) { d, s ->
+        MonthPeriod.of(d, s)
+    }.stateIn(
+        viewModelScope,
+        SharingStarted.WhileSubscribed(5_000),
+        MonthPeriod.of(LocalDate.now(zone), _monthStartDay.value),
+    )
+
+    /** 当前会计月的"月标签"（账单/统计页的当前高亮与「回到本月」用；首日 ≠ 1 时可能不是本月） */
+    val currentAccountingMonth: StateFlow<YearMonth> = currentPeriod
+        .map { YearMonth.from(it.start) }
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            MonthPeriod.monthOf(LocalDate.now(zone), _monthStartDay.value),
+        )
+
+    /** 预算按日设置（默认关）：开启后输入日预算，月预算 = 日预算 × 本期天数 */
+    private val _dailyBudgetMode = MutableStateFlow(prefs.getBoolean(KEY_DAILY_BUDGET_MODE, false))
+    val dailyBudgetMode: StateFlow<Boolean> = _dailyBudgetMode
+
+    private val _monthlyBudgetAmount = MutableStateFlow(prefs.getLong(KEY_MONTHLY_BUDGET, 0L))
+    private val _dailyBudgetAmount = MutableStateFlow(prefs.getLong(KEY_DAILY_BUDGET, 0L))
+
+    /** 日预算金额（0 = 未设置；是否生效看 [dailyBudgetMode]） */
+    val dailyBudgetCents: StateFlow<Long> = _dailyBudgetAmount
+
+    /** 生效的月预算：按日模式 = 日预算 × 本期天数（跨月自动重算）；否则 = 月金额 */
+    val monthlyBudgetCents: StateFlow<Long> = combine(
+        _monthlyBudgetAmount, _dailyBudgetAmount, _dailyBudgetMode, currentPeriod,
+    ) { amount, daily, dailyMode, period ->
+        if (dailyMode) daily * period.days else amount
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), effectiveMonthlyBudget())
+
+    private fun effectiveMonthlyBudget(): Long = if (_dailyBudgetMode.value) {
+        _dailyBudgetAmount.value * MonthPeriod.of(LocalDate.now(zone), _monthStartDay.value).days
+    } else {
+        _monthlyBudgetAmount.value
+    }
+
+    /** 月预算输入（金额模式）：cents ≤ 0 视为未设置 */
+    fun setMonthlyBudget(cents: Long) {
+        prefs.edit().putLong(KEY_MONTHLY_BUDGET, cents).apply()
+        _monthlyBudgetAmount.value = cents
+        AppLog.i("settings", "monthlyBudget=${Money.formatYuan(cents)}")
+    }
+
+    /** 日预算输入（按日模式）：cents ≤ 0 视为未设置 */
+    fun setDailyBudget(cents: Long) {
+        prefs.edit().putLong(KEY_DAILY_BUDGET, cents).apply()
+        _dailyBudgetAmount.value = cents
+        AppLog.i("settings", "dailyBudget=${Money.formatYuan(cents)}")
+    }
+
+    /**
+     * 切换日/月预算：切到按日时若日预算还是空的，用"月预算 ÷ 本期天数"预填，
+     * 避免对话框打开是空的（用户已设过月预算的情况下）。
+     */
+    fun setDailyBudgetMode(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_DAILY_BUDGET_MODE, enabled).apply()
+        _dailyBudgetMode.value = enabled
+        if (enabled && _dailyBudgetAmount.value <= 0L && _monthlyBudgetAmount.value > 0L) {
+            val days = MonthPeriod.of(LocalDate.now(zone), _monthStartDay.value).days
+            setDailyBudget((_monthlyBudgetAmount.value + days - 1) / days)
+        }
+        AppLog.i("settings", "budgetDailyMode=$enabled")
+    }
 
     // ---------- 设置：账单页结余卡背景图（null = 默认几何背景） ----------
 
@@ -200,16 +301,6 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
         _cardTransform.value = t
     }
 
-    private val _monthlyBudget = MutableStateFlow(prefs.getLong(KEY_MONTHLY_BUDGET, 0L))
-    val monthlyBudgetCents: StateFlow<Long> = _monthlyBudget
-
-    /** cents ≤ 0 视为未设置 */
-    fun setMonthlyBudget(cents: Long) {
-        prefs.edit().putLong(KEY_MONTHLY_BUDGET, cents).apply()
-        _monthlyBudget.value = cents
-        AppLog.i("settings", "monthlyBudget=${Money.formatYuan(cents)}")
-    }
-
     // ---------- 设置：货币符号（人民币 / 美元 / 欧元 …；只改符号，不做换算） ----------
 
     private val _currencySymbol = MutableStateFlow(
@@ -226,27 +317,28 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
         AppLog.i("settings", "currencySymbol=$value")
     }
 
-    private val homeMonth = YearMonth.now(zone)
-
-    private val homeRange = range(homeMonth)
-
     /**
-     * 首页"本月已花"：固定取当前自然月（不随流水页翻月变化）。
-     * 口径 = 当月支出合计 − 当月退款到账（现金净流出，退款始终计入，与显示开关无关）。
+     * 首页"本期已花"：固定取**当前会计月**（不随流水页翻月变化；区间随月首日滚动）。
+     * 口径 = 本期支出合计 − 本期退款到账（现金净流出，退款始终计入，与显示开关无关）。
      * 剩余/建议日花/状态由 UI 用 Budget.compute 纯函数计算。
      */
     @OptIn(ExperimentalCoroutinesApi::class)
-    val homeNetSpent: StateFlow<Long?> = combine(
-        txDao.observeTypeTotals(homeRange.first, homeRange.second, true),
-        txDao.observeRefundIncomeTotal(homeRange.first, homeRange.second),
-    ) { totals, refundIncome ->
-        (totals.firstOrNull { it.type == TxType.EXPENSE }?.totalCents ?: 0L) - refundIncome
+    val homeNetSpent: StateFlow<Long?> = currentPeriod.flatMapLatest { period ->
+        val (start, end) = period.toMillisRange(zone)
+        combine(
+            txDao.observeTypeTotals(start, end, true),
+            txDao.observeRefundIncomeTotal(start, end),
+        ) { totals, refundIncome ->
+            (totals.firstOrNull { it.type == TxType.EXPENSE }?.totalCents ?: 0L) - refundIncome
+        }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
-    /** 首页"分类剩余预算"预览：当月各支出分类合计（口径与首页一致，退款始终计入） */
-    val homeCategorySums: StateFlow<List<CategorySumRow>?> = txDao
-        .observeCategorySums(homeRange.first, homeRange.second, TxType.EXPENSE, true)
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+    /** 首页"分类剩余预算"预览：本期各支出分类合计（口径与首页一致，退款始终计入） */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val homeCategorySums: StateFlow<List<CategorySumRow>?> = currentPeriod.flatMapLatest { period ->
+        val (start, end) = period.toMillisRange(zone)
+        txDao.observeCategorySums(start, end, TxType.EXPENSE, true)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     /**
      * 首页"本日剩余"用：**今日净支出** = 今日支出 − **今日退款到账**。
@@ -257,17 +349,6 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
      * 范围跟着"今天"走（[refreshToday]），跨零点或从后台回来时刷新一次，
      * 否则零点后还会一直算昨天的账。
      */
-    private val todayRef = MutableStateFlow(LocalDate.now(zone))
-
-    /** 首页 ON_RESUME 时调用：跨天后把"今天"的统计范围换过来 */
-    fun refreshToday() {
-        val now = LocalDate.now(zone)
-        if (now != todayRef.value) {
-            todayRef.value = now
-            AppLog.i("home", "today=$now")
-        }
-    }
-
     @OptIn(ExperimentalCoroutinesApi::class)
     val homeTodayNetSpent: StateFlow<Long?> = todayRef.flatMapLatest { day ->
         val start = day.atStartOfDay(zone).toInstant().toEpochMilli()
@@ -317,25 +398,23 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
     /** 直接跳到指定月份（账单页月份胶囊的选择面板） */
     fun setMonth(m: YearMonth) { _month.value = m }
 
-    private fun range(m: YearMonth): Pair<Long, Long> {
-        val start = m.atDay(1).atStartOfDay(zone).toInstant().toEpochMilli()
-        val end = m.plusMonths(1).atDay(1).atStartOfDay(zone).toInstant().toEpochMilli()
-        return start to end
-    }
+    /**
+     * 翻月选中月份（语义 = 会计月开始所在的月）对应的毫秒区间。
+     * 首日 = 1 时即自然月；首日 = 2 时"2026年10月"= 10-02 ~ 11-02（左闭右开）。
+     */
+    private fun range(m: YearMonth): Pair<Long, Long> =
+        MonthPeriod.of(m, _monthStartDay.value).toMillisRange(zone)
 
-    /** 年区间：1 月 1 日 00:00（含）→ 次年 1 月 1 日 00:00（不含） */
-    private fun yearRange(y: Int): Pair<Long, Long> {
-        val start = LocalDate.of(y, 1, 1).atStartOfDay(zone).toInstant().toEpochMilli()
-        val end = LocalDate.of(y + 1, 1, 1).atStartOfDay(zone).toInstant().toEpochMilli()
-        return start to end
-    }
+    /** 年区间：12 个连续会计月（y 年 1 月首日（含）→ 次年 1 月首日（不含）） */
+    private fun yearRange(y: Int): Pair<Long, Long> =
+        MonthPeriod.year(y, _monthStartDay.value).toMillisRange(zone)
 
-    /** 当前周期的毫秒区间（随月份/年份与周期模式变化） */
+    /** 当前周期的毫秒区间（随月份/年份/周期模式/月首日变化） */
     private val periodRange: StateFlow<Pair<Long, Long>> =
-        combine(_month, _periodMode) { m, mode ->
+        combine(_month, _periodMode, _monthStartDay) { m, mode, startDay ->
             when (mode) {
-                PeriodMode.MONTH -> range(m)
-                PeriodMode.YEAR -> yearRange(m.year)
+                PeriodMode.MONTH -> MonthPeriod.of(m, startDay).toMillisRange(zone)
+                PeriodMode.YEAR -> MonthPeriod.year(m.year, startDay).toMillisRange(zone)
             }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), range(YearMonth.now(zone)))
 
@@ -557,17 +636,25 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
                 categoryDao.deleteById(id)
                 CategoryIcon.deleteImage(getApplication(), CategoryIcon.imageOf(icon ?: ""))
                 setCategoryBudget(id, 0L) // 分类删除时同步清理其分类预算
+                setCategoryBudgetPercent(id, 0)
                 withContext(Dispatchers.Main) { onResult(null) }
             }
         }
     }
 
-    // ---------- 设置：分类月预算（首页"分类剩余预算"预览的数据源） ----------
+    // ---------- 设置：分类预算（金额 / 比例两种方案，全局开关；首页"分类剩余预算"的数据源） ----------
 
-    private val _categoryBudgets = MutableStateFlow(loadCategoryBudgets())
-    val categoryBudgets: StateFlow<Map<Long, Long>> = _categoryBudgets
+    /** 全局方案：金额（月金额）或比例（占月预算百分比，见 [CategoryBudgetMath]） */
+    private val _categoryBudgetMode = MutableStateFlow(
+        if (prefs.getString(KEY_CAT_BUDGET_MODE, null) == MODE_PERCENT) {
+            CategoryBudgetMode.PERCENT
+        } else {
+            CategoryBudgetMode.AMOUNT
+        },
+    )
+    val categoryBudgetMode: StateFlow<CategoryBudgetMode> = _categoryBudgetMode
 
-    private fun loadCategoryBudgets(): Map<Long, Long> = prefs.all.entries
+    private fun loadCategoryBudgetAmounts(): Map<Long, Long> = prefs.all.entries
         .mapNotNull { (key, value) ->
             if (!key.startsWith(KEY_CAT_BUDGET_PREFIX)) return@mapNotNull null
             val id = key.removePrefix(KEY_CAT_BUDGET_PREFIX).toLongOrNull() ?: return@mapNotNull null
@@ -576,7 +663,44 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
         }
         .toMap()
 
-    /** cents ≤ 0 表示清除该分类预算 */
+    private fun loadCategoryBudgetPercents(): Map<Long, Int> = prefs.all.entries
+        .mapNotNull { (key, value) ->
+            if (!key.startsWith(KEY_CAT_BUDGET_PCT_PREFIX)) return@mapNotNull null
+            val id = key.removePrefix(KEY_CAT_BUDGET_PCT_PREFIX).toLongOrNull() ?: return@mapNotNull null
+            val bp = (value as? Int) ?: return@mapNotNull null
+            if (bp > 0) id to bp else null
+        }
+        .toMap()
+
+    private val _categoryBudgetAmounts = MutableStateFlow(loadCategoryBudgetAmounts())
+    private val _categoryBudgetPercents = MutableStateFlow(loadCategoryBudgetPercents())
+
+    /** 各分类预算的比例（万分比，1% = 100；只含已设置项）——比例方案下列表/编辑框显示它 */
+    val categoryBudgetPercents: StateFlow<Map<Long, Int>> = _categoryBudgetPercents
+
+    /**
+     * 各分类预算的**生效月金额**（分）：金额方案直接取金额；比例方案按当前月预算折算。
+     * 首页分类环、统计页饼图与"还可分配"都读它——两种方案在下游看来没有区别。
+     */
+    val categoryBudgets: StateFlow<Map<Long, Long>> = combine(
+        _categoryBudgetAmounts, _categoryBudgetPercents, _categoryBudgetMode, monthlyBudgetCents,
+    ) { amounts, percents, mode, monthly ->
+        if (mode == CategoryBudgetMode.AMOUNT) {
+            amounts
+        } else {
+            percents.mapValues { (_, bp) -> CategoryBudgetMath.centsOf(bp, monthly) }
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), effectiveCategoryBudgets())
+
+    private fun effectiveCategoryBudgets(): Map<Long, Long> =
+        if (_categoryBudgetMode.value == CategoryBudgetMode.AMOUNT) {
+            _categoryBudgetAmounts.value
+        } else {
+            val monthly = effectiveMonthlyBudget()
+            _categoryBudgetPercents.value.mapValues { (_, bp) -> CategoryBudgetMath.centsOf(bp, monthly) }
+        }
+
+    /** 金额方案：cents ≤ 0 表示清除该分类预算（比例一侧的值保留，切换方案不丢） */
     fun setCategoryBudget(categoryId: Long, cents: Long) {
         val editor = prefs.edit()
         if (cents > 0) {
@@ -585,8 +709,82 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
             editor.remove(KEY_CAT_BUDGET_PREFIX + categoryId)
         }
         editor.apply()
-        _categoryBudgets.value = loadCategoryBudgets()
+        _categoryBudgetAmounts.value = loadCategoryBudgetAmounts()
         AppLog.i("settings", "categoryBudget[$categoryId]=${Money.formatYuan(cents)}")
+    }
+
+    /** 比例方案：bp（万分比）≤ 0 表示清除该分类预算 */
+    fun setCategoryBudgetPercent(categoryId: Long, bp: Int) {
+        val v = bp.coerceIn(0, CategoryBudgetMath.MAX_PERCENT)
+        val editor = prefs.edit()
+        if (v > 0) {
+            editor.putInt(KEY_CAT_BUDGET_PCT_PREFIX + categoryId, v)
+        } else {
+            editor.remove(KEY_CAT_BUDGET_PCT_PREFIX + categoryId)
+        }
+        editor.apply()
+        _categoryBudgetPercents.value = loadCategoryBudgetPercents()
+        AppLog.i("settings", "categoryBudgetPct[$categoryId]=${CategoryBudgetMath.formatPercent(v)}")
+    }
+
+    /**
+     * 切换分类预算方案（全局）：切换时按当前月预算换算另一侧的值，
+     * 保证两种方案的读数始终一致（月预算未设置时无法折算，保持原值不动）。
+     * 规则：切到比例 = 有金额的分类重算比例（金额侧是当前事实）；切到金额 = 有比例的分类重算金额。
+     */
+    fun setCategoryBudgetMode(mode: CategoryBudgetMode) {
+        prefs.edit().putString(KEY_CAT_BUDGET_MODE, if (mode == CategoryBudgetMode.PERCENT) MODE_PERCENT else MODE_AMOUNT).apply()
+        _categoryBudgetMode.value = mode
+        val monthly = effectiveMonthlyBudget()
+        if (monthly > 0L) {
+            if (mode == CategoryBudgetMode.PERCENT) {
+                val percents = _categoryBudgetPercents.value.toMutableMap()
+                var changed = false
+                _categoryBudgetAmounts.value.forEach { (id, cents) ->
+                    val bp = CategoryBudgetMath.percentOf(cents, monthly)
+                    if (bp != null && percents[id] != bp) {
+                        percents[id] = bp
+                        changed = true
+                    }
+                }
+                if (changed) {
+                    persistCategoryBudgetPercents(percents)
+                    _categoryBudgetPercents.value = loadCategoryBudgetPercents()
+                }
+            } else {
+                val amounts = _categoryBudgetAmounts.value.toMutableMap()
+                var changed = false
+                _categoryBudgetPercents.value.forEach { (id, bp) ->
+                    val cents = CategoryBudgetMath.centsOf(bp, monthly)
+                    if (cents > 0L && amounts[id] != cents) {
+                        amounts[id] = cents
+                        changed = true
+                    }
+                }
+                if (changed) {
+                    persistCategoryBudgetAmounts(amounts)
+                    _categoryBudgetAmounts.value = loadCategoryBudgetAmounts()
+                }
+            }
+        }
+        AppLog.i("settings", "categoryBudgetMode=$mode")
+    }
+
+    private fun persistCategoryBudgetPercents(percents: Map<Long, Int>) {
+        val editor = prefs.edit()
+        prefs.all.keys.filter { it.startsWith(KEY_CAT_BUDGET_PCT_PREFIX) }.forEach(editor::remove)
+        percents.forEach { (id, bp) -> editor.putInt(KEY_CAT_BUDGET_PCT_PREFIX + id, bp) }
+        editor.apply()
+    }
+
+    private fun persistCategoryBudgetAmounts(amounts: Map<Long, Long>) {
+        val editor = prefs.edit()
+        // 注意排除比例键："category_budget_pct_" 也以 "category_budget_" 开头，前缀匹配不能顺手删掉它
+        prefs.all.keys
+            .filter { it.startsWith(KEY_CAT_BUDGET_PREFIX) && !it.startsWith(KEY_CAT_BUDGET_PCT_PREFIX) }
+            .forEach(editor::remove)
+        amounts.forEach { (id, cents) -> editor.putLong(KEY_CAT_BUDGET_PREFIX + id, cents) }
+        editor.apply()
     }
 
     // ---------- 账单导入 ----------
@@ -1013,7 +1211,14 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
         const val KEY_CARD_COLOR = "card_image_color"
         const val KEY_CARD_LUMINANCE = "card_image_luminance"
         const val KEY_MONTHLY_BUDGET = "monthly_budget_cents"
+        const val KEY_MONTH_START_DAY = "month_start_day"
+        const val KEY_DAILY_BUDGET_MODE = "budget_daily_mode"
+        const val KEY_DAILY_BUDGET = "daily_budget_cents"
         const val KEY_CURRENCY_SYMBOL = "currency_symbol"
         const val KEY_CAT_BUDGET_PREFIX = "category_budget_"
+        const val KEY_CAT_BUDGET_PCT_PREFIX = "category_budget_pct_"
+        const val KEY_CAT_BUDGET_MODE = "category_budget_mode"
+        const val MODE_PERCENT = "percent"
+        const val MODE_AMOUNT = "amount"
     }
 }

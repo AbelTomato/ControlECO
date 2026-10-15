@@ -218,6 +218,9 @@ private fun StepButton(icon: ImageVector, desc: String, onClick: () -> Unit, siz
  * 周期选择面板（账单/统计共用）：
  * 月模式 = 一年一页的 4×3 月份格子，**左右滑动切换年份**；年模式 = 一页 12 年的年份格子。
  * 选中项浅蓝实底，当前月/今年描边，「回到本月/今年」一键回到现在。
+ *
+ * [currentMonth] = 当前**会计月**（首日 ≠ 1 时与自然月不同，由调用方按 vm 口径传入），
+ * 当前高亮与「回到本月」都以它为准；[currentYear] 同理（取会计月所属年份即可）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -227,10 +230,11 @@ fun PeriodPickerSheet(
     onSelectMonth: (YearMonth) -> Unit,
     onSelectYear: (Int) -> Unit,
     onDismiss: () -> Unit,
+    currentMonth: YearMonth = YearMonth.now(),
+    currentYear: Int = currentMonth.year,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
-    val now = YearMonth.now()
 
     fun dismiss(after: () -> Unit = {}) {
         scope.launch { sheetState.hide() }.invokeOnCompletion {
@@ -260,7 +264,7 @@ fun PeriodPickerSheet(
                 TextButton(
                     onClick = {
                         dismiss {
-                            if (mode == PeriodMode.MONTH) onSelectMonth(now) else onSelectYear(now.year)
+                            if (mode == PeriodMode.MONTH) onSelectMonth(currentMonth) else onSelectYear(currentYear)
                         }
                     },
                 ) { Text(if (mode == PeriodMode.MONTH) "回到本月" else "回到今年") }
@@ -291,7 +295,7 @@ fun PeriodPickerSheet(
                                     PickerCell(
                                         label = "$month 月",
                                         selected = year == current.year && month == current.monthValue,
-                                        highlighted = year == now.year && month == now.monthValue,
+                                        highlighted = year == currentMonth.year && month == currentMonth.monthValue,
                                         onClick = { dismiss { onSelectMonth(YearMonth.of(year, month)) } },
                                     )
                                 }
@@ -327,7 +331,7 @@ fun PeriodPickerSheet(
                                         PickerCell(
                                             label = "$year",
                                             selected = year == current.year,
-                                            highlighted = year == now.year,
+                                            highlighted = year == currentYear,
                                             onClick = { dismiss { onSelectYear(year) } },
                                         )
                                     }

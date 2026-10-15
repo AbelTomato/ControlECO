@@ -80,6 +80,7 @@ fun SettingsDeveloperScreen(
             RowDivider()
             SwitchRow(
                 title = "捕获所有页面（调试）",
+                subtitle = "开启后「监听的 App」之外的应用也记录页面快照（采样扩规则用）；不影响解析与入账",
                 checked = debugCaptureAllPages,
                 onCheckedChange = { vm.setDebugCaptureAllPages(it) },
             )

@@ -32,6 +32,9 @@ internal object CaptureAppCatalog {
     private const val PREFS_NAME = "settings"
     private const val KEY_WATCHED = "watched_packages"
 
+    /** 上次读到的目录快照（用于增量补入后来新增的应用，见 [watched]） */
+    private const val KEY_SEEN = "watched_packages_catalog_seen"
+
     /** 目录（顺序即设置页展示顺序） */
     val apps: List<CatalogApp> = listOf(
         // 支付
@@ -64,8 +67,18 @@ internal object CaptureAppCatalog {
         CatalogApp("com.ss.android.ugc.aweme", "抖音", AppGroup.SHOP),
         CatalogApp("com.ss.android.ugc.live", "抖音（直播）", AppGroup.SHOP),
         CatalogApp("com.sankuai.meituan", "美团", AppGroup.SHOP),
-        CatalogApp("com.sankuai.meituan.takeaway", "美团外卖", AppGroup.SHOP),
+        CatalogApp("com.sankuai.meituan.takeoutnew", "美团外卖", AppGroup.SHOP),
         CatalogApp("me.ele", "饿了么", AppGroup.SHOP),
+    )
+
+    /**
+     * 目录"后来新增"的包名（首次出现在某个版本里）。升级安装的机器上，
+     * 已存的监听集合早于这些条目写入——不做迁移它们会**静默永不生效**
+     * （自测踩到的坑：美团外卖的正确包名 takeoutnew 是后补的，老机器上目录里有、实际不监听）。
+     * 读取时按上次见过的目录做增量补入（见 [watchedWithNew]）。
+     */
+    private val ADDED_AFTER_FIRST_RELEASE = setOf(
+        "com.sankuai.meituan.takeoutnew",
     )
 
     /** 目录内包名的默认监听集（默认全开：宁多勿漏，用户可逐项关掉） */
@@ -74,15 +87,39 @@ internal object CaptureAppCatalog {
     private fun prefs(context: Context) =
         context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-    /** 当前监听集合（缺省 = 目录默认值；首次读取时写回，之后以用户选择为准） */
+    /**
+     * 当前监听集合（缺省 = 目录默认值；首次读取时写回，之后以用户选择为准）。
+     * 目录新增的应用按"上次见过的目录"增量补入——用户对既有应用的开关选择不受影响。
+     */
     fun watched(context: Context): Set<String> {
         val p = prefs(context)
+        val catalog = apps.map { it.packageName }.toSet()
         val stored = p.getStringSet(KEY_WATCHED, null)
-        if (stored != null) return stored
-        val initial = defaults()
-        p.edit().putStringSet(KEY_WATCHED, initial).apply()
-        return initial
+        if (stored == null) {
+            val initial = defaults()
+            p.edit().putStringSet(KEY_WATCHED, initial).putStringSet(KEY_SEEN, catalog).apply()
+            return initial
+        }
+        val seen = p.getStringSet(KEY_SEEN, null)
+        // 老数据（KEY_SEEN 之前写入的集合）：基线 = 当前目录减去"后来新增"，让新增项这次补进来
+        val baseline = seen ?: (catalog - ADDED_AFTER_FIRST_RELEASE)
+        val merged = watchedWithNew(stored.filter { it in catalog }.toSet(), baseline, catalog)
+        if (merged != stored || seen == null) {
+            p.edit().putStringSet(KEY_WATCHED, merged).putStringSet(KEY_SEEN, catalog).apply()
+        }
+        return merged
     }
+
+    /**
+     * 纯判定（便于单测）：目录新增（基线里没有）的应用按默认值补进监听集合；
+     * 用户在旧目录里的关闭选择保持不变（关闭项在 [stored] 中缺席，但它在 [seenBaseline] 里，不会被当成新增）。
+     * [stored] 应为已剔除目录外残留的集合。
+     */
+    internal fun watchedWithNew(
+        stored: Set<String>,
+        seenBaseline: Set<String>,
+        catalog: Set<String>,
+    ): Set<String> = stored + (catalog - seenBaseline)
 
     /** 是否监听某应用（**目录外的包名返回 false**：目录只覆盖包名可枚举的通知/页面通道） */
     fun isWatched(context: Context, packageName: String): Boolean = packageName in watched(context)

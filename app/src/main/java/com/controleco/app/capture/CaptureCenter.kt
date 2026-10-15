@@ -1774,13 +1774,15 @@ object CaptureCenter {
         _lastEventAt.value = System.currentTimeMillis()
 
         if (!initialized || texts.isEmpty()) return
-        if (packageName != appContext.packageName &&
+        // 「捕获所有页面（调试）」优先于监听目录：这个开关的目的就是采样任意应用的页面扩规则，
+        // 此前"未监听 → 直接返回"的闸门排在最前，把目录外应用的采样彻底挡死（自测发现的 bug）
+        val captureAll = isDebugCaptureAllPages(isDebugBuild)
+        if (!captureAll && packageName != appContext.packageName &&
             !CaptureAppCatalog.isWatched(appContext, packageName)
         ) {
             AppLog.d("Page", "skip (app not watched) pkg=$packageName")
             return
         }
-        val captureAll = isDebugCaptureAllPages(isDebugBuild)
         if (!isA11yCaptureEnabled() && !captureAll) {
             AppLog.d("Page", "skip (a11y capture disabled) pkg=$packageName")
             return

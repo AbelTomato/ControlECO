@@ -70,6 +70,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.controleco.app.data.CardTransform
 import com.controleco.app.data.PeriodMode
+import com.controleco.app.data.budget.MonthPeriod
 import com.controleco.app.data.importCardImage
 import com.controleco.app.data.LedgerViewModel
 import com.controleco.app.data.db.RefundMark
@@ -193,6 +194,8 @@ fun TransactionListScreen(
     val totals by vm.periodTotals.collectAsStateWithLifecycle()
     val month by vm.month.collectAsStateWithLifecycle()
     val mode by vm.periodMode.collectAsStateWithLifecycle()
+    val currentAccountingMonth by vm.currentAccountingMonth.collectAsStateWithLifecycle()
+    val monthStartDay by vm.monthStartDay.collectAsStateWithLifecycle()
     val showRefunds by vm.showRefunds.collectAsStateWithLifecycle()
     val refundTotal by vm.periodRefundTotal.collectAsStateWithLifecycle()
     val cardImageUri by vm.cardImageUri.collectAsStateWithLifecycle()
@@ -270,19 +273,10 @@ fun TransactionListScreen(
         if (err != null) Toast.makeText(context, err, Toast.LENGTH_SHORT).show()
     }
 
-    fun monthRange(m: YearMonth): Pair<Long, Long> {
-        val zone = ZoneId.systemDefault()
-        val start = m.atDay(1).atStartOfDay(zone).toInstant().toEpochMilli()
-        val end = m.plusMonths(1).atDay(1).atStartOfDay(zone).toInstant().toEpochMilli()
-        return start to end
-    }
+    // 范围删除的区间与页面口径一致：按会计月/会计年（月首日 ≠ 1 时不是自然月）
+    fun monthRange(m: YearMonth): Pair<Long, Long> = MonthPeriod.of(m, monthStartDay).toMillisRange()
 
-    fun yearRange(m: YearMonth): Pair<Long, Long> {
-        val zone = ZoneId.systemDefault()
-        val start = LocalDate.of(m.year, 1, 1).atStartOfDay(zone).toInstant().toEpochMilli()
-        val end = LocalDate.of(m.year + 1, 1, 1).atStartOfDay(zone).toInstant().toEpochMilli()
-        return start to end
-    }
+    fun yearRange(m: YearMonth): Pair<Long, Long> = MonthPeriod.year(m.year, monthStartDay).toMillisRange()
 
     // 范围删除先查条数再弹确认，让用户明确将删掉多少条
     fun confirmRange(title: String, range: Pair<Long, Long>) {
@@ -539,6 +533,7 @@ fun TransactionListScreen(
             onSelectMonth = { vm.setMonth(it) },
             onSelectYear = { vm.setMonth(YearMonth.of(it, month.monthValue)) },
             onDismiss = { showPicker = false },
+            currentMonth = currentAccountingMonth,
         )
     }
 

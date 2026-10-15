@@ -4,8 +4,11 @@ import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -23,6 +26,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -42,11 +46,13 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.controleco.app.BuildConfig
 import com.controleco.app.data.LedgerViewModel
 import com.controleco.app.data.budget.Budget
+import com.controleco.app.data.budget.MonthPeriod
 import com.controleco.app.ui.common.BudgetEditDialog
 import com.controleco.app.ui.common.InfoRow
 import com.controleco.app.ui.common.PaneCard
 import com.controleco.app.ui.common.RowDivider
 import com.controleco.app.ui.common.SectionTitle
+import com.controleco.app.ui.common.SwitchRow
 import com.controleco.app.ui.theme.accBook
 import com.controleco.app.ui.theme.toneColor
 import com.controleco.app.util.Money
@@ -75,13 +81,18 @@ fun ProfileScreen(
     val spent by vm.homeNetSpent.collectAsStateWithLifecycle()
     val currency by vm.currencySymbol.collectAsStateWithLifecycle()
     val pendingCount by vm.pendingCount.collectAsStateWithLifecycle()
+    val monthStartDay by vm.monthStartDay.collectAsStateWithLifecycle()
+    val dailyBudgetMode by vm.dailyBudgetMode.collectAsStateWithLifecycle()
+    val dailyBudgetCents by vm.dailyBudgetCents.collectAsStateWithLifecycle()
 
     // 与首页同口径：本月净支出未到位前整页不画（避免预算卡先显示 0 再跳数）
     val spentReady = spent ?: return
     val today = LocalDate.now()
-    val snapshot = remember(budget, spentReady, today) { Budget.compute(budget, spentReady, today) }
+    val period = remember(today, monthStartDay) { MonthPeriod.of(today, monthStartDay) }
+    val snapshot = remember(budget, spentReady, period) { Budget.compute(budget, spentReady, today, period = period) }
     var showBudgetDialog by remember { mutableStateOf(false) }
     var showCurrencyDialog by remember { mutableStateOf(false) }
+    var showMonthStartDialog by remember { mutableStateOf(false) }
 
     // 开源仓库链接：用系统浏览器打开（没有浏览器时静默失败，不影响其它功能）
     val openRepo: () -> Unit = {
@@ -119,11 +130,32 @@ fun ProfileScreen(
                 budgetCents = budget,
                 spentCents = spentReady,
                 snapshot = snapshot,
-                monthValue = today.monthValue,
+                period = period,
+                dailyMode = dailyBudgetMode,
+                dailyCents = dailyBudgetCents,
                 onSetBudget = { showBudgetDialog = true },
             )
             RowDivider()
-            InfoRow(title = "每月总预算", onClick = { showBudgetDialog = true })
+            // 日/月预算切换：按日设置时输入的是日预算，月预算 = 日预算 × 本月天数（自动重算）
+            SwitchRow(
+                title = "按日设置预算",
+                subtitle = "开启后输入每日预算，月预算 = 日预算 × 本月天数（当前 ${period.days} 天）",
+                checked = dailyBudgetMode,
+                onCheckedChange = { vm.setDailyBudgetMode(it) },
+            )
+            RowDivider()
+            InfoRow(
+                title = if (dailyBudgetMode) "每日预算" else "每月总预算",
+                onClick = { showBudgetDialog = true },
+            )
+            RowDivider()
+            // 会计月首日：预算周期与全 App 的"月"都按它划分（1~28，规避短月边界）
+            InfoRow(
+                title = "每月第一天",
+                subtitle = "本期区间 ${period.label()}",
+                trailing = "$monthStartDay 日",
+                onClick = { showMonthStartDialog = true },
+            )
             RowDivider()
             InfoRow(title = "分类预算", onClick = onOpenCategories)
             RowDivider()
@@ -203,9 +235,22 @@ fun ProfileScreen(
 
     if (showBudgetDialog) {
         BudgetEditDialog(
-            currentCents = budget,
-            onSave = { vm.setMonthlyBudget(it); showBudgetDialog = false },
+            dailyMode = dailyBudgetMode,
+            daysInPeriod = period.days,
+            currentCents = if (dailyBudgetMode) dailyBudgetCents else budget,
+            onSave = {
+                if (dailyBudgetMode) vm.setDailyBudget(it) else vm.setMonthlyBudget(it)
+                showBudgetDialog = false
+            },
             onDismiss = { showBudgetDialog = false },
+        )
+    }
+
+    if (showMonthStartDialog) {
+        MonthStartDayDialog(
+            current = monthStartDay,
+            onPick = { vm.setMonthStartDay(it) },
+            onDismiss = { showMonthStartDialog = false },
         )
     }
 
@@ -216,6 +261,45 @@ fun ProfileScreen(
             onDismiss = { showCurrencyDialog = false },
         )
     }
+}
+
+/**
+ * 会计月首日选择（1~28）：每月从这一天开始记为一个"月"。
+ * 上限 28 是刻意的——每个月都存在 28 号，"相同日期之间为一月"的约定不会被短月破坏。
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun MonthStartDayDialog(current: Int, onPick: (Int) -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("每月第一天") },
+        text = {
+            Column(
+                Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    "每月从几号开始记为一个「月」（例：选 2 号 = 10月2日~11月2日）。" +
+                        "预算周期与账单、统计的月份都按它划分。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    (MonthPeriod.MIN_START_DAY..MonthPeriod.MAX_START_DAY).forEach { d ->
+                        FilterChip(
+                            selected = d == current,
+                            onClick = { onPick(d) },
+                            label = { Text("$d") },
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("完成") } },
+    )
 }
 
 /** 货币名称（找不到时只显示符号本身） */
@@ -281,13 +365,15 @@ private fun CurrencyDialog(current: String, onPick: (String) -> Unit, onDismiss:
     )
 }
 
-/** 预算总结卡：左侧本月预算大字，右侧档位 + 已花 + 剩余 */
+/** 预算总结卡：左侧本月预算大字，右侧档位 + 已花 + 剩余（按日模式时标题换成"日预算 × 天数"） */
 @Composable
 private fun BudgetSummary(
     budgetCents: Long,
     spentCents: Long,
     snapshot: Budget.Snapshot?,
-    monthValue: Int,
+    period: MonthPeriod,
+    dailyMode: Boolean,
+    dailyCents: Long,
     onSetBudget: () -> Unit,
 ) {
     val ab = MaterialTheme.accBook
@@ -297,7 +383,11 @@ private fun BudgetSummary(
     ) {
         Column(Modifier.weight(1f)) {
             Text(
-                "${monthValue}月总预算",
+                if (dailyMode) {
+                    "每日 ${Money.formatYuanGrouped(dailyCents)} × ${period.days} 天"
+                } else {
+                    "${period.start.monthValue}月总预算"
+                },
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -315,7 +405,11 @@ private fun BudgetSummary(
         Column(horizontalAlignment = Alignment.End) {
             val tone = snapshot?.tone
             Text(
-                if (snapshot != null) "· ${Budget.toneLabel(snapshot.remainingRatio)}" else "· 未设预算",
+                if (snapshot != null) {
+                    "· ${Budget.toneLabel(snapshot.remainingRatio, snapshot.thresholds)}"
+                } else {
+                    "· 未设预算"
+                },
                 style = MaterialTheme.typography.labelLarge,
                 color = if (tone != null) toneColor(tone, ab) else MaterialTheme.colorScheme.onSurfaceVariant,
             )

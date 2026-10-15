@@ -195,6 +195,51 @@ class PageRulesTest {
     }
 
     @Test
+    fun `碰一碰成功页 金额拆成独立节点时不冒充商户`() {
+        // 用户真机样本（2026-10-13 支付宝碰一碰）：页面把"￥"与"20.06"渲染成两个独立节点，
+        // "20.06" 曾通过"全数字"检查被兜底扫成商户（小数点不是数字字符），记成 counterparty=20.06
+        val r = parse(
+            NotificationRules.ALIPAY,
+            listOf("支付成功", "回首页", "￥", "20.06", "鸿润福连锁超市", "￥20.06", "付款方式", "中国银行储蓄卡(8920)", "完成"),
+        )!!
+        assertEquals(2006L, r.amountCents)
+        assertEquals("鸿润福连锁超市", r.counterparty)
+        assertEquals("支付方式 中国银行储蓄卡(8920)", r.note)
+    }
+
+    @Test
+    fun `碰一碰成功页 精简快照同样取到商户`() {
+        // 同一笔的第二份快照（商户在金额之前）：碰一碰的钱包页版式
+        val r = parse(
+            NotificationRules.ALIPAY,
+            listOf("支付成功", "回首页", "鸿润福连锁超市", "￥20.06", "完成"),
+        )!!
+        assertEquals(2006L, r.amountCents)
+        assertEquals("鸿润福连锁超市", r.counterparty)
+    }
+
+    @Test
+    fun `纯金额节点不会被兜底扫描当商户`() {
+        // 页面上没有商户时宁可留空，也不能把金额当商户
+        val r = parse(NotificationRules.ALIPAY, listOf("支付成功", "回首页", "￥", "20.06", "完成"))!!
+        assertEquals("", r.counterparty)
+        assertEquals(2006L, r.amountCents)
+    }
+
+    @Test
+    fun `收款方标签的值是金额时不当商户`() {
+        val r = parse(NotificationRules.ALIPAY, listOf("付款成功", "￥20.06", "收款方 20.06"))!!
+        assertEquals("", r.counterparty)
+    }
+
+    @Test
+    fun `金额标签行不会被兜底扫描当商户`() {
+        // "付款金额：¥20.06"这类节点含"金额"字样，不是商户名
+        val r = parse(NotificationRules.ALIPAY, listOf("支付成功", "付款金额：¥20.06", "完成"))!!
+        assertEquals("", r.counterparty)
+    }
+
+    @Test
     fun `alipay real cashier page skipped`() {
         // 真机样本：收银台页（还没付款），"支付成功得xx券"营销文案会让它命中"支付成功"
         assertNull(

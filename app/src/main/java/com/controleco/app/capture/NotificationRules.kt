@@ -52,7 +52,9 @@ object NotificationRules {
         "com.ss.android.ugc.aweme" to "抖音",
         "com.ss.android.ugc.live" to "抖音",
         "com.sankuai.meituan" to "美团",
-        "com.sankuai.meituan.takeaway" to "美团外卖",
+        // 自测修正：美团外卖的真实包名是 takeoutnew（此前误写成 takeaway——不存在的包名，
+        // 等于这个渠道的通知/页面两条路都被静默排除，见开发日志同日条目）
+        "com.sankuai.meituan.takeoutnew" to "美团外卖",
         "me.ele" to "饿了么",
     )
 

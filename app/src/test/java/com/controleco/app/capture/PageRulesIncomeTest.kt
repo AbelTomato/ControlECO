@@ -105,6 +105,15 @@ class PageRulesIncomeTest {
     }
 
     @Test
+    fun `amount in transfer phrasing is not taken as payer`() {
+        // 句式兜底："20.06 向你转账"里的金额不是人名；没有真实付款方时留空
+        val r = parse(NotificationRules.ALIPAY, listOf("已收钱", "￥20.06", "转账", "20.06 向你转账"))!!
+        assertEquals(TxType.INCOME, r.type)
+        assertEquals(2006L, r.amountCents)
+        assertEquals("", r.counterparty)
+    }
+
+    @Test
     fun `wallet detail list is not captured`() {
         // 零钱明细列表：有"已存入零钱"字样但页面不是某笔转账/红包的结果页
         assertNull(parse(NotificationRules.WECHAT, listOf("零钱明细", "已存入零钱", "¥50.00", "余额 ¥1,000.00")))

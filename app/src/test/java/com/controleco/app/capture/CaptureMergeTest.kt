@@ -157,6 +157,22 @@ class CaptureMergeTest {
         assertEquals("扫码付款（零钱）", merged.note)
     }
 
+    @Test
+    fun `纯金额的页面商户不覆盖已有商户`() {
+        // 真实事故回归（2026-10-13 碰一碰）：页面解析把"20.06"当商户，合并回填要挡住坏值
+        val merged = mergePageInfo(
+            existing = pending(counterparty = "鸿润福连锁超市", amount = 2006),
+            pageAmountCents = 2006,
+            pageTxTime = null,
+            pageCounterparty = "20.06",
+            pageNote = "",
+            pagePaymentMethod = null,
+            pageRuleName = "支付宝·支付页",
+        )
+        assertEquals("鸿润福连锁超市", merged.counterparty)
+        assertEquals(2006L, merged.amountCents)
+    }
+
     // ---------- 去重键与"同笔家族" ----------
 
     @Test

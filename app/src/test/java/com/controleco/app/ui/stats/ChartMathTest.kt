@@ -52,7 +52,7 @@ class ChartMathTest {
             row(TxType.INCOME, 50_000, LocalDateTime.of(2026, 10, 5, 8, 0)),
             row(TxType.EXPENSE, 30_000, LocalDateTime.of(2026, 9, 30, 23, 0)),
         )
-        val bars = ChartMath.monthBars(rows, month, zone)
+        val bars = ChartMath.monthBars(rows, month, startDay = 1, zone = zone)
 
         assertEquals(31, bars.size)
         assertEquals(2_000L, bars[2].cents)      // 10-03 两笔合计
@@ -68,7 +68,7 @@ class ChartMathTest {
     @Test
     fun `月柱子横轴每五天标一次_月末太近则不补格`() {
         // 2 月：25 → 28 间距够，补一个
-        val feb = ChartMath.monthBars(emptyList(), YearMonth.of(2026, 2), zone)
+        val feb = ChartMath.monthBars(emptyList(), YearMonth.of(2026, 2), startDay = 1, zone = zone)
         assertEquals(
             listOf(5, 10, 15, 20, 25, 28),
             feb.mapIndexedNotNull { i, b -> b.axisLabel?.let { i + 1 } },
@@ -77,7 +77,7 @@ class ChartMathTest {
         assertEquals("5", feb[4].axisLabel)
 
         // 31 天月份：30 已标过，31 紧挨着就跳过（否则两个数字会挤在一起）
-        val jan = ChartMath.monthBars(emptyList(), YearMonth.of(2026, 1), zone)
+        val jan = ChartMath.monthBars(emptyList(), YearMonth.of(2026, 1), startDay = 1, zone = zone)
         assertEquals(
             listOf(5, 10, 15, 20, 25, 30),
             jan.mapIndexedNotNull { i, b -> b.axisLabel?.let { i + 1 } },
@@ -157,7 +157,7 @@ class ChartMathTest {
 
     @Test
     fun `空数据不产生柱子`() {
-        val bars = ChartMath.monthBars(emptyList(), YearMonth.of(2026, 1), zone)
+        val bars = ChartMath.monthBars(emptyList(), YearMonth.of(2026, 1), startDay = 1, zone = zone)
         assertEquals(31, bars.size)
         assertTrue(bars.all { it.cents == 0L && it.count == 0 })
         assertTrue(ChartMath.mergeSlices(emptyList(), emptyList()).isEmpty())
@@ -169,7 +169,7 @@ class ChartMathTest {
         val row = row(TxType.EXPENSE, 100, LocalDateTime.of(2026, 10, 4, 4, 0)).copy(
             timestamp = java.time.Instant.parse("2026-10-03T20:00:00Z").toEpochMilli(),
         )
-        val bars = ChartMath.monthBars(listOf(row), YearMonth.of(2026, 10), zone)
+        val bars = ChartMath.monthBars(listOf(row), YearMonth.of(2026, 10), startDay = 1, zone = zone)
         assertEquals(0L, bars[2].cents)   // 10-03 本地日：None
         assertEquals(100L, bars[3].cents) // 10-04
     }
@@ -179,7 +179,8 @@ class ChartMathTest {
         val bars = ChartMath.monthBars(
             listOf(row(TxType.EXPENSE, 500, LocalDateTime.of(2026, 3, 9, 12, 0))),
             YearMonth.of(2026, 3),
-            zone,
+            startDay = 1,
+            zone = zone,
         )
         assertEquals(LocalDate.of(2026, 3, 9).dayOfMonth, bars.indexOfFirst { it.cents > 0 } + 1)
     }

@@ -58,10 +58,13 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.controleco.app.data.CategoryIcon
 import com.controleco.app.data.LedgerViewModel
+import com.controleco.app.data.budget.CategoryBudgetMath
+import com.controleco.app.data.budget.CategoryBudgetMode
 import com.controleco.app.data.db.CategoryEntity
 import com.controleco.app.data.db.TxType
 import com.controleco.app.ui.common.CategoryLogo
 import com.controleco.app.ui.common.ColorWheelDialog
+import com.controleco.app.ui.common.PercentInput
 import com.controleco.app.ui.common.hueWheelBrush
 import com.controleco.app.ui.common.rgbOf
 import com.controleco.app.ui.common.solidBrush
@@ -81,6 +84,8 @@ import kotlinx.coroutines.withContext
 fun CategoriesScreen(vm: LedgerViewModel, onBack: () -> Unit) {
     val categories by vm.categories.collectAsStateWithLifecycle()
     val budgets by vm.categoryBudgets.collectAsStateWithLifecycle()
+    val budgetPercents by vm.categoryBudgetPercents.collectAsStateWithLifecycle()
+    val budgetMode by vm.categoryBudgetMode.collectAsStateWithLifecycle()
     val monthlyBudget by vm.monthlyBudgetCents.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -134,6 +139,43 @@ fun CategoriesScreen(vm: LedgerViewModel, onBack: () -> Unit) {
         },
     ) { padding ->
         LazyColumn(Modifier.padding(padding).fillMaxSize()) {
+            // ---- 全局方案开关：金额（月金额）或比例（占月预算百分比）----
+            item(key = "budget-mode") {
+                Column(Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
+                    Text(
+                        "分类预算方式",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 6.dp),
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        androidx.compose.material3.FilterChip(
+                            selected = budgetMode == CategoryBudgetMode.AMOUNT,
+                            onClick = { vm.setCategoryBudgetMode(CategoryBudgetMode.AMOUNT) },
+                            label = { Text("金额") },
+                        )
+                        androidx.compose.material3.FilterChip(
+                            selected = budgetMode == CategoryBudgetMode.PERCENT,
+                            onClick = { vm.setCategoryBudgetMode(CategoryBudgetMode.PERCENT) },
+                            label = { Text("比例") },
+                        )
+                    }
+                    Text(
+                        if (budgetMode == CategoryBudgetMode.PERCENT) {
+                            if (monthlyBudget > 0L) {
+                                "比例 = 占月预算的百分比；改月预算时分类预算跟着变"
+                            } else {
+                                "比例 = 占月预算的百分比（尚未设置月预算，暂时按 0 折算）"
+                            }
+                        } else {
+                            "金额 = 每个分类的月预算（元）"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
+                }
+            }
             listOf(TxType.EXPENSE to "支出分类", TxType.INCOME to "收入分类").forEach { (type, label) ->
                 val list = categories.filter { it.type == type }
                 if (list.isNotEmpty()) {
@@ -147,6 +189,7 @@ fun CategoriesScreen(vm: LedgerViewModel, onBack: () -> Unit) {
                     }
                     items(list, key = { it.id }) { c ->
                         val budget = budgets[c.id] ?: 0L
+                        val percentBp = budgetPercents[c.id] ?: 0
                         Row(
                             Modifier
                                 .fillMaxWidth()
@@ -157,12 +200,19 @@ fun CategoriesScreen(vm: LedgerViewModel, onBack: () -> Unit) {
                             CategoryLogo(categoryName = c.name, icon = c.icon, size = 30.dp)
                             Spacer(Modifier.width(12.dp))
                             Text(c.name, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-                            if (c.type == TxType.EXPENSE && budget > 0L) {
-                                Text(
-                                    Money.formatYuanGrouped(budget),
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.primary,
-                                )
+                            if (c.type == TxType.EXPENSE) {
+                                val trailing = if (budgetMode == CategoryBudgetMode.PERCENT) {
+                                    percentBp.takeIf { it > 0 }?.let { CategoryBudgetMath.formatPercent(it) }
+                                } else {
+                                    budget.takeIf { it > 0L }?.let { Money.formatYuanGrouped(it) }
+                                }
+                                trailing?.let {
+                                    Text(
+                                        it,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.primary,
+                                    )
+                                }
                             }
                         }
                         HorizontalDivider()
@@ -175,10 +225,16 @@ fun CategoriesScreen(vm: LedgerViewModel, onBack: () -> Unit) {
     if (showEditor) {
         CategoryEditorDialog(
             initial = editing,
+            budgetMode = budgetMode,
             initialBudgetCents = editing?.let { budgets[it.id] } ?: 0L,
+            initialBudgetPercentBp = editing?.let { budgetPercents[it.id] } ?: 0,
             // 可分配余量 = 月总预算 − 其它分类预算之和（本分类不计入，等于本次最多能设多少）
             totalBudgetCents = monthlyBudget,
             otherAllocatedCents = budgets.entries
+                .filter { it.key != editing?.id }
+                .sumOf { it.value },
+            // 比例口径的可分配余量 = 100% − 其它分类比例之和
+            otherAllocatedBp = budgetPercents.entries
                 .filter { it.key != editing?.id }
                 .sumOf { it.value },
             icon = draftIcon,
@@ -187,10 +243,18 @@ fun CategoriesScreen(vm: LedgerViewModel, onBack: () -> Unit) {
                 imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
             },
             onClearFreshImport = { discardFreshImport() },
-            onSave = { id, name, type, budgetCents, icon ->
+            onSave = { id, name, type, budgetCents, budgetBp, icon ->
                 vm.saveCategory(id, name, type, icon) { savedId, err ->
                     if (err == null) {
-                        vm.setCategoryBudget(savedId, if (type == TxType.EXPENSE) budgetCents else 0L)
+                        when {
+                            type != TxType.EXPENSE -> {
+                                vm.setCategoryBudget(savedId, 0L)
+                                vm.setCategoryBudgetPercent(savedId, 0)
+                            }
+                            budgetMode == CategoryBudgetMode.PERCENT ->
+                                vm.setCategoryBudgetPercent(savedId, budgetBp)
+                            else -> vm.setCategoryBudget(savedId, budgetCents)
+                        }
                         freshImport = null // 已入库，文件归分类所有
                         showEditor = false
                     }
@@ -218,14 +282,17 @@ fun CategoriesScreen(vm: LedgerViewModel, onBack: () -> Unit) {
 @Composable
 private fun CategoryEditorDialog(
     initial: CategoryEntity?,
+    budgetMode: CategoryBudgetMode,
     initialBudgetCents: Long,
+    initialBudgetPercentBp: Int,
     totalBudgetCents: Long,
     otherAllocatedCents: Long,
+    otherAllocatedBp: Int,
     icon: String,
     onIconChange: (String) -> Unit,
     onPickImage: () -> Unit,
     onClearFreshImport: () -> Unit,
-    onSave: (Long, String, TxType, Long, String) -> Unit,
+    onSave: (Long, String, TxType, Long, Int, String) -> Unit,
     onDelete: (() -> Unit)?,
     onClose: () -> Unit,
 ) {
@@ -234,6 +301,7 @@ private fun CategoryEditorDialog(
     var budgetText by remember {
         mutableStateOf(if (initialBudgetCents > 0L) Money.formatCents(initialBudgetCents) else "")
     }
+    var percentDigits by remember { mutableStateOf(CategoryBudgetMath.bpToDigits(initialBudgetPercentBp)) }
     var emojiText by remember { mutableStateOf(CategoryIcon.emojiOf(icon) ?: "") }
     var error by remember { mutableStateOf<String?>(null) }
     var showColorWheel by remember { mutableStateOf(false) }
@@ -252,6 +320,9 @@ private fun CategoryEditorDialog(
     val allocatableCents = if (hasTotalBudget) (totalBudgetCents - otherAllocatedCents).coerceAtLeast(0L) else 0L
     // 上限取"可分配"与"本分类现值"的较大者：历史数据已经超标时，至少能原样保存/往下调
     val maxAllowedCents = if (hasTotalBudget) maxOf(allocatableCents, initialBudgetCents) else Long.MAX_VALUE
+    // 比例口径：可分配 = 100% − 其它分类比例之和（万分比）；同样保留"原值可原样保存"的余地
+    val allocatableBp = (CategoryBudgetMath.PERCENT_SCALE - otherAllocatedBp).coerceAtLeast(0)
+    val maxAllowedBp = maxOf(allocatableBp, initialBudgetPercentBp)
 
     AlertDialog(
         onDismissRequest = onClose,
@@ -281,20 +352,27 @@ private fun CategoryEditorDialog(
                 }
 
                 // ---- 预算（放在图标之上：先定"多少钱"，再定"长什么样"）----
+                // 两种方案（全局开关）：金额 = 月金额（元）；比例 = 占月预算的百分比（四个数字格）
                 if (type == TxType.EXPENSE) {
-                    OutlinedTextField(
-                        value = budgetText,
-                        onValueChange = { budgetText = it },
-                        label = { Text("分类月预算") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        singleLine = true,
-                    )
-                    if (hasTotalBudget) {
-                        // 一句话就够：剩下的额度就是本次能填的上限；填超了直接变红，不额外加文字
-                        val typed = Money.parseCents(budgetText.trim())
-                        val overAllocatable = typed != null && typed > allocatableCents
+                    if (budgetMode == CategoryBudgetMode.PERCENT) {
                         Text(
-                            "还可分配 ${Money.formatYuanGrouped(allocatableCents)}",
+                            "分类月预算（比例）",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        val typedBp = CategoryBudgetMath.digitsToBp(percentDigits) ?: 0
+                        PercentInput(
+                            digits = percentDigits,
+                            onDigitsChange = { percentDigits = it },
+                        )
+                        val overAllocatable = typedBp > maxAllowedBp
+                        Text(
+                            buildString {
+                                append("还可分配 ${CategoryBudgetMath.formatPercent(allocatableBp)}")
+                                if (typedBp > 0 && hasTotalBudget) {
+                                    append("　≈ ${Money.formatYuanGrouped(CategoryBudgetMath.centsOf(typedBp, totalBudgetCents))}")
+                                }
+                            },
                             style = MaterialTheme.typography.labelMedium,
                             color = if (overAllocatable) {
                                 MaterialTheme.accBook.critical
@@ -302,6 +380,28 @@ private fun CategoryEditorDialog(
                                 MaterialTheme.colorScheme.onSurfaceVariant
                             },
                         )
+                    } else {
+                        OutlinedTextField(
+                            value = budgetText,
+                            onValueChange = { budgetText = it },
+                            label = { Text("分类月预算") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            singleLine = true,
+                        )
+                        if (hasTotalBudget) {
+                            // 一句话就够：剩下的额度就是本次能填的上限；填超了直接变红，不额外加文字
+                            val typed = Money.parseCents(budgetText.trim())
+                            val overAllocatable = typed != null && typed > allocatableCents
+                            Text(
+                                "还可分配 ${Money.formatYuanGrouped(allocatableCents)}",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = if (overAllocatable) {
+                                    MaterialTheme.accBook.critical
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                            )
+                        }
                     }
                 }
 
@@ -497,6 +597,19 @@ private fun CategoryEditorDialog(
                     error = "请输入名称"
                     return@TextButton
                 }
+                if (type == TxType.EXPENSE && budgetMode == CategoryBudgetMode.PERCENT) {
+                    val bp = CategoryBudgetMath.digitsToBp(percentDigits)
+                    if (bp == null) {
+                        error = "比例最多四位数字"
+                        return@TextButton
+                    }
+                    if (bp > maxAllowedBp) {
+                        error = "最多可设 ${CategoryBudgetMath.formatPercent(maxAllowedBp)}"
+                        return@TextButton
+                    }
+                    onSave(initial?.id ?: 0L, trimmed, type, 0L, bp, icon)
+                    return@TextButton
+                }
                 val raw = budgetText.trim()
                 val budgetCents = if (raw.isEmpty()) {
                     0L
@@ -512,7 +625,7 @@ private fun CategoryEditorDialog(
                     error = "最多可设 ${Money.formatYuanGrouped(maxAllowedCents)}"
                     return@TextButton
                 }
-                onSave(initial?.id ?: 0L, trimmed, type, budgetCents, icon)
+                onSave(initial?.id ?: 0L, trimmed, type, budgetCents, 0, icon)
             }) { Text("保存") }
         },
         dismissButton = { TextButton(onClick = onClose) { Text("取消") } },
