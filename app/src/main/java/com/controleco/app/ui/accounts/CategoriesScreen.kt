@@ -299,7 +299,7 @@ private fun CategoryEditorDialog(    initial: CategoryEntity?,
     var budgetText by remember {
         mutableStateOf(if (initialBudgetCents > 0L) Money.formatCents(initialBudgetCents) else "")
     }
-    var percentDigits by remember { mutableStateOf(CategoryBudgetMath.bpToDigits(initialBudgetPercentBp)) }
+    var percentCells by remember { mutableStateOf(CategoryBudgetMath.bpToCells(initialBudgetPercentBp)) }
     var emojiText by remember { mutableStateOf(CategoryIcon.emojiOf(icon) ?: "") }
     var error by remember { mutableStateOf<String?>(null) }
     var showColorWheel by remember { mutableStateOf(false) }
@@ -358,10 +358,10 @@ private fun CategoryEditorDialog(    initial: CategoryEntity?,
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                        val typedBp = CategoryBudgetMath.digitsToBp(percentDigits) ?: 0
+                        val typedBp = CategoryBudgetMath.cellsToBp(percentCells)
                         PercentInput(
-                            digits = percentDigits,
-                            onDigitsChange = { percentDigits = it },
+                            cells = percentCells,
+                            onCellsChange = { percentCells = it },
                         )
                         val overAllocatable = typedBp > maxAllowedBp
                         Text(
@@ -596,11 +596,7 @@ private fun CategoryEditorDialog(    initial: CategoryEntity?,
                     return@TextButton
                 }
                 if (type == TxType.EXPENSE && budgetMode == CategoryBudgetMode.PERCENT) {
-                    val bp = CategoryBudgetMath.digitsToBp(percentDigits)
-                    if (bp == null) {
-                        error = "比例最多四位数字"
-                        return@TextButton
-                    }
+                    val bp = CategoryBudgetMath.cellsToBp(percentCells)
                     if (bp > maxAllowedBp) {
                         error = "最多可设 ${CategoryBudgetMath.formatPercent(maxAllowedBp)}"
                         return@TextButton

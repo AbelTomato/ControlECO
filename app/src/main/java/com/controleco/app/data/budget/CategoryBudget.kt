@@ -33,17 +33,58 @@ object CategoryBudgetMath {
         return bp.coerceIn(0, MAX_PERCENT)
     }
 
-    /** 数字格（"00.00" 四位，只认数字）→ 万分比：空/全 0 = 0；超过 4 位判无效（null） */
-    fun digitsToBp(digits: String): Int? {
-        val d = digits.filter { it.isDigit() }
-        if (d.length > 4) return null
-        if (d.isEmpty()) return 0
-        return d.toInt().coerceAtMost(MAX_PERCENT)
+    // ---------- 四格编辑模型（PercentInput 用；纯函数，可单测） ----------
+
+    /** 四个数字格：十位 / 个位 / 十分位 / 百分位；null = 空格（显示半透明 0 占位） */
+    val EMPTY_CELLS: List<Char?> = List(4) { null }
+
+    /**
+     * 四格 → 万分比：**按位取值，空格算 0**（位置固定，不因空格前移——
+     * 这正是"覆盖输入"的语义基础）。
+     */
+    fun cellsToBp(cells: List<Char?>): Int {
+        var v = 0
+        for (i in 0 until 4) v = v * 10 + (cells.getOrNull(i)?.digitToIntOrNull() ?: 0)
+        return v.coerceIn(0, MAX_PERCENT)
     }
 
-    /** 万分比 → 数字格字符串（固定 4 位；0/非法返回空串，让占位符 0 显示出来） */
-    fun bpToDigits(bp: Int): String =
-        if (bp <= 0) "" else bp.coerceAtMost(MAX_PERCENT).toString().padStart(4, '0')
+    /** 万分比 → 四格：先导 0 显示为空格（0 → 全空，让占位符现身） */
+    fun bpToCells(bp: Int): List<Char?> {
+        val s = bp.coerceIn(0, MAX_PERCENT).toString().padStart(4, '0')
+        val firstDigit = s.indexOfFirst { it != '0' }
+        if (firstDigit < 0) return EMPTY_CELLS // 全 0 = 四格皆空
+        return s.mapIndexed { i, ch -> if (i < firstDigit) null else ch }
+    }
+
+    /**
+     * 在光标所在格**覆盖输入**一个数字，光标自然后移（停在最后一格）。
+     * 例：75.00（['7','5','0','0']）光标在第 0 格输入 4 → 45.00（['4','5','0','0']），光标到第 1 格。
+     */
+    fun typeDigit(cells: List<Char?>, caret: Int, digit: Char): Pair<List<Char?>, Int> {
+        if (!digit.isDigit()) return cells to caret
+        val c = caret.coerceIn(0, 3)
+        val next = cells.toMutableList()
+        while (next.size < 4) next.add(null)
+        next[c] = digit
+        return next.take(4) to (c + 1).coerceAtMost(3)
+    }
+
+    /**
+     * 退格：优先删光标**左侧**的数字并后退（与文本输入一致）；
+     * 光标已在最左端时删**最右侧**的数字——打开弹窗就是全格值时，第一次退格立刻见效。
+     */
+    fun backspace(cells: List<Char?>, caret: Int): Pair<List<Char?>, Int> {
+        val c = caret.coerceIn(0, 3)
+        val next = cells.toMutableList()
+        while (next.size < 4) next.add(null)
+        if (c > 0) {
+            next[c - 1] = null
+            return next.take(4) to (c - 1)
+        }
+        val last = next.indexOfLast { it != null }
+        if (last >= 0) next[last] = null
+        return next.take(4) to c
+    }
 
     /** 万分比 → 展示文本："30.00%"；0 = 未设置 */
     fun formatPercent(bp: Int): String {

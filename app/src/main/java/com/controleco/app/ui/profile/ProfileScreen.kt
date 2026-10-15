@@ -38,6 +38,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.controleco.app.BuildConfig
 import com.controleco.app.data.LedgerViewModel
@@ -150,9 +151,13 @@ fun ProfileScreen(
                 onClick = { showBudgetDialog = true },
             )
             RowDivider()
-            // 会计月首日：预算周期与全 App 的"月"都按它划分（1~30 或「最后一日」；滚轮就地展开）
+            // 会计月首日：预算周期与全 App 的"月"都按它划分（1~30 或「最后一日」；滚轮就地展开）。
+            // zIndex：滚轮长按拖动时的行内悬浮卡要盖住下面的行（同层兄弟按 zIndex 排绘制顺序）
             Row(
-                Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 2.dp, bottom = 2.dp),
+                Modifier
+                    .fillMaxWidth()
+                    .zIndex(1f)
+                    .padding(start = 16.dp, end = 16.dp, top = 2.dp, bottom = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
