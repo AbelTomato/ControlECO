@@ -113,11 +113,11 @@
 - 文档说明文件格式版本、导出/恢复入口、整体替换行为、备份范围/排除项、财务数据隐私和新签名安装时的恢复用途。
 - 文档不得声称能恢复设置、月预算、待确认交易、捕获日志或溯源记录。
 
-- [ ] **Step 1: 更新捕获/账本文档**，用实际 UI 名称描述操作路径，解释建议先将 JSON 备份复制到手机以外的安全位置。
-- [ ] **Step 2: 运行所有与备份直接相关的测试**：`ANDROID_HOME=/home/abeltomato/Android/Sdk bash ./gradlew :app:testDebugUnitTest --tests '*LedgerBackup*' --tests '*LedgerBackupViewModelTest'`。
-- [ ] **Step 3: 构建 debug APK**：`ANDROID_HOME=/home/abeltomato/Android/Sdk bash ./gradlew :app:assembleDebug`；确认生成 `app/build/outputs/apk/debug/app-debug.apk`，检查 manifest 权限没有新增广泛存储权限。
-- [ ] **Step 4: 在测试设备上做端到端往返**：从含不同来源/退款/自定义分类图片的测试账本导出 JSON；确认 JSON 可解析且无捕获原文；清空/替换仅限测试设备的数据后恢复；核对账户、分类、交易与学习规则数量、主键关联和图片显示；确认范围外捕获/溯源/设置不被恢复流程删除。生产用户设备不得用作破坏性恢复测试。
-- [ ] **Step 5: 最终核验 PR 范围**：检查当前分支仅含备份功能代码、测试、文档与本计划；保留已有 `tools/category_model/__pycache__/`，不纳入暂存；整理 PR 标题 `feat: add local ledger backup and restore` 与测试结果，不自动提交最终 PR 或推送。
+- [x] **Step 1: 更新捕获/账本文档**，用实际 UI 名称描述操作路径，解释建议先将 JSON 备份复制到手机以外的安全位置。已补充格式版本、范围与排除项、整体替换、隐私和新签名安装后的恢复用途。
+- [x] **Step 2: 运行所有与备份直接相关的测试**：`ANDROID_HOME=/home/abeltomato/Android/Sdk bash ./gradlew :app:testDebugUnitTest --tests '*LedgerBackup*' --tests '*LedgerBackupViewModelTest'`。
+- [x] **Step 3: 构建 debug APK**：`ANDROID_HOME=/home/abeltomato/Android/Sdk bash ./gradlew :app:assembleDebug` 成功；已确认 `app/build/outputs/apk/debug/app-debug.apk` 生成（约 11.6 MB）。manifest 检查未发现广泛存储权限。
+- [x] **Step 4: 在测试设备上做端到端往返**：Windows ADB 识别 `7SQVB22428013389`（`NAM-AL00`，状态 `device`），用户明确授权替换；debug APK 安装成功。通过「账单导入」→「本地账本备份」→「导出备份」成功生成 `/sdcard/Download/controleco-ledger-backup-v1.json`（1,270 bytes），应用显示“备份导出成功”。系统恢复选择器读入该文件后显示备份时间 `October 16, 2026 10:37 AM`、账户 4 项、分类 12 项、交易 0 项、商户规则 0 项；用户明确确认后应用显示“账本恢复成功”。本次文件不含交易、规则或图片附件，因此这些类型的非空往返及图片显示未覆盖；此前数据为空的状态无法从恢复后的数量证明排除范围表/设置未变，排除范围隔离由 repository 测试覆盖。不得在生产用户设备上做破坏性恢复测试。
+- [x] **Step 5: 最终核验 PR 范围**：检查当前分支仅含备份功能代码、测试、文档与本计划；保留已有 `tools/category_model/__pycache__/`，不纳入暂存；整理 PR 标题 `feat: add local ledger backup and restore` 与测试结果，不自动提交最终 PR 或推送。已确认预存缓存目录不纳入本次变更。
 
 ## Risks and stop conditions
 
