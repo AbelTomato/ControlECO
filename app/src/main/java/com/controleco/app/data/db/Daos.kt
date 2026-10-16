@@ -46,6 +46,15 @@ data class AccountBalanceRow(
 @Dao
 interface TransactionDao {
 
+    @Query("SELECT * FROM transactions")
+    suspend fun getAllForBackup(): List<TransactionEntity>
+
+    @Query("DELETE FROM transactions")
+    suspend fun clearForRestore()
+
+    @Insert
+    suspend fun insertAllForRestore(items: List<TransactionEntity>)
+
     /**
      * includeRefunds=false 时过滤掉退款标记记录（设置"显示退款记录"关闭）。
      */
@@ -181,6 +190,12 @@ interface TransactionDao {
 @Dao
 interface CategoryDao {
 
+    @Query("DELETE FROM categories")
+    suspend fun clearForRestore()
+
+    @Insert
+    suspend fun insertAllForRestore(items: List<CategoryEntity>)
+
     @Query("SELECT * FROM categories ORDER BY type, sortOrder, id")
     fun observeAll(): Flow<List<CategoryEntity>>
 
@@ -205,6 +220,12 @@ interface CategoryDao {
 
 @Dao
 interface AccountDao {
+
+    @Query("DELETE FROM accounts")
+    suspend fun clearForRestore()
+
+    @Insert
+    suspend fun insertAllForRestore(items: List<AccountEntity>)
 
     @Query("SELECT * FROM accounts ORDER BY id")
     fun observeAll(): Flow<List<AccountEntity>>
@@ -316,6 +337,12 @@ interface PendingDao {
 
 @Dao
 interface MerchantRuleDao {
+
+    @Query("DELETE FROM merchant_rules")
+    suspend fun clearForRestore()
+
+    @Insert
+    suspend fun insertAllForRestore(items: List<MerchantRuleEntity>)
 
     @Query("SELECT * FROM merchant_rules")
     suspend fun getAll(): List<MerchantRuleEntity>

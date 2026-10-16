@@ -72,13 +72,13 @@
 - DAO 批量插入必须保留备份实体主键，不能把导入数据重新映射成新 ID。
 - 恢复删除顺序为 transactions → merchant_rules → categories → accounts；插入顺序为 accounts → categories → transactions → merchant_rules。
 
-- [ ] **Step 1: 为快照投影和 DAO 替换 API 编写测试**，确认主键、退款标记、图标规格和 merchant rules 原样保留，且不读取 `captured_notifications`、`capture_traces`、`pending_transactions`。
-- [ ] **Step 2: 运行目标测试确认失败**：`ANDROID_HOME=/home/abeltomato/Android/Sdk bash ./gradlew :app:testDebugUnitTest --tests '*LedgerBackupRepositoryTest'`。
-- [ ] **Step 3: 增加核心表 DAO 全量读取/删除/显式 ID 批量插入方法**；通过 `RoomDatabase.withTransaction` 在单个事务中执行删除及按 FK 顺序插入。不得调用数据库 `clearAllTables()`，因为范围外捕获与溯源数据必须保留。
-- [ ] **Step 4: 实现图片附件快照/恢复**：只允许 `CategoryIcon.imageOf(icon)` 得到且匹配 `cat_icon_[A-Za-z0-9_-]+\\.jpg` 的 basename；拒绝路径分隔符和目录遍历。恢复图片先写到临时文件并校验 JPEG 解码，再原子重命名；若 DB 事务失败，清理本次新文件且保持旧数据可用。对替换时旧文件的清理必须等数据库提交成功后执行。
-- [ ] **Step 5: 验证恢复失败原子性与范围隔离**：制造唯一键/外键冲突，在事务抛错后断言旧核心数据仍在且待确认/捕获/溯源表内容不变；附件写入失败时断言数据库未开始替换。若现有测试环境不能直接创建 Room in-memory DB，抽出事务调用边界并增加实际 Android instrumentation/manual verification，不得把未覆盖情况写成已测试。
-- [ ] **Step 6: 运行目标测试和 Kotlin 编译**：`ANDROID_HOME=/home/abeltomato/Android/Sdk bash ./gradlew :app:testDebugUnitTest --tests '*LedgerBackupRepositoryTest' :app:compileDebugKotlin`。
-- [ ] **Step 7: 提交数据层切片**：`git add app/src/main/java/com/controleco/app/data/backup app/src/main/java/com/controleco/app/data/db/Daos.kt app/src/main/java/com/controleco/app/data/db/AccBookDatabase.kt app/src/main/java/com/controleco/app/data/CategoryIcon.kt app/src/test/java/com/controleco/app/data/backup/LedgerBackupRepositoryTest.kt && git commit -m "feat: add atomic ledger backup restore repository"`。
+- [x] **Step 1: 为快照投影和 DAO 替换 API 编写测试**，覆盖显式主键、退款标记、图标规格、来源和 merchant rules 的 DTO 保留及引用校验。当前仓库无 Room in-memory / instrumentation 测试依赖，未读取范围外表通过 DAO API 审查确认。
+- [x] **Step 2: 运行目标测试确认失败**：`ANDROID_HOME=/home/abeltomato/Android/Sdk bash ./gradlew :app:testDebugUnitTest --tests '*LedgerBackupRepositoryTest'`。测试类缺失时 Gradle 报 `No tests found`。
+- [x] **Step 3: 增加核心表 DAO 全量读取/删除/显式 ID 批量插入方法**；通过 `RoomDatabase.withTransaction` 在单个事务中执行删除及按 FK 顺序插入。未调用 `clearAllTables()`。
+- [x] **Step 4: 实现图片附件快照/恢复**：限定应用图标 basename，恢复前 Base64 解码、临时落盘和 JPEG 解码校验；保留同名旧图备份，DB 事务失败补偿恢复，事务成功后才清理旧文件。
+- [ ] **Step 5: 实现事务回滚补偿与范围隔离代码路径**；代码路径已实现，但 Room 唯一键/外键冲突回滚、范围外表存续及真实附件文件失败测试因项目无 Room test runtime/instrumentation 配置尚未覆盖，需后续设备/instrumentation 验证。
+- [x] **Step 6: 运行目标测试和 Kotlin 编译**：`ANDROID_HOME=/home/abeltomato/Android/Sdk bash ./gradlew :app:testDebugUnitTest --tests '*LedgerBackupRepositoryTest' :app:compileDebugKotlin`，通过。
+- [ ] **Step 7: 提交数据层切片**：`git add app/src/main/java/com/controleco/app/data/backup app/src/main/java/com/controleco/app/data/db/Daos.kt app/src/main/java/com/controleco/app/data/db/AccBookDatabase.kt app/src/test/java/com/controleco/app/data/backup/LedgerBackupRepositoryTest.kt && git commit -m "feat: add atomic ledger backup restore repository"`。本轮统一提交由用户明确要求，任务 2 结束后提交实际范围。
 
 ### Task 3: 接入文件选择器、ViewModel 状态与恢复确认
 

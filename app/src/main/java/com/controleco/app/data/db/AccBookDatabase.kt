@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.withTransaction
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
@@ -21,6 +22,8 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     exportSchema = true,
 )
 abstract class AccBookDatabase : RoomDatabase() {
+
+    suspend fun <T> inLedgerTransaction(block: suspend () -> T): T = withTransaction(block)
 
     abstract fun accountDao(): AccountDao
     abstract fun categoryDao(): CategoryDao
