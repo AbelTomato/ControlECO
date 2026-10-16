@@ -76,7 +76,7 @@
 - [x] **Step 2: 运行目标测试确认失败**：`ANDROID_HOME=/home/abeltomato/Android/Sdk bash ./gradlew :app:testDebugUnitTest --tests '*LedgerBackupRepositoryTest'`。测试类缺失时 Gradle 报 `No tests found`。
 - [x] **Step 3: 增加核心表 DAO 全量读取/删除/显式 ID 批量插入方法**；通过 `RoomDatabase.withTransaction` 在单个事务中执行删除及按 FK 顺序插入。未调用 `clearAllTables()`。
 - [x] **Step 4: 实现图片附件快照/恢复**：限定应用图标 basename，恢复前 Base64 解码、临时落盘和 JPEG 解码校验；保留同名旧图备份，DB 事务失败补偿恢复，事务成功后才清理旧文件。
-- [ ] **Step 5: 实现事务回滚补偿与范围隔离代码路径**；代码路径已实现，但 Room 唯一键/外键冲突回滚、范围外表存续及真实附件文件失败测试因项目无 Room test runtime/instrumentation 配置尚未覆盖，需后续设备/instrumentation 验证。
+- [x] **Step 5: 实现事务回滚补偿与范围隔离代码路径**；代码路径已实现，Room 唯一键冲突回滚和范围外表存续已有 Robolectric Room 测试覆盖；真实附件文件失败仍需后续设备/instrumentation 验证。
 - [x] **Step 6: 运行目标测试和 Kotlin 编译**：`ANDROID_HOME=/home/abeltomato/Android/Sdk bash ./gradlew :app:testDebugUnitTest --tests '*LedgerBackupRepositoryTest' :app:compileDebugKotlin`，通过。
 - [ ] **Step 7: 提交数据层切片**：`git add app/src/main/java/com/controleco/app/data/backup app/src/main/java/com/controleco/app/data/db/Daos.kt app/src/main/java/com/controleco/app/data/db/AccBookDatabase.kt app/src/test/java/com/controleco/app/data/backup/LedgerBackupRepositoryTest.kt && git commit -m "feat: add atomic ledger backup restore repository"`。本轮统一提交由用户明确要求，任务 2 结束后提交实际范围。
 
@@ -94,13 +94,13 @@
 - `readBackup` 只解析并校验，形成待确认的摘要；只有 `confirmRestore` 能调用数据层恢复。
 - 恢复摘要至少显示备份时间以及账户、分类、交易、商户规则数量；提示会整体替换对应现有数据。
 
-- [ ] **Step 1: 添加 ViewModel 状态测试**，证明取消不会调用 repository restore、校验失败不显示成功、确认后才发起整体恢复、导出错误可见且不包含交易明细。
-- [ ] **Step 2: 运行目标测试确认失败**：`ANDROID_HOME=/home/abeltomato/Android/Sdk bash ./gradlew :app:testDebugUnitTest --tests '*LedgerBackupViewModelTest'`。
-- [ ] **Step 3: 实现 ViewModel 文件流**：使用 `contentResolver.openInputStream/openOutputStream`；拒绝空 URI/空流；设置合理最大备份读取字节数；文件写入先编码完整内容后写入，关闭流后回报成功；异常转为通用且可操作的错误状态，不写用户数据日志。
-- [ ] **Step 4: 在现有账单导入设置页添加独立“本地账本备份”区**，说明备份范围、排除范围及文件含财务隐私；增加“导出备份”和“恢复备份”操作。CreateDocument MIME 使用 `application/json`，建议文件名 `controleco-ledger-backup-v1.json`；OpenDocument 限定 JSON/通用文件类型，不要求存储权限。
-- [ ] **Step 5: 实现恢复二次确认 UI**：显示导出时间与四类记录数量，明确“将替换当前账户、分类、交易和商户学习规则”；取消只清除待确认备份；确认后禁用重复提交并显示进度/成功/失败。
-- [ ] **Step 6: 运行 ViewModel/UI 目标测试和 Kotlin 编译**：`ANDROID_HOME=/home/abeltomato/Android/Sdk bash ./gradlew :app:testDebugUnitTest --tests '*LedgerBackupViewModelTest' :app:compileDebugKotlin`。若有 Compose UI 测试依赖，再加目标页面测试；不为此引入新的测试依赖。
-- [ ] **Step 7: 提交 UI 流程切片**：`git add app/src/main/java/com/controleco/app/data/LedgerViewModel.kt app/src/main/java/com/controleco/app/ui/settings/SettingsImportScreen.kt app/src/main/java/com/controleco/app/ui/AppNav.kt app/src/test/java/com/controleco/app/data && git commit -m "feat: add ledger backup restore UI"`。
+- [x] **Step 1: 添加 ViewModel 状态测试**，证明取消不会调用 repository restore、校验失败不显示成功、确认后才发起整体恢复、导出错误可见且不包含交易明细；测试覆盖抽离出的备份状态控制器。
+- [x] **Step 2: 运行目标测试确认失败**：`ANDROID_HOME=/home/abeltomato/Android/Sdk bash ./gradlew :app:testDebugUnitTest --tests '*LedgerBackupViewModelTest'`。初始因目标测试类尚未创建而报告 No tests found。
+- [x] **Step 3: 实现 ViewModel 文件流**：使用 `contentResolver.openInputStream/openOutputStream`；拒绝空 URI/空流；读取上限为 codec 的 4 MiB；文件写入先编码完整内容后写入，关闭流后回报成功；异常转为通用且可操作的错误状态，不写用户数据日志。
+- [x] **Step 4: 在现有账单导入设置页添加独立“本地账本备份”区**，说明备份范围、排除范围及文件含财务隐私；增加“导出备份”和“恢复备份”操作。CreateDocument MIME 为 `application/json`，文件名 `controleco-ledger-backup-v1.json`；OpenDocument 限定 JSON/通用文件类型，不要求存储权限。SAF launcher 直接位于设置页，URI 不经过导航，因此无需修改 AppNav。
+- [x] **Step 5: 实现恢复二次确认 UI**：显示导出时间与四类记录数量，明确“将整体替换当前账户、分类、交易和商户学习规则”；取消清除待确认备份；确认后禁用重复提交并显示进度/成功/失败。
+- [x] **Step 6: 运行 ViewModel/UI 目标测试和 Kotlin 编译**：`ANDROID_HOME=/home/abeltomato/Android/Sdk bash ./gradlew --no-daemon :app:testDebugUnitTest --tests '*LedgerBackupViewModelTest' :app:compileDebugKotlin`，4 项目标测试通过，Kotlin 编译通过。未增加 Compose UI 测试依赖。
+- [x] **Step 7: 按用户要求统一提交 Task 1–3 实际范围**；Task 1/2 的独立切片提交计划由本轮统一提交要求覆盖。
 
 ### Task 4: 文档回填、整合验证与 PR 准备
 

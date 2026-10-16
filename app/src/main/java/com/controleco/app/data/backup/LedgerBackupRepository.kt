@@ -9,6 +9,19 @@ import java.io.FileOutputStream
 import java.util.UUID
 
 object LedgerBackupRepository {
+    interface Access {
+        suspend fun createBackup(context: Context, exportedAt: Long): LedgerBackup
+        suspend fun restoreBackup(context: Context, backup: LedgerBackup)
+    }
+
+    val access: Access = object : Access {
+        override suspend fun createBackup(context: Context, exportedAt: Long): LedgerBackup =
+            createBackup(context, AccBookDatabase.get(context), exportedAt)
+
+        override suspend fun restoreBackup(context: Context, backup: LedgerBackup) =
+            restoreBackup(context, AccBookDatabase.get(context), backup)
+    }
+
     private val imageName = Regex("cat_icon_[A-Za-z0-9_-]+\\.jpg")
 
     suspend fun createBackup(context: Context, db: AccBookDatabase, exportedAt: Long): LedgerBackup {

@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import android.net.Uri
 import android.provider.Settings
+import android.content.ContentResolver
 import androidx.core.app.NotificationManagerCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -31,6 +32,8 @@ import com.controleco.app.data.db.TypeTotalRow
 import com.controleco.app.data.db.TxSource
 import com.controleco.app.data.db.TxType
 import com.controleco.app.data.budget.Budget
+import com.controleco.app.data.backup.LedgerBackupController
+import com.controleco.app.data.backup.LedgerBackupRepository
 import com.controleco.app.data.model.BillSource
 import com.controleco.app.data.model.ImportCommitResult
 import com.controleco.app.data.model.ParsedBill
@@ -43,6 +46,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
@@ -58,9 +62,40 @@ import java.time.ZoneId
  * 阶段一的全局 ViewModel：月份切换为流水/统计共用状态；
  * 后续阶段（自动记账）在此扩展捕获通道状态。
  */
-class LedgerViewModel(app: Application) : AndroidViewModel(app) {
+class LedgerViewModel internal constructor(
+    app: Application,
+    database: com.controleco.app.data.db.AccBookDatabase,
+    private val backupRepository: LedgerBackupRepository.Access,
+    private val backupFiles: LedgerBackupController.Files,
+    private val initializeBackgroundWork: Boolean,
+    private val initializeCaptureState: Boolean,
+) : AndroidViewModel(app) {
 
-    private val db = (app as AccBookApp).db
+    constructor(app: Application) : this(
+        app,
+        (app as AccBookApp).db,
+        LedgerBackupRepository.access,
+        ResolverBackupFiles(app.contentResolver),
+        true,
+        true,
+    )
+
+    private class ResolverBackupFiles(private val resolver: ContentResolver) : LedgerBackupController.Files {
+        override fun openInput(uri: Uri) = resolver.openInputStream(uri)
+        override fun openOutput(uri: Uri) = resolver.openOutputStream(uri)
+    }
+
+    private val backupController = LedgerBackupController(
+        getApplication(), backupRepository, backupFiles, viewModelScope,
+    )
+    val backupRestoreState: StateFlow<com.controleco.app.data.backup.LedgerBackupRestoreState> = backupController.state
+    fun clearBackupRestoreState() = backupController.clear()
+    fun exportBackup(uri: Uri?) = backupController.export(uri)
+    fun readBackup(uri: Uri?) = backupController.read(uri)
+    fun confirmRestore() = backupController.confirmRestore()
+    fun cancelRestore() = backupController.cancelRestore()
+
+    private val db = database
     private val txDao = db.transactionDao()
     private val accountDao = db.accountDao()
     private val categoryDao = db.categoryDao()
@@ -73,7 +108,7 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------- 设置：显示退款记录 ----------
 
-    private val prefs = getApplication<AccBookApp>()
+    private val prefs = getApplication<Application>()
         .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     private val _showRefunds = MutableStateFlow(
@@ -183,6 +218,7 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
     val cardTransform: StateFlow<CardTransform> = _cardTransform
 
     init {
+        if (initializeBackgroundWork) {
         // 冷启动预热：立刻在 IO 线程碰一次数据库，让 SQLite 打开/建连的开销
         // 与 UI 首帧并行，而不是等页面来查时才付（配合"未就绪先不画"减少空白时间）
         viewModelScope.launch(Dispatchers.IO) {
@@ -192,6 +228,7 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
         loadCardImage(_cardImageUri.value)
         // 顺手清一次历史遗留图片（编辑器里没走完流程就退出的那几张）
         pruneCardImages()
+        }
     }
 
     fun setCardTransform(transform: CardTransform) {
@@ -685,11 +722,11 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
         captureFilter.value = channel
     }
 
-    val listenerConnected: StateFlow<Boolean> = CaptureCenter.connected
-    val a11yConnected: StateFlow<Boolean> = CaptureCenter.a11yConnected
-    val lastCaptureAt: StateFlow<Long> = CaptureCenter.lastEventAt
+    val listenerConnected: StateFlow<Boolean> = if (initializeCaptureState) CaptureCenter.connected else MutableStateFlow(false)
+    val a11yConnected: StateFlow<Boolean> = if (initializeCaptureState) CaptureCenter.a11yConnected else MutableStateFlow(false)
+    val lastCaptureAt: StateFlow<Long> = if (initializeCaptureState) CaptureCenter.lastEventAt else MutableStateFlow(0L)
 
-    private val _captureEnabled = MutableStateFlow(CaptureCenter.isCaptureEnabled())
+    private val _captureEnabled = MutableStateFlow(initializeCaptureState && CaptureCenter.isCaptureEnabled())
     val captureEnabled: StateFlow<Boolean> = _captureEnabled
 
     fun setCaptureEnabled(enabled: Boolean) {
@@ -697,7 +734,7 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
         _captureEnabled.value = enabled
     }
 
-    private val _a11yCaptureEnabled = MutableStateFlow(CaptureCenter.isA11yCaptureEnabled())
+    private val _a11yCaptureEnabled = MutableStateFlow(initializeCaptureState && CaptureCenter.isA11yCaptureEnabled())
     val a11yCaptureEnabled: StateFlow<Boolean> = _a11yCaptureEnabled
 
     fun setA11yCaptureEnabled(enabled: Boolean) {
@@ -705,7 +742,7 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
         _a11yCaptureEnabled.value = enabled
     }
 
-    private val _debugCaptureAll = MutableStateFlow(CaptureCenter.isDebugCaptureAll(BuildConfig.DEBUG))
+    private val _debugCaptureAll = MutableStateFlow(initializeCaptureState && CaptureCenter.isDebugCaptureAll(BuildConfig.DEBUG))
     val debugCaptureAll: StateFlow<Boolean> = _debugCaptureAll
 
     fun setDebugCaptureAll(enabled: Boolean) {
@@ -713,7 +750,7 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
         _debugCaptureAll.value = enabled
     }
 
-    private val _debugCaptureAllPages = MutableStateFlow(CaptureCenter.isDebugCaptureAllPages(BuildConfig.DEBUG))
+    private val _debugCaptureAllPages = MutableStateFlow(initializeCaptureState && CaptureCenter.isDebugCaptureAllPages(BuildConfig.DEBUG))
     val debugCaptureAllPages: StateFlow<Boolean> = _debugCaptureAllPages
 
     fun setDebugCaptureAllPages(enabled: Boolean) {
@@ -723,7 +760,7 @@ class LedgerViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------- 自动记账溯源（开发者功能，默认关） ----------
 
-    private val _traceEnabled = MutableStateFlow(CaptureCenter.isTraceEnabled())
+    private val _traceEnabled = MutableStateFlow(initializeCaptureState && CaptureCenter.isTraceEnabled())
     val traceEnabled: StateFlow<Boolean> = _traceEnabled
 
     fun setTraceEnabled(enabled: Boolean) {
