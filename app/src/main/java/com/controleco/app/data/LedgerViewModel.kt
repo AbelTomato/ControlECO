@@ -2,6 +2,7 @@ package com.controleco.app.data
 
 import android.app.Application
 import android.content.Context
+import android.content.ContentResolver
 import android.net.Uri
 import android.provider.Settings
 import androidx.core.app.NotificationManagerCompat
@@ -34,6 +35,8 @@ import com.controleco.app.data.budget.Budget
 import com.controleco.app.data.budget.CategoryBudgetMath
 import com.controleco.app.data.budget.CategoryBudgetMode
 import com.controleco.app.data.budget.MonthPeriod
+import com.controleco.app.data.backup.LedgerBackupController
+import com.controleco.app.data.backup.LedgerBackupRepository
 import com.controleco.app.data.model.BillSource
 import com.controleco.app.data.model.ImportCommitResult
 import com.controleco.app.data.model.ParsedBill
@@ -62,6 +65,21 @@ import java.time.ZoneId
  * 后续阶段（自动记账）在此扩展捕获通道状态。
  */
 class LedgerViewModel(app: Application) : AndroidViewModel(app) {
+
+    private class ResolverBackupFiles(private val resolver: ContentResolver) : LedgerBackupController.Files {
+        override fun openInput(uri: Uri) = resolver.openInputStream(uri)
+        override fun openOutput(uri: Uri) = resolver.openOutputStream(uri)
+    }
+
+    private val backupController = LedgerBackupController(
+        getApplication(), LedgerBackupRepository.access, ResolverBackupFiles(app.contentResolver), viewModelScope,
+    )
+    val backupRestoreState = backupController.state
+    fun clearBackupRestoreState() = backupController.clear()
+    fun exportBackup(uri: Uri?) = backupController.export(uri)
+    fun readBackup(uri: Uri?) = backupController.read(uri)
+    fun confirmRestore() = backupController.confirmRestore()
+    fun cancelRestore() = backupController.cancelRestore()
 
     private val db = (app as AccBookApp).db
     private val txDao = db.transactionDao()
