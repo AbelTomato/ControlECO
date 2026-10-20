@@ -67,6 +67,27 @@ class AppUpdateTest {
     }
 
     @Test
+    fun `parse first Tomato Ledger release asset`() {
+        val json = """[
+            {
+              "tag_name": "v1.0.0",
+              "assets": [{
+                "name": "ControlECO-v1.0.0.apk",
+                "browser_download_url": "https://github.com/AbelTomato/ControlECO/releases/download/v1.0.0/ControlECO-v1.0.0.apk"
+              }]
+            }
+        ]""".trimIndent()
+
+        val release = AppUpdate.parseReleaseJson(json)!!
+
+        assertEquals("v1.0.0", release.tagName)
+        assertEquals(
+            "https://github.com/AbelTomato/ControlECO/releases/download/v1.0.0/ControlECO-v1.0.0.apk",
+            release.apkUrl,
+        )
+    }
+
+    @Test
     fun `parse release json without apk asset keeps empty urls`() {
         val json = """[{"tag_name": "v0.5.0", "body": "仅源码"}]"""
         val r = AppUpdate.parseReleaseJson(json)!!
@@ -103,6 +124,8 @@ class AppUpdateTest {
         assertTrue(AppUpdate.isNewerVersion("v0.4.6-beta", "0.4.5-beta"))
         assertFalse(AppUpdate.isNewerVersion("v0.4.5-beta", "0.4.5-beta"))
         assertFalse(AppUpdate.isNewerVersion("v0.4.4-beta", "0.4.5-beta"))
+        assertTrue(AppUpdate.isNewerVersion("v1.0.1", "1.0.0"))
+        assertFalse(AppUpdate.isNewerVersion("v1.0.0", "1.0.0"))
     }
 
     @Test

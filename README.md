@@ -1,4 +1,4 @@
-# 我ECO（ ControlECO）
+# 番茄记账（Tomato Ledger）
 
 安卓记账应用，目标是逐步实现"自动记账"：自动捕获微信/支付宝/云闪付通知、电商收银台、银行动账短信与银行 App 推送、
 支付页文字（无障碍）等交易事件；底部悬浮确认卡与待确认队列双通道确认；商户归类越用越准。
@@ -25,7 +25,9 @@ APK 输出：`app/build/outputs/apk/debug/app-debug.apk`
 
 ## 自有 Release 发布
 
-GitHub Actions 工作流 `.github/workflows/release.yml` 在推送 `v*` 标签或手动触发时运行测试、构建签名 Release APK，并创建同名 GitHub Release。APK 资产名为 `ControlECO-<tag>.apk`，供应用内更新器下载。应用内更新检查和个人页仓库入口指向 `AbelTomato/ControlECO`。
+番茄记账使用独立 Android 应用身份 `com.abeltomato.tomatoledger`，版本序列从 `1.0.0`（`versionCode=1`）开始；Kotlin namespace 仍为 `com.controleco.app`。后续每次发布必须递增 `versionCode`。新旧应用可以并存，但不能覆盖安装；旧应用的本地数据和权限不会自动迁移。需要转移账本时，请在旧应用导出 JSON 账本备份，再在番茄记账中恢复，并重新授予通知访问、无障碍、悬浮窗等所需权限。备份不包含的设置和捕获状态不会转移。
+
+GitHub Actions 工作流 `.github/workflows/release.yml` 在推送 `v*` 标签或手动触发时运行测试、构建签名 Release APK，并创建同名 GitHub Release。首发标签格式为 `v1.0.0`，APK 资产名为 `ControlECO-<tag>.apk`（首发为 `ControlECO-v1.0.0.apk`），供应用内更新器下载。应用内更新检查和个人页仓库入口指向 `AbelTomato/ControlECO`。
 
 发布前，在 GitHub 仓库的 **Settings → Secrets and variables → Actions** 配置以下 Secrets：
 
