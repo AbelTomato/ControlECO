@@ -82,7 +82,7 @@
 
 - [x] **Step 1: 更新/补充 updater 单测**：覆盖 `v1.0.0` 资产解析、无 APK 时返回空下载地址以及版本比较 `1.0.0` 到 `1.0.1`；断言 URL 指向自有仓库和约定资产名。
 - [x] **Step 2: 运行 updater 目标测试并观察预期结果**：`ANDROID_HOME=/home/abeltomato/Android/Sdk bash ./gradlew --no-daemon :app:testDebugUnitTest --tests '*AppUpdateTest'`，通过。
-- [x] **Step 3: 对齐仓库入口与 CI 资产协议**：仓库入口指向自有仓库；工作流只接受 `v*` tag 触发，构建输出复制为 `ControlECO-${tag}.apk` 后上传；核对现有配置已符合约定。
+- [x] **Step 3: 对齐仓库入口与 CI 资产协议**：仓库入口指向自有仓库；`v*` tag push 构建后发布 `ControlECO-${tag}.apk`；手动运行只构建并上传 APK artifact，不创建 Release。
 - [x] **Step 4: 更新 README**，准确写明番茄记账品牌、1.0.0 起始发行线、release signing secrets、标签发布方式、旧应用与新应用不能覆盖安装，以及通过账本 JSON 手动迁移数据和需重新授予权限。
 - [x] **Step 5: 校验工作流 YAML 和变更 whitespace**：使用 Python PyYAML 解析 `.github/workflows/release.yml` 成功；`git diff --check` 通过。
 
