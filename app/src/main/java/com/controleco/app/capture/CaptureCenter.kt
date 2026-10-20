@@ -36,6 +36,8 @@ import com.controleco.app.data.db.TxSource
 import com.controleco.app.data.db.TxType
 import com.controleco.app.util.AppLog
 import com.controleco.app.util.Money
+import com.controleco.app.ml.CategoryModel
+import com.controleco.app.ml.Prediction
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -67,6 +69,7 @@ object CaptureCenter {
     private const val KEY_A11Y_CAPTURE_ENABLED = "a11y_capture_enabled"
     private const val KEY_REFUND_LINK_ENABLED = "refund_link_enabled"
     private const val KEY_CAPTURE_NOTIFY_ENABLED = "capture_notify_enabled"
+    private const val KEY_CATEGORY_MODEL_SUGGESTIONS_ENABLED = "category_model_suggestions_enabled"
     private const val KEY_AUTO_ENTRY_ENABLED = "auto_entry_enabled"
     private const val KEY_DEBUG_CAPTURE_ALL = "debug_capture_all"
     private const val KEY_DEBUG_CAPTURE_ALL_PAGES = "debug_capture_all_pages"
@@ -123,6 +126,9 @@ object CaptureCenter {
     private lateinit var accountDao: AccountDao
     private lateinit var traceDao: TraceDao
     private lateinit var merchantRuleDao: MerchantRuleDao
+    private val categoryModel: CategoryModel? by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        CategoryModel.loadOrNull { appContext.assets.open("category_model.json") }
+    }
     private val initialized get() = this::appContext.isInitialized
 
     private val _connected = MutableStateFlow(false)
@@ -755,7 +761,11 @@ object CaptureCenter {
         val categories = categoryDao.getAll()
         val accounts = accountDao.getAll()
         val learned = merchantRuleDao.getAll()
-        val shown = showCardOnMain(fresh, categories, accounts, learned, alreadyEntered, isRefund, sourceLabel, counterparty, dedupKey)
+        val modelPrediction = predictCategory(fresh.type, fresh.counterparty, fresh.note, categories)
+        val shown = showCardOnMain(
+            fresh, categories, accounts, learned, modelPrediction, alreadyEntered,
+            isRefund, sourceLabel, counterparty, dedupKey,
+        )
         lastOverlayDecision = if (shown) "已弹出" else "系统拦截了悬浮窗（支付保护等）"
         AppLog.i("Overlay", if (shown) "confirm card shown for #${pending.id}" else "confirm card unavailable, fallback to notification")
         return shown
@@ -791,6 +801,7 @@ object CaptureCenter {
         categories: List<com.controleco.app.data.db.CategoryEntity>,
         accounts: List<com.controleco.app.data.db.AccountEntity>,
         learned: List<com.controleco.app.data.db.MerchantRuleEntity>,
+        modelPrediction: Prediction?,
         alreadyEntered: Boolean,
         isRefund: Boolean,
         sourceLabel: String,
@@ -803,6 +814,7 @@ object CaptureCenter {
                 categories = categories,
                 accounts = accounts,
                 learnedRules = learned,
+                modelPrediction = modelPrediction,
                 alreadyEntered = alreadyEntered,
                 onConfirm = { amountCents, categoryId, accountId, counterpartyText ->
                     // 已入账模式：「保存」= 同步修改（细条可撤销整笔）；待确认模式：「记一笔」= 入账
@@ -934,7 +946,10 @@ object CaptureCenter {
         val categories = categoryDao.getAll()
         val accounts = accountDao.getAll()
         val learned = merchantRuleDao.getAll()
-        mainHandler.post { ConfirmCardWindow.updatePending(fresh, categories, accounts, learned) }
+        val modelPrediction = predictCategory(fresh.type, fresh.counterparty, fresh.note, categories)
+        mainHandler.post {
+            ConfirmCardWindow.updatePending(fresh, categories, accounts, learned, modelPrediction)
+        }
     }
 
     /** debug：立即或延迟弹一张样例卡片（配置页开发者功能用；不落库） */
@@ -2016,9 +2031,11 @@ object CaptureCenter {
         val learned = merchantRuleDao.getAll()
         val categories = categoryDao.getAll()
         val accounts = accountDao.getAll()
+        val modelPrediction = predictCategory(type, counterparty, note, categories)
         val categoryId = CaptureDefaults.categoryId(
             categories, type, counterparty.ifBlank { note },
             learnedRules = learned, counterparty = counterparty, note = note,
+            modelPrediction = modelPrediction,
         )
         val accountId = CaptureDefaults.accountId(
             accounts, sourcePackage, bankName,
@@ -2076,6 +2093,25 @@ object CaptureCenter {
                 null
             }
         }
+    }
+
+    fun predictCategory(
+        type: TxType,
+        counterparty: String,
+        note: String,
+        categories: List<CategoryEntity>,
+    ): Prediction? {
+        if (type != TxType.EXPENSE) return null
+        if (!prefs().getBoolean(KEY_CATEGORY_MODEL_SUGGESTIONS_ENABLED, true)) return null
+        return runCatching {
+            categoryModel?.predictExpenseCategory(
+                listOf(counterparty, note).filter(String::isNotBlank).joinToString(" "),
+                categories.asSequence()
+                    .filter { it.type == TxType.EXPENSE }
+                    .map { it.name }
+                    .toSet(),
+            )
+        }.getOrNull()
     }
 
     // ---------- 通知测试（debug）----------

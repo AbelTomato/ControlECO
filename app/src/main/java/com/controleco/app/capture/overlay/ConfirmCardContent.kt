@@ -92,6 +92,7 @@ internal class ConfirmCardState {
         categories: List<CategoryEntity>,
         accounts: List<AccountEntity>,
         learnedRules: List<com.controleco.app.data.db.MerchantRuleEntity> = emptyList(),
+        modelPrediction: com.controleco.app.ml.Prediction? = null,
     ) {
         amountUserEdited = false
         counterpartyUserEdited = false
@@ -116,6 +117,7 @@ internal class ConfirmCardState {
             learnedRules = learnedRules,
             counterparty = pending.counterparty,
             note = pending.note,
+            modelPrediction = modelPrediction,
         )
         accountId = CaptureDefaults.accountId(
             accounts,
@@ -133,6 +135,7 @@ internal class ConfirmCardState {
         categories: List<CategoryEntity>,
         accounts: List<AccountEntity>,
         learnedRules: List<com.controleco.app.data.db.MerchantRuleEntity> = emptyList(),
+        modelPrediction: com.controleco.app.ml.Prediction? = null,
     ) {
         if (pendingId != pending.id) return
         if (!amountUserEdited && pending.amountCents > 0) {
@@ -151,6 +154,7 @@ internal class ConfirmCardState {
             categoryId = CaptureDefaults.categoryId(
                 categories, pending.type, pending.counterparty.ifBlank { pending.note },
                 learnedRules = learnedRules, counterparty = pending.counterparty, note = pending.note,
+                modelPrediction = modelPrediction,
             )
         }
         if (accountId == null) {

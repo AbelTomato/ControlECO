@@ -2,14 +2,41 @@ package com.controleco.app.capture
 
 import com.controleco.app.data.db.AccountEntity
 import com.controleco.app.data.db.CategoryEntity
+import com.controleco.app.data.db.MerchantRuleEntity
 import com.controleco.app.data.db.TxSource
 import com.controleco.app.data.db.TxType
+import com.controleco.app.ml.Prediction
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
 /** 自动入账/待确认弹窗共用的默认分类与账户推测。 */
 class CaptureDefaultsTest {
+
+    @Test
+    fun `本地模型建议开关控制建议且关闭后保留商户规则`() {
+        val prediction = Prediction("购物", confidence = 0.9, margin = 0.7)
+        assertEquals(prediction, CaptureDefaults.modelSuggestionEnabled(true, prediction))
+        assertNull(CaptureDefaults.modelSuggestionEnabled(false, prediction))
+        assertNull(CaptureDefaults.modelSuggestionEnabled(true, null))
+
+        val learned = listOf(MerchantRuleEntity(0, "瑞幸咖啡", TxType.EXPENSE, 6, null))
+        assertEquals(
+            6L,
+            CaptureDefaults.categoryId(
+                categories, TxType.EXPENSE, "瑞幸咖啡", learnedRules = learned,
+                counterparty = "瑞幸咖啡",
+                modelPrediction = CaptureDefaults.modelSuggestionEnabled(false, prediction),
+            ),
+        )
+        assertEquals(
+            6L,
+            CaptureDefaults.categoryId(
+                categories, TxType.EXPENSE, "滴滴出行",
+                modelPrediction = CaptureDefaults.modelSuggestionEnabled(false, prediction),
+            ),
+        )
+    }
 
     private fun cat(id: Long, name: String, type: TxType) = CategoryEntity(id = id, name = name, type = type)
     private fun acc(id: Long, name: String) = AccountEntity(id = id, name = name)
@@ -30,6 +57,49 @@ class CaptureDefaultsTest {
         acc(3, "支付宝"),
         acc(4, "中国银行储蓄卡"),
     )
+
+    @Test
+    fun `支出模型建议仅在规则未命中时生效`() {
+        val prediction = Prediction("购物", confidence = 0.9, margin = 0.7)
+
+        assertEquals(
+            2L,
+            CaptureDefaults.categoryId(
+                categories, TxType.EXPENSE, "瑞幸咖啡",
+                modelPrediction = prediction,
+            ),
+        )
+        assertEquals(
+            6L,
+            CaptureDefaults.categoryId(
+                categories, TxType.EXPENSE, "瑞幸咖啡",
+                learnedRules = listOf(MerchantRuleEntity(0, "瑞幸咖啡", TxType.EXPENSE, 6, null)),
+                counterparty = "瑞幸咖啡",
+                modelPrediction = prediction,
+            ),
+        )
+    }
+
+    @Test
+    fun `收入绕过模型且无效模型分类回退关键词`() {
+        val prediction = Prediction("餐饮", confidence = 0.99, margin = 0.9)
+
+        assertEquals(5L, CaptureDefaults.categoryId(categories, TxType.INCOME, "瑞幸咖啡", modelPrediction = prediction))
+        assertEquals(
+            6L,
+            CaptureDefaults.categoryId(
+                categories, TxType.EXPENSE, "滴滴出行",
+                modelPrediction = prediction.copy(label = "已删除分类"),
+            ),
+        )
+        assertEquals(
+            6L,
+            CaptureDefaults.categoryId(
+                categories, TxType.EXPENSE, "滴滴出行",
+                modelPrediction = prediction.copy(confidence = 0.59),
+            ),
+        )
+    }
 
     @Test
     fun `分类优先取该类型的其他`() {

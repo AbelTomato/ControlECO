@@ -111,6 +111,17 @@ class LedgerViewModel internal constructor(
     private val prefs = getApplication<Application>()
         .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
+    private val _categoryModelSuggestionsEnabled = MutableStateFlow(
+        prefs.getBoolean(KEY_CATEGORY_MODEL_SUGGESTIONS_ENABLED, true),
+    )
+    val categoryModelSuggestionsEnabled: StateFlow<Boolean> = _categoryModelSuggestionsEnabled
+
+    fun setCategoryModelSuggestionsEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_CATEGORY_MODEL_SUGGESTIONS_ENABLED, enabled).apply()
+        _categoryModelSuggestionsEnabled.value = enabled
+        AppLog.i("settings", "categoryModelSuggestions=$enabled")
+    }
+
     private val _showRefunds = MutableStateFlow(
         prefs.getBoolean(KEY_SHOW_REFUNDS, false),
     )
@@ -1045,6 +1056,7 @@ class LedgerViewModel internal constructor(
     private companion object {
         const val PREFS_NAME = "settings"
         const val KEY_SHOW_REFUNDS = "show_refunds"
+        const val KEY_CATEGORY_MODEL_SUGGESTIONS_ENABLED = "category_model_suggestions_enabled"
         const val KEY_CARD_IMAGE = "card_image_uri"
         const val KEY_CARD_TRANSFORM = "card_image_transform"
         const val KEY_CARD_COLOR = "card_image_color"

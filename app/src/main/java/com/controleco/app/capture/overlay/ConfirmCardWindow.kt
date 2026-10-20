@@ -74,6 +74,7 @@ internal object ConfirmCardWindow {
         categories: List<CategoryEntity>,
         accounts: List<AccountEntity>,
         learnedRules: List<com.controleco.app.data.db.MerchantRuleEntity> = emptyList(),
+        modelPrediction: com.controleco.app.ml.Prediction? = null,
         alreadyEntered: Boolean = false,
         onConfirm: (amountCents: Long, categoryId: Long, accountId: Long, counterparty: String) -> Unit,
         onIgnore: () -> Unit,
@@ -82,7 +83,7 @@ internal object ConfirmCardWindow {
         if (!this::appContext.isInitialized) return false
         removeConfirmWindow() // 重入时先清旧窗口（新的一笔直接替换展示）
 
-        state.bind(pending, categories, accounts, learnedRules)
+        state.bind(pending, categories, accounts, learnedRules, modelPrediction)
 
         val wm = appContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
         val host = OverlayComposeHost()
@@ -141,9 +142,10 @@ internal object ConfirmCardWindow {
         categories: List<CategoryEntity>,
         accounts: List<AccountEntity>,
         learnedRules: List<com.controleco.app.data.db.MerchantRuleEntity> = emptyList(),
+        modelPrediction: com.controleco.app.ml.Prediction? = null,
     ) {
         if (confirmView == null || showingPendingId != pending.id) return
-        state.mergeFrom(pending, categories, accounts, learnedRules)
+        state.mergeFrom(pending, categories, accounts, learnedRules, modelPrediction)
         AppLog.i(TAG, "confirm card updated pending=#${pending.id}")
     }
 

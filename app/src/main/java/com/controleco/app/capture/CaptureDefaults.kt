@@ -5,16 +5,20 @@ import com.controleco.app.data.db.CategoryEntity
 import com.controleco.app.data.db.MerchantRuleEntity
 import com.controleco.app.data.db.TxSource
 import com.controleco.app.data.db.TxType
+import com.controleco.app.ml.Prediction
 import com.controleco.app.util.CategoryGuesser
 
 /**
  * 捕获入账的分类/账户推测（待确认弹窗、悬浮卡与自动入账共用一套规则，纯函数便于单测）：
  * 分类优先用**学到的商户规则**（MerchantRules：确认/编辑过几次后自动归类），
- * 没有规则再按关键词猜（CategoryGuesser："滴滴出行"→交通、"医院"→医疗…），
+ * 没有规则再用达标的支出模型建议，然后按关键词猜（CategoryGuesser："滴滴出行"→交通、"医院"→医疗…），
  * 猜中的分类必须与方向匹配才采用，否则回退该类型的「其他」（没有则第一个）；
  * 账户按来源推测（微信/支付宝/银行名），未命中取第一个。
  */
 internal object CaptureDefaults {
+
+    fun modelSuggestionEnabled(enabled: Boolean, prediction: Prediction?): Prediction? =
+        if (enabled) prediction else null
 
     fun categoryId(
         categories: List<CategoryEntity>,
@@ -23,10 +27,19 @@ internal object CaptureDefaults {
         learnedRules: List<MerchantRuleEntity> = emptyList(),
         counterparty: String = merchantHint,
         note: String = "",
+        modelPrediction: Prediction? = null,
     ): Long? {
         // 1) 学到的商户规则（"越用越准"）
         MerchantRules.categoryIdFrom(learnedRules, categories, type, counterparty, note)?.let { return it }
-        // 2) 关键词猜测
+        if (type == TxType.EXPENSE && modelPrediction != null &&
+            modelPrediction.confidence >= MODEL_CONFIDENCE_THRESHOLD &&
+            modelPrediction.margin >= MODEL_MARGIN_THRESHOLD
+        ) {
+            categories.firstOrNull {
+                it.type == TxType.EXPENSE && it.name == modelPrediction.label
+            }?.id?.let { return it }
+        }
+        // 2) 现有关键词猜测
         val hint = merchantHint.trim()
         if (hint.isNotEmpty()) {
             val guessed = CategoryGuesser.guess(hint)
@@ -86,4 +99,7 @@ internal object CaptureDefaults {
     /** 捕获来源 → 交易来源标记（银行侧单独标记，便于溯源与来源筛选） */
     fun txSource(sourcePackage: String): TxSource =
         if (isBankSource(sourcePackage)) TxSource.BANK else TxSource.NOTIFICATION
+
+    private const val MODEL_CONFIDENCE_THRESHOLD = 0.6
+    private const val MODEL_MARGIN_THRESHOLD = 0.15
 }

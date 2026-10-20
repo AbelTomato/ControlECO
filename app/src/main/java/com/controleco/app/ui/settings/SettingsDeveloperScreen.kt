@@ -43,6 +43,7 @@ fun SettingsDeveloperScreen(
     val debugCaptureAllPages by vm.debugCaptureAllPages.collectAsStateWithLifecycle()
     val traceEnabled by vm.traceEnabled.collectAsStateWithLifecycle()
     val traceCount by vm.traceCount.collectAsStateWithLifecycle()
+    val categoryModelSuggestionsEnabled by vm.categoryModelSuggestionsEnabled.collectAsStateWithLifecycle()
 
     fun toast() = { msg: String -> Toast.makeText(context, msg, Toast.LENGTH_LONG).show() }
 
@@ -60,6 +61,12 @@ fun SettingsDeveloperScreen(
 
         SectionTitle("日志与诊断")
         PaneCard {
+            SwitchRow(
+                title = "使用本地分类建议",
+                checked = categoryModelSuggestionsEnabled,
+                onCheckedChange = { vm.setCategoryModelSuggestionsEnabled(it) },
+            )
+            RowDivider()
             InfoRow(title = "待确认账单", onClick = onOpenPending)
             RowDivider()
             InfoRow(title = "捕获日志", onClick = onOpenCaptureLog)
