@@ -1,12 +1,12 @@
 pluginManagement {
     repositories {
-        // 国内镜像优先，官方仓库兜底
+        // 官方仓库优先，国内镜像作为回退
+        gradlePluginPortal()
+        google()
+        mavenCentral()
         maven("https://maven.aliyun.com/repository/gradle-plugin")
         maven("https://maven.aliyun.com/repository/google")
         maven("https://maven.aliyun.com/repository/public")
-        google()
-        mavenCentral()
-        gradlePluginPortal()
     }
 }
 
