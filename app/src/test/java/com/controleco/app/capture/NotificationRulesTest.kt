@@ -7,7 +7,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 通知规则引擎测试。样本来自真实通知（用户实测样本见 docs/开发日志.md）
+ * 通知规则引擎测试。样本来自真实通知（用户实测样本见 docs/开发日志/）
  * 与已知格式；新样本请加入捕获日志后对照扩规则。
  */
 class NotificationRulesTest {

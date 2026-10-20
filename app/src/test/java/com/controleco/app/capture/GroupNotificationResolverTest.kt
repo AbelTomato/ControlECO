@@ -9,7 +9,7 @@ import org.junit.Test
 /**
  * 折叠摘要子通知补全的测试（GroupNotificationResolver + NotificationRules 的判定部分）。
  * 场景来自真实通知形态：微信把"退款到账通知"折叠成「[2条]」后摘要没有金额，金额只存在于子通知里
- * （实测样本见 docs/开发日志.md；机制见 docs/自动记账捕获机制.md 第一节）。
+ * （实测样本见 docs/开发日志/；机制见 docs/自动记账捕获机制.md 第一节）。
  */
 class GroupNotificationResolverTest {
 
