@@ -95,10 +95,12 @@
 - 不改 Room schema，不产生旧数据自动迁移行为。
 - 本机签名缺失时 Release 构建必须失败；配置真实长期 key 后才验证签名 Release。
 
-- [ ] **Step 1: 运行全部 JVM 单元测试和 Debug 编译**：`ANDROID_HOME=/home/abeltomato/Android/Sdk bash ./gradlew --no-daemon :app:testDebugUnitTest :app:compileDebugKotlin`。
-- [ ] **Step 2: 验证 Release 签名配置保护**：未配置 keystore 时运行 `ANDROID_HOME=/home/abeltomato/Android/Sdk bash ./gradlew --no-daemon :app:validateSigningRelease`，确认明确报缺少签名配置；不得回退 debug key。
+- [x] **Step 1: 运行全部 JVM 单元测试和 Debug 编译**：`ANDROID_HOME=/home/abeltomato/Android/Sdk bash ./gradlew --no-daemon :app:testDebugUnitTest :app:compileDebugKotlin`，通过。
+- [x] **Step 2: 验证 Release 签名配置保护**：未配置 keystore 时运行 `ANDROID_HOME=/home/abeltomato/Android/Sdk bash ./gradlew --no-daemon :app:validateSigningRelease`，按预期明确报缺少签名配置；未回退 debug key。
 - [ ] **Step 3: 在用户配置 GitHub Secrets 后运行签名 Release 构建**：GitHub Actions 构建 `:app:testDebugUnitTest :app:assembleRelease`，检查 applicationId/version metadata、APK 文件及签名证书 SHA-256 与长期 key 相符。
-- [ ] **Step 4: 检查最终变更**：确认没有旧 applicationId 硬编码作为 Android 安装身份，没有 keystore/密码/训练数据进入版本控制；确认未创建真实 GitHub Release，也未推送标签。
+- [x] **Step 4: 检查最终变更**：检查当前 Git 变更为空，未发现本次变更中的旧 applicationId 安装身份引用、keystore/密码/训练数据入库或发布行为；未创建真实 GitHub Release，也未推送标签。
+
+> **状态（2026-10-20）：** Task 4 的 Step 1、2、4 已验证；Step 3 因本机未配置长期 Release 签名 Secrets/keystore 而阻塞。须由用户配置长期签名材料后再运行签名 Release 构建并核对证书指纹；Task 4 尚未全部完成。
 
 ## Risks and Stop Conditions
 
