@@ -15,7 +15,7 @@ class AppUpdateTest {
     private val releaseJson = """
         [
           {
-            "url": "https://api.github.com/repos/ArrogHie/ControlECO/releases/2",
+            "url": "https://api.github.com/repos/AbelTomato/ControlECO/releases/2",
             "tag_name": "v0.4.6-beta",
             "name": "v0.4.6-beta",
             "body": "### 修复\n\n- 通知金额误取营销数字\r\n- 商户显示",
@@ -24,16 +24,16 @@ class AppUpdateTest {
             "assets": [
               {
                 "name": "ControlECO-0.4.6-beta.apk",
-                "browser_download_url": "https://github.com/ArrogHie/ControlECO/releases/download/v0.4.6-beta/ControlECO-0.4.6-beta.apk"
+                "browser_download_url": "https://github.com/AbelTomato/ControlECO/releases/download/v0.4.6-beta/ControlECO-0.4.6-beta.apk"
               },
               {
                 "name": "sources.zip",
-                "browser_download_url": "https://github.com/ArrogHie/ControlECO/releases/download/v0.4.6-beta/sources.zip"
+                "browser_download_url": "https://github.com/AbelTomato/ControlECO/releases/download/v0.4.6-beta/sources.zip"
               }
             ]
           },
           {
-            "url": "https://api.github.com/repos/ArrogHie/ControlECO/releases/1",
+            "url": "https://api.github.com/repos/AbelTomato/ControlECO/releases/1",
             "tag_name": "v0.4.5-beta",
             "name": "v0.4.5-beta",
             "body": "旧版本",
@@ -42,7 +42,7 @@ class AppUpdateTest {
             "assets": [
               {
                 "name": "ControlECO-0.4.5-beta.apk",
-                "browser_download_url": "https://github.com/ArrogHie/ControlECO/releases/download/v0.4.5-beta/ControlECO-0.4.5-beta.apk"
+                "browser_download_url": "https://github.com/AbelTomato/ControlECO/releases/download/v0.4.5-beta/ControlECO-0.4.5-beta.apk"
               }
             ]
           }
@@ -54,12 +54,12 @@ class AppUpdateTest {
         val r = AppUpdate.parseReleaseJson(releaseJson)!!
         assertEquals("v0.4.6-beta", r.tagName)
         assertEquals(
-            "https://github.com/ArrogHie/ControlECO/releases/download/v0.4.6-beta/ControlECO-0.4.6-beta.apk",
+            "https://github.com/AbelTomato/ControlECO/releases/download/v0.4.6-beta/ControlECO-0.4.6-beta.apk",
             r.apkUrl,
         )
         // 镜像地址 = 前缀拼接，zip 资产不参与（取首个 .apk）
         assertEquals(
-            "https://gh-proxy.com/https://github.com/ArrogHie/ControlECO/releases/download/v0.4.6-beta/ControlECO-0.4.6-beta.apk",
+            "https://gh-proxy.com/https://github.com/AbelTomato/ControlECO/releases/download/v0.4.6-beta/ControlECO-0.4.6-beta.apk",
             r.apkUrlMirror,
         )
         assertTrue(r.notes.contains("通知金额误取营销数字"))
@@ -82,7 +82,7 @@ class AppUpdateTest {
             [
               {"tag_name": "v0.5.0", "assets": []},
               {"tag_name": "v0.4.6-beta", "assets": [
-                {"browser_download_url": "https://github.com/ArrogHie/ControlECO/releases/download/v0.4.6-beta/x.apk"}
+                {"browser_download_url": "https://github.com/AbelTomato/ControlECO/releases/download/v0.4.6-beta/x.apk"}
               ]}
             ]
         """.trimIndent()
@@ -132,7 +132,7 @@ class AppUpdateTest {
 
     // ---------- 下载路径测速排序 ----------
 
-    private val direct = "https://github.com/ArrogHie/ControlECO/releases/download/v0.4.12-beta/x.apk"
+    private val direct = "https://github.com/AbelTomato/ControlECO/releases/download/v0.4.12-beta/x.apk"
     private val mirror = "https://gh-proxy.com/$direct"
 
     @Test

@@ -30,7 +30,7 @@ import kotlinx.coroutines.launch
  */
 object AppUpdate {
 
-    private const val REPO = "ArrogHie/ControlECO"
+    private const val REPO = "AbelTomato/ControlECO"
 
     /**
      * 用 releases 列表接口而不是 releases/latest：latest 不返回预发布（prerelease），

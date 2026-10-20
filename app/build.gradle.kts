@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -5,17 +7,26 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+val signingPropertiesFile = rootProject.file("keystore.properties")
+val signingProperties = Properties().apply {
+    if (signingPropertiesFile.exists()) signingPropertiesFile.inputStream().use { load(it) }
+}
+fun signingValue(propertyName: String, environmentName: String): String? =
+    providers.gradleProperty(propertyName).orNull
+        ?: signingProperties.getProperty(propertyName)
+        ?: providers.environmentVariable(environmentName).orNull
+
 android {
     namespace = "com.controleco.app"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.controleco.app"
+        applicationId = "com.abeltomato.tomatoledger"
         minSdk = 26
         targetSdk = 35
         // 每次带修改的构建把第三位 +1；beta 阶段版本名带 -beta 后缀
-        versionCode = 29
-        versionName = "0.5.5-beta"
+        versionCode = 1
+        versionName = "1.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -23,9 +34,27 @@ android {
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // beta 分发用 debug 密钥签名：与侧载的 debug 包同一签名，可以直接覆盖安装、
-            // 不清数据（换成正式密钥时要先卸载，用户账本会一起没，等正式发布再换）
-            signingConfig = signingConfigs.getByName("debug")
+            val storeFileValue = signingValue("storeFile", "RELEASE_STORE_FILE")
+            val storePasswordValue = signingValue("storePassword", "RELEASE_STORE_PASSWORD")
+            val keyAliasValue = signingValue("keyAlias", "RELEASE_KEY_ALIAS")
+            val keyPasswordValue = signingValue("keyPassword", "RELEASE_KEY_PASSWORD")
+            if (listOf(storeFileValue, storePasswordValue, keyAliasValue, keyPasswordValue).all { !it.isNullOrBlank() }) {
+                signingConfig = signingConfigs.create("release") {
+                    storeFile = rootProject.file(storeFileValue!!)
+                    storePassword = storePasswordValue!!
+                    keyAlias = keyAliasValue!!
+                    keyPassword = keyPasswordValue!!
+                }
+            } else {
+                signingConfig = null
+                if (gradle.startParameter.taskNames.any { it.contains("Release", ignoreCase = true) }) {
+                    throw GradleException(
+                        "Release signing is not configured. Set RELEASE_STORE_FILE, " +
+                            "RELEASE_STORE_PASSWORD, RELEASE_KEY_ALIAS and RELEASE_KEY_PASSWORD, " +
+                            "or add them to the untracked keystore.properties file.",
+                    )
+                }
+            }
         }
     }
     compileOptions {

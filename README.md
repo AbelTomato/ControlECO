@@ -23,6 +23,49 @@ export PATH="/d/Java/jdk-17.0.20.1+1/bin:$PATH"
 
 APK 输出：`app/build/outputs/apk/debug/app-debug.apk`
 
+## 自有 Release 发布
+
+GitHub Actions 工作流 `.github/workflows/release.yml` 在推送 `v*` 标签或手动触发时运行测试、构建签名 Release APK，并创建同名 GitHub Release。APK 资产名为 `ControlECO-<tag>.apk`，供应用内更新器下载。应用内更新检查和个人页仓库入口指向 `AbelTomato/ControlECO`。
+
+发布前，在 GitHub 仓库的 **Settings → Secrets and variables → Actions** 配置以下 Secrets：
+
+- `RELEASE_KEYSTORE_BASE64`：release keystore 文件的 Base64 内容
+- `RELEASE_STORE_PASSWORD`：keystore 密码
+- `RELEASE_KEY_ALIAS`：签名 key alias
+- `RELEASE_KEY_PASSWORD`：签名 key 密码
+
+本地构建可在仓库根目录创建未跟踪的 `keystore.properties`，填写 `storeFile`、`storePassword`、`keyAlias`、`keyPassword`。该文件和 `*.jks`、`*.keystore` 已加入 `.gitignore`。没有完整的 release 签名配置时，Release 构建会失败，不会退回 debug key。
+
+签名密钥必须长期、离线备份；所有后续更新都要用同一 keystore/key 签名，否则 Android 无法覆盖安装，用户需卸载后重装且本地数据会丢失。密钥不应提交到 Git 或发到聊天中。密钥生成步骤见下文“生成 Release 签名密钥”。
+
+### 生成 Release 签名密钥
+
+在可信的本机终端运行（需要 JDK 17 的 `keytool`），按提示输入并确认密码。请将路径替换为安全的备份目录；不要把 keystore 放入仓库：
+
+```bash
+keytool -genkeypair -v \
+  -keystore "$HOME/controleco-release.jks" \
+  -alias controleco-release \
+  -keyalg RSA -keysize 3072 -validity 10000
+```
+
+记下 alias（示例为 `controleco-release`）及输入的 keystore/key 密码。安全备份 `.jks` 文件和密码，最好有离线副本；丢失后无法为已安装版本签发可覆盖更新的 APK。
+
+为 GitHub Actions 配置 `RELEASE_KEYSTORE_BASE64` 时，在本机编码整个文件，再将命令输出粘贴进 Secret：
+
+```bash
+base64 -w 0 "$HOME/controleco-release.jks"
+```
+
+GitHub Secrets 中的 `RELEASE_STORE_PASSWORD` 和 `RELEASE_KEY_PASSWORD` 填入生成时对应的密码，`RELEASE_KEY_ALIAS` 填 `controleco-release`。若生成时 keystore 密码和 key 密码相同，两项填相同值。
+
+首次发布前，确认版本号已更新且签名 Secrets 已配置，然后推送标签（示例）：
+
+```bash
+git tag v0.5.6-beta
+git push origin v0.5.6-beta
+```
+
 ## 真机调试（USB 实时日志）
 
 1. **手机打开开发者选项**：设置 → 关于手机 → 连点"版本号"7 次；华为/荣耀通常是 设置 → 系统和更新 → 开发人员选项（或先在关于手机连点版本号开启）。
