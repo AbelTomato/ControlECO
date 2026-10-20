@@ -97,10 +97,10 @@
 
 - [x] **Step 1: 运行全部 JVM 单元测试和 Debug 编译**：`ANDROID_HOME=/home/abeltomato/Android/Sdk bash ./gradlew --no-daemon :app:testDebugUnitTest :app:compileDebugKotlin`，通过。
 - [x] **Step 2: 验证 Release 签名配置保护**：未配置 keystore 时运行 `ANDROID_HOME=/home/abeltomato/Android/Sdk bash ./gradlew --no-daemon :app:validateSigningRelease`，按预期明确报缺少签名配置；未回退 debug key。
-- [ ] **Step 3: 在用户配置 GitHub Secrets 后运行签名 Release 构建**：GitHub Actions 构建 `:app:testDebugUnitTest :app:assembleRelease`，检查 applicationId/version metadata、APK 文件及签名证书 SHA-256 与长期 key 相符。
+- [x] **Step 3: 在用户配置 GitHub Secrets 后运行签名 Release 构建**：本地配置长期签名 keystore 后运行 `ANDROID_HOME=/home/abeltomato/Android/Sdk bash ./gradlew --no-daemon :app:testDebugUnitTest :app:assembleRelease`，成功生成签名 APK；`aapt dump badging` 确认 applicationId=`com.abeltomato.tomatoledger`、versionName=`1.0.0`、versionCode=`1`，`apksigner` 与 keystore alias `controleco-release` 的证书 SHA-256 一致。GitHub Secrets/Actions 构建仍需在仓库侧配置并触发。
 - [x] **Step 4: 检查最终变更**：检查当前 Git 变更为空，未发现本次变更中的旧 applicationId 安装身份引用、keystore/密码/训练数据入库或发布行为；未创建真实 GitHub Release，也未推送标签。
 
-> **状态（2026-10-20）：** Task 4 的 Step 1、2、4 已验证；Step 3 因本机未配置长期 Release 签名 Secrets/keystore 而阻塞。须由用户配置长期签名材料后再运行签名 Release 构建并核对证书指纹；Task 4 尚未全部完成。
+> **状态（2026-10-20）：** Task 4 的本地验证步骤均已完成。签名 Release APK 与已配置 keystore 的证书指纹一致；未创建真实 GitHub Release，也未推送标签。GitHub Secrets/Actions 的仓库侧配置与实际执行不属于本地验证范围。
 
 ## Risks and Stop Conditions
 
