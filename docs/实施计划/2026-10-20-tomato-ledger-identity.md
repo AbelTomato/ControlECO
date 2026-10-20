@@ -62,10 +62,10 @@
 - English launcher label uses `Tomato Ledger`；服务标签用准确英文表述支付页面采集用途。
 - Shortcut target package is `com.abeltomato.tomatoledger`；target class remains under `com.controleco.app`。
 
-- [ ] **Step 1: 修改默认及英文 `app_name` 和无障碍服务标签**，不批量替换历史说明或内部日志 tag。
-- [ ] **Step 2: 修改快捷方式 `targetPackage`**，保留完整 `targetClass` 的现有源码类路径；检查通知、FileProvider 和应用内 Intent 是否动态读取 `${applicationId}`/`context.packageName`。
-- [ ] **Step 3: 构建资源和 APK**：`ANDROID_HOME=/home/abeltomato/Android/Sdk bash ./gradlew --no-daemon :app:processDebugResources :app:assembleDebug`。
-- [ ] **Step 4: 检查打包资源与 Manifest 标签**，确认中文默认资源、英文资源、无障碍服务名、launcher label 和 shortcut package 均符合新身份。
+- [x] **Step 1: 修改默认及英文 `app_name` 和无障碍服务标签**，不批量替换历史说明或内部日志 tag。
+- [x] **Step 2: 修改快捷方式 `targetPackage`**，保留完整 `targetClass` 的现有源码类路径；检查通知、FileProvider 和应用内 Intent 是否动态读取 `${applicationId}`/`context.packageName`。快捷方式原本已是新包名；Manifest 中 FileProvider authority 使用 `${applicationId}`。
+- [x] **Step 3: 构建资源和 APK**：`ANDROID_HOME=/home/abeltomato/Android/Sdk bash ./gradlew --no-daemon :app:processDebugResources :app:assembleDebug`。
+- [x] **Step 4: 检查打包资源与 Manifest 标签**，确认中文默认资源、英文资源、无障碍服务名、launcher label 和 shortcut package 均符合新身份；`aapt dump badging` 确认 APK 应用名及英文/中文标签，打包资源确认无障碍服务标签和三个快捷方式目标。
 
 ## Task 3: 对齐应用内更新协议和 Release CI
 

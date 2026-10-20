@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 英文名：ControlECO（中文环境显示默认资源「我ECO」） -->
+<!-- English brand for non-Chinese locales. -->
 <resources>
-    <string name="app_name">ControlECO</string>
-    <string name="a11y_service_label">ControlECO 支付页面采集</string>
+    <string name="app_name">Tomato Ledger</string>
+    <string name="a11y_service_label">Tomato Ledger payment screen capture</string>
     <string name="a11y_service_description">Reads text on WeChat/Alipay payment-success and bill-detail pages to extract amount, payee and payment method for bookkeeping. Processed on-device only, never uploaded.</string>
 </resources>
